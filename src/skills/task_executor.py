@@ -1,31 +1,28 @@
 """
 task-executor skill
 -------------------
-1. Receives a goal (and optional refinement instructions from a previous iteration)
-2. Asks Claude to decompose it into concrete subtasks with acceptance criteria
-3. Spawns one sub-agent per subtask (concurrent asyncio tasks)
-4. Each sub-agent runs its own tool-use loop (read/write/run/search)
-5. Aggregates results into an ExecutorResult
+1. Decomposes a goal into 3–7 subtasks (single call, no tools)
+2. Spawns one sub-agent per subtask concurrently
+3. Each sub-agent runs its own tool-use loop (read/write/run/search)
+4. Aggregates into ExecutorResult
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import os
-from datetime import datetime
 
-import anthropic
 from rich.console import Console
 
-from src.types import ExecutorResult, ReviewFeedback, RefinementResult, Subtask, SubtaskResult
+from src.providers import get_provider
+from src.providers.base import ToolResult
 from src.tools import TOOL_DEFINITIONS, dispatch_tool
+from src.types import ExecutorResult, RefinementResult, Subtask, SubtaskResult
 
 console = Console()
 
-MODEL = os.getenv("AGENT_MODEL", "claude-sonnet-4-6")
 MAX_TOKENS = int(os.getenv("AGENT_MAX_TOKENS", "8096"))
 
-# Prompt caching: long system prompts are cached to reduce cost on repeated runs
 _EXECUTOR_SYSTEM = """\
 You are a senior software engineer acting as a task orchestrator.
 Your job is to decompose a high-level goal into concrete, independently-executable subtasks.
@@ -60,32 +57,20 @@ Rules:
 """
 
 
-def _client() -> anthropic.Anthropic:
-    return anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-
-
-async def _decompose_goal(client: anthropic.Anthropic, goal: str, refinement: str | None) -> list[Subtask]:
-    """Ask Claude to break the goal into subtasks. Returns parsed Subtask list."""
+async def _decompose_goal(goal: str, refinement: str | None) -> list[Subtask]:
+    provider = get_provider()
     user_content = f"Goal: {goal}"
     if refinement:
         user_content += f"\n\nRefinement instructions from previous review:\n{refinement}"
 
-    response = await asyncio.to_thread(
-        client.messages.create,
-        model=MODEL,
-        max_tokens=2048,
-        system=[
-            {
-                "type": "text",
-                "text": _EXECUTOR_SYSTEM,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ],
+    response = await provider.chat(
+        system=_EXECUTOR_SYSTEM,
         messages=[{"role": "user", "content": user_content}],
+        tools=[],
+        max_tokens=2048,
     )
 
-    raw = response.content[0].text.strip()
-    # Strip markdown fences if the model ignores the instruction
+    raw = (response.text or "").strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
@@ -94,15 +79,9 @@ async def _decompose_goal(client: anthropic.Anthropic, goal: str, refinement: st
     return [Subtask(**s) for s in data["subtasks"]]
 
 
-async def _run_subagent(
-    client: anthropic.Anthropic,
-    subtask: Subtask,
-    goal: str,
-    working_dir: str,
-    iteration: int,
-) -> SubtaskResult:
-    """Run a single sub-agent with tool-use loop to complete one subtask."""
+async def _run_subagent(subtask: Subtask, goal: str, working_dir: str) -> SubtaskResult:
     console.print(f"  [cyan]→ Sub-agent[/cyan] [{subtask.id}] {subtask.description[:70]}")
+    provider = get_provider()
 
     messages: list[dict] = [
         {
@@ -122,59 +101,29 @@ async def _run_subagent(
     commands_run: list[str] = []
     final_output = ""
 
-    # Agentic loop: keep going until stop_reason is "end_turn"
-    for _turn in range(20):  # safety cap
-        response = await asyncio.to_thread(
-            client.messages.create,
-            model=MODEL,
-            max_tokens=MAX_TOKENS,
-            system=[
-                {
-                    "type": "text",
-                    "text": _SUBAGENT_SYSTEM,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
-            tools=TOOL_DEFINITIONS,
+    for _turn in range(20):
+        response = await provider.chat(
+            system=_SUBAGENT_SYSTEM,
             messages=messages,
+            tools=TOOL_DEFINITIONS,
+            max_tokens=MAX_TOKENS,
         )
-
-        # Collect assistant message
-        messages.append({"role": "assistant", "content": response.content})
+        provider.append_assistant(messages, response)
 
         if response.stop_reason == "end_turn":
-            # Extract final text output
-            for block in response.content:
-                if hasattr(block, "text"):
-                    final_output = block.text
+            final_output = response.text or ""
             break
 
-        if response.stop_reason != "tool_use":
-            break
+        tool_results: list[ToolResult] = []
+        for tc in response.tool_calls:
+            result_str = await asyncio.to_thread(dispatch_tool, tc.name, tc.input, working_dir)
+            if tc.name == "write_file":
+                files_modified.append(tc.input.get("path", ""))
+            elif tc.name == "run_command":
+                commands_run.append(tc.input.get("command", ""))
+            tool_results.append(ToolResult(id=tc.id, content=result_str))
 
-        # Process tool calls
-        tool_results = []
-        for block in response.content:
-            if block.type != "tool_use":
-                continue
-
-            result_str = await asyncio.to_thread(dispatch_tool, block.name, block.input, working_dir)
-
-            # Track side effects for reporting
-            if block.name == "write_file":
-                files_modified.append(block.input.get("path", ""))
-            elif block.name == "run_command":
-                commands_run.append(block.input.get("command", ""))
-
-            tool_results.append(
-                {
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": result_str,
-                }
-            )
-
-        messages.append({"role": "user", "content": tool_results})
+        provider.append_tool_results(messages, tool_results)
 
     return SubtaskResult(
         subtask=subtask,
@@ -191,23 +140,18 @@ async def run(
     iteration: int = 1,
     refinement: RefinementResult | None = None,
 ) -> ExecutorResult:
-    """Entry point for the task-executor skill."""
-    client = _client()
     refinement_text = refinement.refined_instructions if refinement else None
 
     console.print(f"\n[bold blue]task-executor[/bold blue] iteration={iteration}")
     console.print(f"  Goal: {goal[:100]}")
 
-    subtasks = await _decompose_goal(client, goal, refinement_text)
+    subtasks = await _decompose_goal(goal, refinement_text)
     console.print(f"  Decomposed into {len(subtasks)} subtask(s)")
 
-    # Run all sub-agents concurrently
     results = await asyncio.gather(
-        *[_run_subagent(client, st, goal, working_dir, iteration) for st in subtasks],
-        return_exceptions=False,
+        *[_run_subagent(st, goal, working_dir) for st in subtasks]
     )
 
-    # Aggregate
     aggregated = "\n\n".join(
         f"[{r.subtask.id}] {r.subtask.description}\n{r.output}" for r in results
     )

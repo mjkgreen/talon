@@ -1,12 +1,8 @@
 """
 refiner skill
 -------------
-Takes reviewer feedback + the previous executor result and produces
-refined instructions for the next executor iteration.
-
-It does NOT re-implement code itself — it synthesises the reviewer's
-blocking issues and suggestions into a clear action plan that the
-task-executor will use on the next pass.
+Translates reviewer feedback into a precise action plan for the next
+executor iteration. Single API call — no tool use needed.
 """
 from __future__ import annotations
 
@@ -14,15 +10,12 @@ import asyncio
 import json
 import os
 
-import anthropic
 from rich.console import Console
 
+from src.providers import get_provider
 from src.types import ExecutorResult, ReviewFeedback, RefinementResult
 
 console = Console()
-
-MODEL = os.getenv("AGENT_MODEL", "claude-sonnet-4-6")
-MAX_TOKENS = int(os.getenv("AGENT_MAX_TOKENS", "8096"))
 
 _REFINER_SYSTEM = """\
 You are a technical lead translating code-review feedback into a precise action plan.
@@ -44,76 +37,39 @@ Rules:
 """
 
 
-def _client() -> anthropic.Anthropic:
-    return anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-
-
-def _build_refiner_prompt(
-    goal: str,
-    executor_result: ExecutorResult,
-    feedback: ReviewFeedback,
-) -> str:
+def _build_prompt(goal: str, executor_result: ExecutorResult, feedback: ReviewFeedback) -> str:
     blocking = "\n".join(f"- {i}" for i in feedback.blocking_issues) or "(none)"
     suggestions = "\n".join(f"- {s}" for s in feedback.suggestions) or "(none)"
     criteria_failed = "\n".join(
-        f"- {c.criterion}: {c.evidence}"
-        for c in feedback.criteria
-        if not c.met
+        f"- {c.criterion}: {c.evidence}" for c in feedback.criteria if not c.met
     ) or "(all criteria met)"
 
-    prev_summary = executor_result.aggregated_output[:2000]
-
-    return f"""\
-Original goal: {goal}
-
-Previous implementation summary (truncated):
-{prev_summary}
-
-Reviewer verdict: {feedback.verdict} (score={feedback.score:.2f})
-Reviewer summary: {feedback.summary}
-
-Blocking issues (MUST fix):
-{blocking}
-
-Failed criteria:
-{criteria_failed}
-
-Non-blocking suggestions (address if possible):
-{suggestions}
-
----
-Produce the refined action plan JSON.
-"""
+    return (
+        f"Original goal: {goal}\n\n"
+        f"Previous implementation summary (truncated):\n{executor_result.aggregated_output[:2000]}\n\n"
+        f"Reviewer verdict: {feedback.verdict} (score={feedback.score:.2f})\n"
+        f"Reviewer summary: {feedback.summary}\n\n"
+        f"Blocking issues (MUST fix):\n{blocking}\n\n"
+        f"Failed criteria:\n{criteria_failed}\n\n"
+        f"Non-blocking suggestions (address if possible):\n{suggestions}\n\n"
+        "---\nProduce the refined action plan JSON."
+    )
 
 
-async def run(
-    goal: str,
-    executor_result: ExecutorResult,
-    feedback: ReviewFeedback,
-) -> RefinementResult:
-    """Entry point for the refiner skill."""
-    client = _client()
+async def run(goal: str, executor_result: ExecutorResult, feedback: ReviewFeedback) -> RefinementResult:
+    provider = get_provider()
     iteration = feedback.iteration
 
     console.print(f"\n[bold magenta]refiner[/bold magenta] iteration={iteration}")
 
-    prompt = _build_refiner_prompt(goal, executor_result, feedback)
-
-    response = await asyncio.to_thread(
-        client.messages.create,
-        model=MODEL,
+    response = await provider.chat(
+        system=_REFINER_SYSTEM,
+        messages=[{"role": "user", "content": _build_prompt(goal, executor_result, feedback)}],
+        tools=[],
         max_tokens=2048,
-        system=[
-            {
-                "type": "text",
-                "text": _REFINER_SYSTEM,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ],
-        messages=[{"role": "user", "content": prompt}],
     )
 
-    raw = response.content[0].text.strip()
+    raw = (response.text or "").strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
@@ -125,7 +81,7 @@ async def run(
         data = {
             "changes_planned": ["Re-attempt all blocking issues from reviewer feedback."],
             "refined_instructions": (
-                f"Re-implement the goal addressing these issues: "
+                "Re-implement the goal addressing these issues: "
                 + "; ".join(feedback.blocking_issues)
             ),
         }
