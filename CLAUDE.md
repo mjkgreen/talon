@@ -71,11 +71,16 @@ python -m src.main review <run-id>         # dump run state JSON
 
 ## Environment variables
 
-See `.env.example` for the full list. Minimum required:
+See `.env.example` for the full list. Model routing uses LiteLLM — set `AGENT_MODEL` to any supported model string:
 
 ```
-ANTHROPIC_API_KEY=sk-ant-...
+AGENT_MODEL=anthropic/claude-sonnet-4-6   ANTHROPIC_API_KEY=sk-ant-...
+AGENT_MODEL=openai/gpt-4o                 OPENAI_API_KEY=sk-...
+AGENT_MODEL=gemini/gemini-2.0-flash       GEMINI_API_KEY=...
+AGENT_MODEL=groq/llama3-70b-8192          GROQ_API_KEY=...
 ```
+
+Full provider list: https://docs.litellm.ai/docs/providers
 
 ## Phase 2 TODOs
 

@@ -31,22 +31,19 @@ self-reviewer          Inspects files + runs tests, returns pass/fail + score
                                └────────────► task-executor (next iteration)
 ```
 
-## Provider selection
+## Model selection
 
-Set `AGENT_PROVIDER` in `.env`:
-
-```
-AGENT_PROVIDER=openai      # gpt-4o (default when using this file)
-AGENT_PROVIDER=anthropic   # claude-sonnet-4-6 (with prompt caching)
-```
-
-Model override:
+Set `AGENT_MODEL` in `.env` using LiteLLM's provider-prefix format:
 
 ```
-OPENAI_MODEL=o3            # for stronger reasoning on complex tasks
-OPENAI_MODEL=gpt-4o-mini   # for cost-sensitive tasks
-AGENT_MODEL=claude-opus-4-7  # Anthropic model override
+AGENT_MODEL=openai/gpt-4o              OPENAI_API_KEY=sk-...
+AGENT_MODEL=openai/o3                  # stronger reasoning
+AGENT_MODEL=gemini/gemini-2.0-flash    GEMINI_API_KEY=...
+AGENT_MODEL=anthropic/claude-sonnet-4-6  ANTHROPIC_API_KEY=sk-ant-...
+AGENT_MODEL=groq/llama3-70b-8192       GROQ_API_KEY=...
 ```
+
+Full provider list: https://docs.litellm.ai/docs/providers
 
 ## CLI commands
 

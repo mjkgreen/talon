@@ -1,27 +1,34 @@
 """
-OpenAI provider — wraps the OpenAI SDK.
+LiteLLM provider — unified interface for any model via litellm.acompletion().
 
-Converts Anthropic-format tool schemas (input_schema) to OpenAI format
-(parameters) so that src/tools.py TOOL_DEFINITIONS work unchanged.
+Switch models by setting AGENT_MODEL in .env:
+  anthropic/claude-sonnet-4-6    → Anthropic (needs ANTHROPIC_API_KEY)
+  openai/gpt-4o                  → OpenAI    (needs OPENAI_API_KEY)
+  gemini/gemini-2.0-flash        → Gemini    (needs GEMINI_API_KEY)
+  groq/llama3-70b-8192           → Groq      (needs GROQ_API_KEY)
+  mistral/mistral-large-latest   → Mistral   (needs MISTRAL_API_KEY)
 
-Message history is built in OpenAI format:
-  assistant with tool calls → role=assistant, tool_calls=[...]
-  tool results             → role=tool, tool_call_id=...
+LiteLLM reads each provider's API key from the standard env var automatically.
+Tool schemas are converted from Anthropic format (input_schema) to
+OpenAI/LiteLLM format (parameters) since that is the common wire format.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 
+import litellm
+
 from src.providers.base import BaseProvider, ProviderResponse, ToolCall, ToolResult
 
-MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
+litellm.drop_params = True  # silently drop unsupported params per-provider
+
+MODEL = os.getenv("AGENT_MODEL", "anthropic/claude-sonnet-4-6")
 MAX_TOKENS = int(os.getenv("AGENT_MAX_TOKENS", "8096"))
 
 
-def _to_openai_tools(tools: list[dict]) -> list[dict]:
-    """Convert Anthropic tool schema format to OpenAI function format."""
+def _to_litellm_tools(tools: list[dict]) -> list[dict]:
+    """Convert Anthropic-format tool schemas to OpenAI/LiteLLM function format."""
     return [
         {
             "type": "function",
@@ -35,15 +42,9 @@ def _to_openai_tools(tools: list[dict]) -> list[dict]:
     ]
 
 
-class OpenAIProvider:
-    def __init__(self) -> None:
-        try:
-            from openai import OpenAI
-        except ImportError as e:
-            raise ImportError(
-                "openai package not installed. Run: pip install openai"
-            ) from e
-        self._client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+class LiteLLMProvider:
+    def __init__(self, model: str = MODEL) -> None:
+        self._model = model
 
     async def chat(
         self,
@@ -52,24 +53,17 @@ class OpenAIProvider:
         tools: list[dict],
         max_tokens: int = MAX_TOKENS,
     ) -> ProviderResponse:
-        # OpenAI puts the system prompt as the first message
         full_messages = [{"role": "system", "content": system}, *messages]
-
-        kwargs: dict = dict(
-            model=MODEL,
-            max_tokens=max_tokens,
-            messages=full_messages,
-        )
+        kwargs: dict = dict(model=self._model, messages=full_messages, max_tokens=max_tokens)
         if tools:
-            kwargs["tools"] = _to_openai_tools(tools)
+            kwargs["tools"] = _to_litellm_tools(tools)
             kwargs["tool_choice"] = "auto"
 
-        raw = await asyncio.to_thread(self._client.chat.completions.create, **kwargs)
-
+        raw = await litellm.acompletion(**kwargs)
         msg = raw.choices[0].message
+
         text: str | None = msg.content or None
         tool_calls: list[ToolCall] = []
-
         if msg.tool_calls:
             for tc in msg.tool_calls:
                 tool_calls.append(ToolCall(
@@ -89,10 +83,7 @@ class OpenAIProvider:
                 {
                     "id": tc.id,
                     "type": "function",
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments,
-                    },
+                    "function": {"name": tc.function.name, "arguments": tc.function.arguments},
                 }
                 for tc in msg.tool_calls
             ]

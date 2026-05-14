@@ -63,12 +63,13 @@ async def _post_to_linear(payload: dict) -> str | None:
         if payload["pr_url"]:
             body += f"**PR:** {payload['pr_url']}\n"
 
+        body_escaped = body.replace("\n", "\\n")
         mutation = f"""
         mutation {{
           issueCreate(input: {{
             teamId: "{LINEAR_TEAM_ID}"
             title: "{title}"
-            description: "{body.replace(chr(10), '\\n')}"
+            description: "{body_escaped}"
           }}) {{
             issue {{ url }}
           }}
