@@ -79,12 +79,49 @@ Per-role vars override `AGENT_MODEL` which overrides auto. The run header always
 
 ```bash
 python -m src.main run "goal"                          # full loop
-python -m src.main run "goal" --working-dir ./my-app  # custom workspace
+python -m src.main run "goal" --working-dir ./my-app  # branch from existing project
 python -m src.main run "goal" --url http://localhost:3000  # + browser recording
 python -m src.main run "goal" --skip-board             # skip Linear/GitHub post
-python -m src.main list                                # show all runs
+python -m src.main list                                # show all runs + workspaces
 python -m src.main review <run-id>                     # dump run state JSON
+python -m src.main cleanup <run-id>                    # remove kept workspace
+python -m src.main serve [--port 8080]                 # start webhook listener
 ```
+
+## Workspace isolation
+
+Every run gets its own isolated directory so concurrent runs never conflict.
+
+| `--working-dir` | Behaviour |
+|-----------------|-----------|
+| Not set | Fresh empty `workspace/<run-id>/` |
+| Plain directory | Copied into `workspace/<run-id>/` |
+| Git repository | `git worktree add` on branch `agent/run-<id>` |
+
+On **pass**: workspace is kept at `workspace/<run-id>/` — inspect the code or create a PR.  
+On **fail**: workspace is removed automatically.  
+Use `python -m src.main cleanup <run-id>` to remove a kept workspace when done.
+
+## Webhook listener
+
+Start the server once; it triggers a full loop run whenever a tagged issue arrives.
+
+```bash
+python -m src.main serve --port 8080
+```
+
+### Linear setup
+1. Linear → Settings → API → Webhooks → add URL: `https://your-host/webhook/linear`
+2. Set `LINEAR_WEBHOOK_SECRET` in `.env`
+3. Create issues with the label `agent-task` (configurable via `WEBHOOK_LABEL`)
+
+### GitHub setup
+1. Repo → Settings → Webhooks → add URL: `https://your-host/webhook/github`
+2. Content type: `application/json`, event: **Issues**
+3. Set `GITHUB_WEBHOOK_SECRET` in `.env`
+4. Open issues with the label `agent-task`
+
+The server accepts up to `MAX_CONCURRENT_RUNS` (default 3) simultaneous runs; additional triggers are queued. A `/health` endpoint and auto-generated `/docs` (OpenAPI) are available.
 
 ## Claude Code slash commands
 
@@ -142,11 +179,10 @@ playwright install chromium
 BROWSER_VALIDATOR_ENABLED=true
 ```
 
-## Phase 2 roadmap
+## Roadmap
 
 - [ ] Browser validator: goal-specific navigation steps
 - [ ] Board updater: GitHub Projects API
 - [ ] Board updater: auto-create PR from workspace diff
-- [ ] Webhook listener: Linear/GitHub card → trigger loop
-- [ ] Workspace isolation: git worktree per run
-- [ ] Parallelism cap: rate-limit concurrent sub-agents
+- [ ] Rate-limit concurrent sub-agent API calls (`asyncio_throttle`)
+- [ ] Test suite

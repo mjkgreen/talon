@@ -19,12 +19,12 @@ from rich.rule import Rule
 from src.config import model_config_summary
 from src.types import ReviewVerdict, RunState, RunStatus
 from src.skills import task_executor, self_reviewer, refiner, browser_validator, board_updater
+from src import workspace
 
 console = Console()
 
 MAX_ITERATIONS = int(os.getenv("MAX_ITERATIONS", "3"))
 RUNS_DIR = os.getenv("RUNS_DIR", "./runs")
-WORKSPACE_DIR = os.getenv("WORKSPACE_DIR", "./workspace")
 
 
 def _save_state(state: RunState) -> None:
@@ -71,17 +71,20 @@ async def run(
 
     Args:
         goal:        The high-level coding goal.
-        working_dir: Directory where agents read/write code.
+        working_dir: Existing project dir to branch from (git worktree or copy).
+                     None → fresh isolated workspace per run.
         app_url:     URL to validate with browser-validator (optional).
         skip_board:  Skip posting to Linear/GitHub.
 
     Returns:
         RunState with full audit trail.
     """
-    working_dir = working_dir or WORKSPACE_DIR
-    Path(working_dir).mkdir(parents=True, exist_ok=True)
-
     state = RunState(goal=goal)
+
+    # --- Isolate workspace for this run ---
+    run_workspace = workspace.setup(state.run_id, working_dir)
+    state.workspace = run_workspace
+
     _print_header(goal, state.run_id)
     _save_state(state)
 
@@ -94,7 +97,7 @@ async def run(
         # --- Step 1: Execute ---
         exec_result = await task_executor.run(
             goal=goal,
-            working_dir=working_dir,
+            working_dir=run_workspace,
             iteration=i,
             refinement=refinement,
         )
@@ -105,7 +108,7 @@ async def run(
         review = await self_reviewer.run(
             goal=goal,
             executor_result=exec_result,
-            working_dir=working_dir,
+            working_dir=run_workspace,
         )
         state.review_results.append(review)
         _save_state(state)
@@ -130,6 +133,12 @@ async def run(
         _save_state(state)
 
     state.finished_at = datetime.utcnow()
+
+    # Keep workspace on pass (code is ready for review / PR creation).
+    # Remove on fail to avoid accumulating broken directories.
+    if state.status != RunStatus.PASSED:
+        workspace.teardown(state.run_id, working_dir, run_workspace)
+        state.workspace = None
 
     # --- Step 4: Browser validate (optional) ---
     if app_url and state.status == RunStatus.PASSED:

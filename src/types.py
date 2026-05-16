@@ -78,6 +78,7 @@ class RunState(BaseModel):
     review_results: list[ReviewFeedback] = []
     refinement_results: list[RefinementResult] = []
     final_output: Optional[str] = None
+    workspace: Optional[str] = None   # path to isolated run workspace
     video_path: Optional[str] = None
     board_url: Optional[str] = None
     started_at: datetime = Field(default_factory=datetime.utcnow)

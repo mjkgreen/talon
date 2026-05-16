@@ -4,8 +4,10 @@ CLI entry point for the autonomous agent system.
 Usage:
   python -m src.main run "Add user authentication to the Express API"
   python -m src.main run "..." --working-dir ./my-project --url http://localhost:3000
-  python -m src.main review --run-id <id>
   python -m src.main list
+  python -m src.main review <run-id>
+  python -m src.main cleanup <run-id>
+  python -m src.main serve [--port 8080]
 """
 from __future__ import annotations
 
@@ -23,24 +25,29 @@ load_dotenv()
 
 console = Console()
 
+_PROVIDER_KEYS = [
+    "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY",
+    "GROQ_API_KEY", "MISTRAL_API_KEY",
+]
+
 
 def _check_env() -> None:
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        console.print("[red]Error: ANTHROPIC_API_KEY not set. Copy .env.example to .env and fill it in.[/red]")
+    if not any(os.getenv(k) for k in _PROVIDER_KEYS):
+        console.print(
+            "[red]Error: no LLM API key found. Set at least one of: "
+            + ", ".join(_PROVIDER_KEYS) + "[/red]"
+        )
         sys.exit(1)
 
 
 def cmd_run(goal: str, working_dir: str | None, app_url: str | None, skip_board: bool) -> None:
     from src.loop import run
-
     _check_env()
-    state = asyncio.run(
-        run(goal=goal, working_dir=working_dir, app_url=app_url, skip_board=skip_board)
-    )
-
+    state = asyncio.run(run(goal=goal, working_dir=working_dir, app_url=app_url, skip_board=skip_board))
     runs_dir = os.getenv("RUNS_DIR", "./runs")
-    run_file = Path(runs_dir) / state.run_id / "state.json"
-    console.print(f"\n[dim]Full run saved to: {run_file}[/dim]")
+    console.print(f"\n[dim]Full run saved to: {Path(runs_dir) / state.run_id / 'state.json'}[/dim]")
+    if state.workspace:
+        console.print(f"[dim]Workspace kept at:  {state.workspace}[/dim]")
     sys.exit(0 if state.status == "passed" else 1)
 
 
@@ -54,7 +61,8 @@ def cmd_list() -> None:
     table.add_column("Run ID", style="cyan")
     table.add_column("Status")
     table.add_column("Score")
-    table.add_column("Iterations")
+    table.add_column("Iter")
+    table.add_column("Workspace")
     table.add_column("Goal")
 
     for run_dir in sorted(runs_dir.iterdir(), reverse=True):
@@ -66,12 +74,15 @@ def cmd_list() -> None:
         score = f"{last_review.get('score', 0):.2f}" if last_review else "—"
         status = data["status"]
         color = "green" if status == "passed" else "red"
+        ws = data.get("workspace") or "—"
+        ws_display = Path(ws).name if ws != "—" else "—"
         table.add_row(
             data["run_id"],
             f"[{color}]{status}[/{color}]",
             score,
             str(data["iteration"]),
-            data["goal"][:60],
+            ws_display,
+            data["goal"][:50],
         )
 
     console.print(table)
@@ -83,8 +94,50 @@ def cmd_review(run_id: str) -> None:
     if not state_file.exists():
         console.print(f"[red]Run not found: {run_id}[/red]")
         sys.exit(1)
+    console.print_json(state_file.read_text())
+
+
+def cmd_cleanup(run_id: str) -> None:
+    """Remove the isolated workspace for a completed run."""
+    runs_dir = Path(os.getenv("RUNS_DIR", "./runs"))
+    state_file = runs_dir / run_id / "state.json"
+    if not state_file.exists():
+        console.print(f"[red]Run not found: {run_id}[/red]")
+        sys.exit(1)
+
     data = json.loads(state_file.read_text())
-    console.print_json(json.dumps(data))
+    ws = data.get("workspace")
+    if not ws:
+        console.print(f"[dim]Run {run_id} has no workspace to clean up.[/dim]")
+        return
+
+    from src import workspace
+    working_dir = None  # we don't track the original base_dir; teardown handles both cases
+    workspace.teardown(run_id, working_dir, ws)
+
+    # Clear workspace field in state
+    data["workspace"] = None
+    state_file.write_text(json.dumps(data, indent=2))
+    console.print(f"[green]Cleaned up workspace for run {run_id}[/green]")
+
+
+def cmd_serve(port: int) -> None:
+    """Start the webhook listener server."""
+    try:
+        import uvicorn
+    except ImportError:
+        console.print("[red]uvicorn not installed. Run: pip install uvicorn[/red]")
+        sys.exit(1)
+
+    _check_env()
+    console.print(f"[bold blue]Webhook server[/bold blue] listening on http://0.0.0.0:{port}")
+    console.print(f"  POST /webhook/linear  — Linear issue created")
+    console.print(f"  POST /webhook/github  — GitHub issue opened")
+    console.print(f"  GET  /health          — health check")
+    console.print(f"  GET  /docs            — OpenAPI docs\n")
+
+    from src.webhook import app
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
 
 
 def main() -> None:
@@ -107,14 +160,11 @@ def main() -> None:
         i = 2
         while i < len(args):
             if args[i] == "--working-dir" and i + 1 < len(args):
-                working_dir = args[i + 1]
-                i += 2
+                working_dir = args[i + 1]; i += 2
             elif args[i] == "--url" and i + 1 < len(args):
-                app_url = args[i + 1]
-                i += 2
+                app_url = args[i + 1]; i += 2
             elif args[i] == "--skip-board":
-                skip_board = True
-                i += 1
+                skip_board = True; i += 1
             else:
                 i += 1
         cmd_run(goal, working_dir, app_url, skip_board)
@@ -128,9 +178,25 @@ def main() -> None:
             sys.exit(1)
         cmd_review(args[1])
 
+    elif cmd == "cleanup":
+        if len(args) < 2:
+            console.print("[red]Usage: python -m src.main cleanup <run-id>[/red]")
+            sys.exit(1)
+        cmd_cleanup(args[1])
+
+    elif cmd == "serve":
+        port = 8080
+        i = 1
+        while i < len(args):
+            if args[i] == "--port" and i + 1 < len(args):
+                port = int(args[i + 1]); i += 2
+            else:
+                i += 1
+        cmd_serve(port)
+
     else:
         console.print(f"[red]Unknown command: {cmd}[/red]")
-        console.print("Commands: run, list, review")
+        console.print("Commands: run, list, review, cleanup, serve")
         sys.exit(1)
 
 
