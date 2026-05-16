@@ -36,7 +36,7 @@ The board-updater runs automatically at the end of every loop (pass or fail).
 Skip it with `--skip-board`:
 
 ```bash
-python -m src.main run "your goal" --skip-board
+talon run "your goal" --skip-board
 ```
 
 ## Phase 2 additions (TODO)

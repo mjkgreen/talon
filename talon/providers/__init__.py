@@ -6,11 +6,12 @@ Provider factory.
 Model resolution is handled by src.config.resolve_model — see that module
 for the full priority/override logic.
 """
+
 from __future__ import annotations
 
-from src.config import resolve_model
-from src.providers.base import BaseProvider
-from src.providers.litellm_p import LiteLLMProvider
+from talon.config import resolve_model
+from talon.providers.base import BaseProvider
+from talon.providers.litellm_p import LiteLLMProvider
 
 
 def get_provider(role: str = "subagent") -> BaseProvider:

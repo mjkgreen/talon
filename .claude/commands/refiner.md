@@ -30,7 +30,7 @@ task-executor → self-reviewer → [fail] → refiner → task-executor (next i
 The loop runs automatically with:
 
 ```bash
-python -m src.main run "your goal" 
+talon run "your goal" 
 ```
 
 Max iterations is controlled by `MAX_ITERATIONS` in `.env` (default: 3).

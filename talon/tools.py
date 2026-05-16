@@ -2,14 +2,12 @@
 Tool implementations that sub-agents can call via Anthropic tool_use.
 Each function maps 1-to-1 with a tool definition in TOOL_DEFINITIONS.
 """
+
 from __future__ import annotations
 
-import glob
 import json
-import os
 import subprocess
 from pathlib import Path
-
 
 # ---------------------------------------------------------------------------
 # Tool schemas (passed to Anthropic messages.create as `tools=`)
@@ -46,7 +44,10 @@ TOOL_DEFINITIONS = [
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "Directory path relative to working_dir"},
-                "pattern": {"type": "string", "description": "Optional glob pattern, e.g. '**/*.py'"},
+                "pattern": {
+                    "type": "string",
+                    "description": "Optional glob pattern, e.g. '**/*.py'",
+                },  # noqa: E501
             },
             "required": ["path"],
         },
@@ -77,7 +78,10 @@ TOOL_DEFINITIONS = [
             "type": "object",
             "properties": {
                 "pattern": {"type": "string", "description": "Grep pattern"},
-                "path": {"type": "string", "description": "Directory to search in (relative to working_dir)"},
+                "path": {
+                    "type": "string",
+                    "description": "Directory to search in (relative to working_dir)",
+                },  # noqa: E501
                 "file_pattern": {"type": "string", "description": "File glob, e.g. '*.py'"},
             },
             "required": ["pattern", "path"],
@@ -89,6 +93,7 @@ TOOL_DEFINITIONS = [
 # ---------------------------------------------------------------------------
 # Implementations
 # ---------------------------------------------------------------------------
+
 
 def read_file(path: str, working_dir: str) -> dict:
     full = Path(working_dir) / path
@@ -144,7 +149,9 @@ def run_command(command: str, working_dir: str, sub_dir: str | None = None) -> d
         return {"error": str(e), "exit_code": -1}
 
 
-def search_files(pattern: str, path: str, working_dir: str, file_pattern: str | None = None) -> dict:
+def search_files(
+    pattern: str, path: str, working_dir: str, file_pattern: str | None = None
+) -> dict:
     base = str(Path(working_dir) / path)
     cmd = ["grep", "-r", "--include", file_pattern or "*", "-n", pattern, base]
     try:
@@ -158,6 +165,7 @@ def search_files(pattern: str, path: str, working_dir: str, file_pattern: str | 
 # ---------------------------------------------------------------------------
 # Dispatcher — routes tool_use calls to implementations
 # ---------------------------------------------------------------------------
+
 
 def dispatch_tool(tool_name: str, tool_input: dict, working_dir: str) -> str:
     """Execute a tool call and return result as JSON string."""

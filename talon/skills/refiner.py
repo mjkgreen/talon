@@ -4,16 +4,15 @@ refiner skill
 Translates reviewer feedback into a precise action plan for the next
 executor iteration. Single API call — no tool use needed.
 """
+
 from __future__ import annotations
 
-import asyncio
 import json
-import os
 
 from rich.console import Console
 
-from src.providers import get_provider
-from src.types import ExecutorResult, ReviewFeedback, RefinementResult
+from talon.providers import get_provider
+from talon.types import ExecutorResult, RefinementResult, ReviewFeedback
 
 console = Console()
 
@@ -26,7 +25,7 @@ output a JSON object with the following schema (no prose, no markdown fences):
   "changes_planned": [
     "<specific, concrete change to make, e.g. 'Add input validation to POST /users endpoint'>"
   ],
-  "refined_instructions": "<paragraph of instructions for the next execution pass, incorporating all blocking issues>"
+  "refined_instructions": "<next-iteration instructions that address every blocking issue>"
 }
 
 Rules:
@@ -40,13 +39,15 @@ Rules:
 def _build_prompt(goal: str, executor_result: ExecutorResult, feedback: ReviewFeedback) -> str:
     blocking = "\n".join(f"- {i}" for i in feedback.blocking_issues) or "(none)"
     suggestions = "\n".join(f"- {s}" for s in feedback.suggestions) or "(none)"
-    criteria_failed = "\n".join(
-        f"- {c.criterion}: {c.evidence}" for c in feedback.criteria if not c.met
-    ) or "(all criteria met)"
+    criteria_failed = (
+        "\n".join(f"- {c.criterion}: {c.evidence}" for c in feedback.criteria if not c.met)
+        or "(all criteria met)"
+    )
 
     return (
         f"Original goal: {goal}\n\n"
-        f"Previous implementation summary (truncated):\n{executor_result.aggregated_output[:2000]}\n\n"
+        f"Previous implementation summary (truncated):\n"
+        f"{executor_result.aggregated_output[:2000]}\n\n"
         f"Reviewer verdict: {feedback.verdict} (score={feedback.score:.2f})\n"
         f"Reviewer summary: {feedback.summary}\n\n"
         f"Blocking issues (MUST fix):\n{blocking}\n\n"
@@ -56,7 +57,9 @@ def _build_prompt(goal: str, executor_result: ExecutorResult, feedback: ReviewFe
     )
 
 
-async def run(goal: str, executor_result: ExecutorResult, feedback: ReviewFeedback) -> RefinementResult:
+async def run(
+    goal: str, executor_result: ExecutorResult, feedback: ReviewFeedback
+) -> RefinementResult:
     provider = get_provider("refiner")
     iteration = feedback.iteration
 

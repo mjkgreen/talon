@@ -9,17 +9,16 @@ Phase 2: implement Linear API + GitHub Projects API calls.
 Linear:  Set LINEAR_API_KEY + LINEAR_TEAM_ID in .env
 GitHub:  Set GITHUB_TOKEN + GITHUB_REPO in .env
 """
+
 from __future__ import annotations
 
 import json
 import os
 from datetime import datetime
-from pathlib import Path
 
-import anthropic
 from rich.console import Console
 
-from src.types import RunState, RunStatus
+from talon.types import RunState
 
 console = Console()
 

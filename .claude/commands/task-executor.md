@@ -20,16 +20,16 @@ The result feeds into `/self-reviewer` for evaluation.
 ## Run it
 
 ```bash
-python -m src.main run "$ARGUMENTS" --skip-board
+talon run "$ARGUMENTS" --skip-board
 ```
 
 Or run the full loop (executor → reviewer → refiner → repeat):
 
 ```bash
-python -m src.main run "$ARGUMENTS"
+talon run "$ARGUMENTS"
 ```
 
 ## Output
 
 Saves a full audit trail to `./runs/<run-id>/state.json`.
-Print recent runs with: `python -m src.main list`
+Print recent runs with: `talon list`

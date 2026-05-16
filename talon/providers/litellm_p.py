@@ -12,6 +12,7 @@ LiteLLM reads each provider's API key from the standard env var automatically.
 Tool schemas are converted from Anthropic format (input_schema) to
 OpenAI/LiteLLM format (parameters) since that is the common wire format.
 """
+
 from __future__ import annotations
 
 import json
@@ -19,7 +20,7 @@ import os
 
 import litellm
 
-from src.providers.base import BaseProvider, ProviderResponse, ToolCall, ToolResult
+from talon.providers.base import ProviderResponse, ToolCall, ToolResult
 
 litellm.drop_params = True  # silently drop unsupported params per-provider
 
@@ -66,11 +67,13 @@ class LiteLLMProvider:
         tool_calls: list[ToolCall] = []
         if msg.tool_calls:
             for tc in msg.tool_calls:
-                tool_calls.append(ToolCall(
-                    id=tc.id,
-                    name=tc.function.name,
-                    input=json.loads(tc.function.arguments),
-                ))
+                tool_calls.append(
+                    ToolCall(
+                        id=tc.id,
+                        name=tc.function.name,
+                        input=json.loads(tc.function.arguments),
+                    )
+                )
 
         stop_reason = "tool_use" if tool_calls else "end_turn"
         return ProviderResponse(text=text, tool_calls=tool_calls, stop_reason=stop_reason, raw=raw)

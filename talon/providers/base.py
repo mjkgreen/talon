@@ -7,6 +7,7 @@ skills are provider-agnostic. The only provider-specific details are:
   - how tool schemas are converted (Anthropic input_schema vs OpenAI parameters)
   - prompt caching (Anthropic-only)
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -28,10 +29,10 @@ class ToolResult:
 
 @dataclass
 class ProviderResponse:
-    text: str | None                    # populated when stop_reason == "end_turn"
-    tool_calls: list[ToolCall]          # populated when stop_reason == "tool_use"
-    stop_reason: str                    # "end_turn" | "tool_use" | "error"
-    raw: Any = field(repr=False)        # original SDK response for debugging
+    text: str | None  # populated when stop_reason == "end_turn"
+    tool_calls: list[ToolCall]  # populated when stop_reason == "tool_use"
+    stop_reason: str  # "end_turn" | "tool_use" | "error"
+    raw: Any = field(repr=False)  # original SDK response for debugging
 
 
 @runtime_checkable

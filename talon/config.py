@@ -9,6 +9,7 @@ Resolution order (first match wins):
 To add a new provider: add its API key env var to _PROVIDER_KEYS and add
 its models to the priority lists below.
 """
+
 from __future__ import annotations
 
 import os
@@ -16,19 +17,19 @@ import os
 # Maps provider prefix → the env var that holds its API key
 _PROVIDER_KEYS: dict[str, str] = {
     "anthropic": "ANTHROPIC_API_KEY",
-    "openai":    "OPENAI_API_KEY",
-    "gemini":    "GEMINI_API_KEY",
-    "groq":      "GROQ_API_KEY",
-    "mistral":   "MISTRAL_API_KEY",
-    "cohere":    "COHERE_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+    "groq": "GROQ_API_KEY",
+    "mistral": "MISTRAL_API_KEY",
+    "cohere": "COHERE_API_KEY",
 }
 
 # Env var that holds each role's model override
 ROLE_ENV: dict[str, str] = {
     "orchestrator": "ORCHESTRATOR_MODEL",
-    "subagent":     "SUBAGENT_MODEL",
-    "reviewer":     "REVIEWER_MODEL",
-    "refiner":      "REFINER_MODEL",
+    "subagent": "SUBAGENT_MODEL",
+    "reviewer": "REVIEWER_MODEL",
+    "refiner": "REFINER_MODEL",
 }
 
 # Per-role priority list: first model whose provider has an API key wins.
@@ -112,8 +113,7 @@ def resolve_model(role: str) -> str:
     available = _available_providers()
     if not available:
         raise RuntimeError(
-            "No LLM API key found. Set at least one of: "
-            + ", ".join(_PROVIDER_KEYS.values())
+            "No LLM API key found. Set at least one of: " + ", ".join(_PROVIDER_KEYS.values())
         )
     for model in ROLE_PRIORITY.get(role, []):
         if _provider_of(model) in available:
