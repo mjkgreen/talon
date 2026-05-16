@@ -72,6 +72,7 @@ async def run(
     goal: str,
     working_dir: str | None = None,
     app_url: str | None = None,
+    repo_url: str | None = None,
     skip_board: bool = False,
     on_step: Callable[[RunState], Awaitable[None]] | None = None,
 ) -> RunState:
@@ -81,8 +82,9 @@ async def run(
     Args:
         goal:        The high-level coding goal.
         working_dir: Existing project dir to branch from (git worktree or copy).
-                     None → fresh isolated workspace per run.
+                     None ?" fresh isolated workspace per run.
         app_url:     URL to validate with browser-validator (optional).
+        repo_url:    URL of a git repository to clone.
         skip_board:  Skip posting to Linear/GitHub.
 
     Returns:
@@ -91,7 +93,7 @@ async def run(
     state = RunState(goal=goal)
 
     # --- Isolate workspace for this run ---
-    run_workspace = workspace.setup(state.run_id, working_dir)
+    run_workspace = workspace.setup(state.run_id, working_dir, repo_url=repo_url)
     state.workspace = run_workspace
 
     _print_header(goal, state.run_id)

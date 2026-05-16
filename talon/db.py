@@ -24,6 +24,10 @@ class IssueUpdate(BaseModel):
     status: Optional[str] = None
     run_id: Optional[str] = None
 
+class SettingsUpdate(BaseModel):
+    github_token: Optional[str] = None
+    selected_repo: Optional[str] = None
+
 async def init_db():
     os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
     async with aiosqlite.connect(DB_PATH) as db:
@@ -38,7 +42,33 @@ async def init_db():
                 updated_at TEXT NOT NULL
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
         await db.commit()
+
+async def get_setting(key: str) -> Optional[str]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT value FROM settings WHERE key = ?", (key,)) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else None
+
+async def set_setting(key: str, value: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?",
+            (key, value, value)
+        )
+        await db.commit()
+
+async def get_all_settings() -> dict:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT key, value FROM settings") as cursor:
+            rows = await cursor.fetchall()
+            return {row[0]: row[1] for row in rows}
 
 async def create_issue(issue: IssueCreate) -> Issue:
     now = datetime.utcnow().isoformat()

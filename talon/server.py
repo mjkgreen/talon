@@ -15,6 +15,7 @@ import os
 from datetime import datetime
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
+import httpx
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -115,7 +116,19 @@ async def _run_loop(goal: str, source: str, issue_id: int | None = None, working
                         "state": state.model_dump()
                     })
 
-            state = await run(goal=goal, working_dir=working_dir, skip_board=False, on_step=on_step)
+            # Check if we have a selected repo to clone
+            github_token = await db.get_setting("github_token")
+            selected_repo = await db.get_setting("selected_repo")
+            
+            repo_url = None
+            if github_token and selected_repo:
+                repo_url = f"https://x-access-token:{github_token}@github.com/{selected_repo}.git"
+
+            # Pass repo_url to run if available, otherwise it falls back to creating an empty workspace
+            # Wait, talon.loop.run takes working_dir. 
+            # Let's pass the repo_url via a new kwarg to loop.run, or handle it in workspace.setup.
+            # We'll pass it as `repo_url=repo_url` to loop.run.
+            state = await run(goal=goal, working_dir=working_dir, repo_url=repo_url, skip_board=False, on_step=on_step)
             
             if issue_id:
                 final_status = "Done" if state.status == "passed" else "Failed"
@@ -137,6 +150,77 @@ async def health() -> dict:
     return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
 
 # --- REST APIs for Kanban ---
+
+@app.get("/api/settings")
+async def get_settings():
+    settings = await db.get_all_settings()
+    # Mask token for security when sending to frontend
+    if "github_token" in settings and settings["github_token"]:
+        settings["github_token"] = "***" + settings["github_token"][-4:]
+    return settings
+
+@app.post("/api/settings")
+async def update_settings(updates: db.SettingsUpdate):
+    if updates.github_token:
+        # Don't update if it's the masked version
+        if not updates.github_token.startswith("***"):
+            await db.set_setting("github_token", updates.github_token)
+    if updates.selected_repo:
+        await db.set_setting("selected_repo", updates.selected_repo)
+    return {"ok": True}
+
+@app.get("/api/github/repos")
+async def list_github_repos():
+    token = await db.get_setting("github_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="GitHub token not configured")
+    
+    async with httpx.AsyncClient() as client:
+        # Fetch repos the user has access to
+        res = await client.get(
+            "https://api.github.com/user/repos?per_page=100&sort=updated",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.v3+json"}
+        )
+        if res.status_code != 200:
+            raise HTTPException(status_code=res.status_code, detail="Failed to fetch repos from GitHub")
+        repos = res.json()
+        return [{"full_name": r["full_name"], "name": r["name"]} for r in repos]
+
+@app.post("/api/github/sync")
+async def sync_github_issues():
+    token = await db.get_setting("github_token")
+    repo = await db.get_setting("selected_repo")
+    if not token or not repo:
+        raise HTTPException(status_code=400, detail="GitHub token or repo not configured")
+
+    async with httpx.AsyncClient() as client:
+        res = await client.get(
+            f"https://api.github.com/repos/{repo}/issues?state=open&per_page=100",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.v3+json"}
+        )
+        if res.status_code != 200:
+            raise HTTPException(status_code=res.status_code, detail="Failed to fetch issues from GitHub")
+        
+        issues = res.json()
+        synced = 0
+        existing = await db.list_issues()
+        existing_titles = {i.title for i in existing}
+        
+        for issue in issues:
+            if "pull_request" in issue:
+                continue # Skip PRs
+            title = issue["title"]
+            if title not in existing_titles:
+                body = issue.get("body") or ""
+                new_issue = await db.create_issue(db.IssueCreate(
+                    title=title,
+                    description=body,
+                    status="Backlog"
+                ))
+                await broadcast_issue_update(new_issue.id)
+                synced += 1
+                
+        return {"ok": True, "synced": synced}
 
 @app.get("/api/issues")
 async def get_issues():
