@@ -5,6 +5,7 @@ Evaluates an ExecutorResult against the original goal.
 Uses a tool-use loop to read files and run verification commands before
 rendering a structured JSON verdict.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -55,16 +56,22 @@ Be strict but fair. Verify claims by reading files, don't take the agent's word 
 """
 
 # Reviewer gets read-only tools only
-_REVIEWER_TOOLS = [t for t in TOOL_DEFINITIONS if t["name"] in {"read_file", "list_files", "run_command", "search_files"}]
+_REVIEWER_TOOLS = [
+    t
+    for t in TOOL_DEFINITIONS
+    if t["name"] in {"read_file", "list_files", "run_command", "search_files"}
+]
 
 
 def _build_review_prompt(goal: str, executor_result: ExecutorResult, working_dir: str) -> str:
-    files_summary = "\n".join(
-        f"  - {f}" for r in executor_result.subtask_results for f in r.files_modified
-    ) or "  (none reported)"
-    commands_summary = "\n".join(
-        f"  - {c}" for r in executor_result.subtask_results for c in r.commands_run
-    ) or "  (none)"
+    files_summary = (
+        "\n".join(f"  - {f}" for r in executor_result.subtask_results for f in r.files_modified)
+        or "  (none reported)"
+    )
+    commands_summary = (
+        "\n".join(f"  - {c}" for r in executor_result.subtask_results for c in r.commands_run)
+        or "  (none)"
+    )
     subtask_outputs = "\n\n".join(
         f"Subtask [{r.subtask.id}]: {r.subtask.description}\n"
         f"Acceptance criteria: {r.subtask.acceptance_criteria}\n"
@@ -88,7 +95,9 @@ async def run(goal: str, executor_result: ExecutorResult, working_dir: str) -> R
 
     console.print(f"\n[bold yellow]self-reviewer[/bold yellow] iteration={iteration}")
 
-    messages: list[dict] = [{"role": "user", "content": _build_review_prompt(goal, executor_result, working_dir)}]
+    messages: list[dict] = [
+        {"role": "user", "content": _build_review_prompt(goal, executor_result, working_dir)}
+    ]
     raw_verdict = ""
 
     for _turn in range(10):
@@ -141,7 +150,9 @@ async def run(goal: str, executor_result: ExecutorResult, working_dir: str) -> R
 
     icon = "✓" if feedback.verdict == ReviewVerdict.PASS else "✗"
     color = "green" if feedback.verdict == ReviewVerdict.PASS else "red"
-    console.print(f"  [{color}]{icon} verdict={feedback.verdict} score={feedback.score:.2f}[/{color}]")
+    console.print(
+        f"  [{color}]{icon} verdict={feedback.verdict} score={feedback.score:.2f}[/{color}]"
+    )
     for issue in feedback.blocking_issues:
         console.print(f"  [red]  • {issue}[/red]")
 

@@ -6,6 +6,7 @@ Provider factory.
 Model resolution is handled by src.config.resolve_model — see that module
 for the full priority/override logic.
 """
+
 from __future__ import annotations
 
 from talon.config import resolve_model

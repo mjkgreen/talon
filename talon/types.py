@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from enum import Enum
 from typing import Optional
+
 from pydantic import BaseModel, Field
-import uuid
 
 
 class ReviewVerdict(str, Enum):
@@ -78,7 +79,7 @@ class RunState(BaseModel):
     review_results: list[ReviewFeedback] = []
     refinement_results: list[RefinementResult] = []
     final_output: Optional[str] = None
-    workspace: Optional[str] = None   # path to isolated run workspace
+    workspace: Optional[str] = None  # path to isolated run workspace
     video_path: Optional[str] = None
     pr_url: Optional[str] = None
     board_url: Optional[str] = None

@@ -20,6 +20,7 @@ Filtering:
 Concurrency:
   MAX_CONCURRENT_RUNS (default 3) caps simultaneous loop executions.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -72,6 +73,7 @@ async def _run_loop(goal: str, source: str, working_dir: str | None = None) -> N
         console.print(f"\n[bold green]▶ Webhook trigger[/bold green] [{source}] {goal[:80]}")
         try:
             from talon.loop import run
+
             await run(goal=goal, working_dir=working_dir, skip_board=False)
         except Exception as e:
             console.print(f"[red]Loop error: {e}[/red]")

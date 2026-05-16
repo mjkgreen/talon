@@ -11,6 +11,7 @@ Required env vars (both must be set):
 Optional:
   GITHUB_BASE_BRANCH — target branch for the PR (default: "main")
 """
+
 from __future__ import annotations
 
 import json
@@ -86,12 +87,14 @@ def _create_github_pr(branch: str, state: RunState) -> str | None:
     if state.video_path:
         body_lines.append(f"- **Video:** `{state.video_path}`")
 
-    payload = json.dumps({
-        "title": title,
-        "body": "\n".join(body_lines),
-        "head": branch,
-        "base": GITHUB_BASE_BRANCH,
-    }).encode()
+    payload = json.dumps(
+        {
+            "title": title,
+            "body": "\n".join(body_lines),
+            "head": branch,
+            "base": GITHUB_BASE_BRANCH,
+        }
+    ).encode()
 
     req = urllib.request.Request(
         f"https://api.github.com/repos/{GITHUB_REPO}/pulls",
@@ -131,6 +134,7 @@ async def run(state: RunState, working_dir: str | None) -> str | None:
         return None
 
     from talon.workspace import _is_git_repo
+
     if not _is_git_repo(Path(state.workspace)):
         console.print("  [dim]pr-creator: workspace is not a git repo, skipping[/dim]")
         return None

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from talon.workspace import setup, teardown, _is_git_repo
+from talon.workspace import _is_git_repo
 
 
 @pytest.fixture
@@ -11,9 +11,14 @@ def ws_env(tmp_path, monkeypatch):
     ws_dir = tmp_path / "workspaces"
     monkeypatch.setenv("WORKSPACE_DIR", str(ws_dir))
     # Reload module so WORKSPACE_BASE picks up the new env var
-    import importlib, talon.workspace
+    import importlib
+
+    import talon.workspace
+
     importlib.reload(talon.workspace)
-    from talon.workspace import setup as s, teardown as t
+    from talon.workspace import setup as s
+    from talon.workspace import teardown as t
+
     yield tmp_path, s, t
     importlib.reload(talon.workspace)
 

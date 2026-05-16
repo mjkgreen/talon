@@ -6,6 +6,7 @@ task-executor skill
 3. Each sub-agent runs its own tool-use loop (read/write/run/search)
 4. Aggregates into ExecutorResult
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -31,7 +32,7 @@ Rules:
 - Output ONLY valid JSON matching the schema below. No prose, no markdown fences.
 - Each subtask must be self-contained and independently executable.
 - Produce 3–7 subtasks. Prefer fewer, larger tasks over many tiny ones.
-- acceptance_criteria must be specific and verifiable (e.g. "File src/auth.py exists and contains class UserAuth").
+- acceptance_criteria must be specific and verifiable (e.g. "src/auth.py contains class UserAuth").
 
 Schema:
 {
@@ -148,9 +149,7 @@ async def run(
     subtasks = await _decompose_goal(goal, refinement_text)
     console.print(f"  Decomposed into {len(subtasks)} subtask(s)")
 
-    results = await asyncio.gather(
-        *[_run_subagent(st, goal, working_dir) for st in subtasks]
-    )
+    results = await asyncio.gather(*[_run_subagent(st, goal, working_dir) for st in subtasks])
 
     aggregated = "\n\n".join(
         f"[{r.subtask.id}] {r.subtask.description}\n{r.output}" for r in results

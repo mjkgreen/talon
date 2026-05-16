@@ -10,6 +10,7 @@ Each run gets its own directory so concurrent runs never conflict.
 The isolated path is stored in RunState.workspace so it can be inspected
 or used for PR creation after the run completes.
 """
+
 from __future__ import annotations
 
 import os
@@ -28,7 +29,9 @@ def _is_git_repo(path: Path) -> bool:
     try:
         r = subprocess.run(
             ["git", "rev-parse", "--git-dir"],
-            cwd=str(path), capture_output=True, timeout=5,
+            cwd=str(path),
+            capture_output=True,
+            timeout=5,
         )
         return r.returncode == 0
     except Exception:
@@ -57,13 +60,16 @@ def setup(run_id: str, base_dir: str | None = None) -> str:
         branch = f"agent/run-{run_id}"
         result = subprocess.run(
             ["git", "worktree", "add", "-b", branch, str(run_ws)],
-            cwd=str(base), capture_output=True, text=True,
+            cwd=str(base),
+            capture_output=True,
+            text=True,
         )
         if result.returncode == 0:
             console.print(f"  [dim]workspace → {run_ws} (worktree branch={branch})[/dim]")
             return str(run_ws)
         console.print(
-            f"  [yellow]git worktree failed ({result.stderr.strip()}), falling back to copy[/yellow]"
+            f"  [yellow]git worktree failed ({result.stderr.strip()}),"
+            " falling back to copy[/yellow]"
         )
 
     shutil.copytree(str(base), str(run_ws), dirs_exist_ok=True)
@@ -83,7 +89,8 @@ def teardown(run_id: str, base_dir: str | None, run_workspace: str) -> None:
     if base_dir and _is_git_repo(Path(base_dir).resolve()):
         subprocess.run(
             ["git", "worktree", "remove", "--force", str(ws)],
-            cwd=str(Path(base_dir).resolve()), capture_output=True,
+            cwd=str(Path(base_dir).resolve()),
+            capture_output=True,
         )
     else:
         shutil.rmtree(str(ws), ignore_errors=True)

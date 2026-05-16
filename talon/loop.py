@@ -4,10 +4,9 @@ Core orchestration loop
 executor → reviewer → [pass] → browser-validator → board-updater → done
                     → [fail/needs_work] → refiner → executor (next iteration)
 """
+
 from __future__ import annotations
 
-import asyncio
-import json
 import os
 from datetime import datetime
 from pathlib import Path
@@ -16,10 +15,17 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.rule import Rule
 
-from talon.config import model_config_summary
-from talon.types import ReviewVerdict, RunState, RunStatus
-from talon.skills import task_executor, self_reviewer, refiner, browser_validator, board_updater, pr_creator
 from talon import workspace
+from talon.config import model_config_summary
+from talon.skills import (
+    board_updater,
+    browser_validator,
+    pr_creator,
+    refiner,
+    self_reviewer,
+    task_executor,
+)
+from talon.types import ReviewVerdict, RunState, RunStatus
 
 console = Console()
 
@@ -30,9 +36,7 @@ RUNS_DIR = os.getenv("RUNS_DIR", "./runs")
 def _save_state(state: RunState) -> None:
     run_dir = Path(RUNS_DIR) / state.run_id
     run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "state.json").write_text(
-        state.model_dump_json(indent=2)
-    )
+    (run_dir / "state.json").write_text(state.model_dump_json(indent=2))
 
 
 def _print_header(goal: str, run_id: str) -> None:
@@ -41,11 +45,13 @@ def _print_header(goal: str, run_id: str) -> None:
         f"  [dim]{role:<14}[/dim] {info['model']}  [dim]({info['source']})[/dim]"
         for role, info in cfg.items()
     )
-    console.print(Panel(
-        f"[bold]Goal:[/bold] {goal}\n[dim]Run ID: {run_id}[/dim]\n\n{model_lines}",
-        title="[bold blue]Autonomous Agent Loop[/bold blue]",
-        border_style="blue",
-    ))
+    console.print(
+        Panel(
+            f"[bold]Goal:[/bold] {goal}\n[dim]Run ID: {run_id}[/dim]\n\n{model_lines}",
+            title="[bold blue]Autonomous Agent Loop[/bold blue]",
+            border_style="blue",
+        )
+    )
 
 
 def _print_footer(state: RunState) -> None:

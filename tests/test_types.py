@@ -1,6 +1,9 @@
 from talon.types import (
-    ExecutorResult, ReviewFeedback, ReviewVerdict, RefinementResult,
-    RunState, RunStatus, Subtask, SubtaskResult,
+    ReviewFeedback,
+    ReviewVerdict,
+    RunState,
+    RunStatus,
+    Subtask,
 )
 
 

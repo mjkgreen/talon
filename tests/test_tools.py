@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from talon.tools import dispatch_tool, TOOL_DEFINITIONS
+from talon.tools import TOOL_DEFINITIONS, dispatch_tool
 
 
 @pytest.fixture

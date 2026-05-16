@@ -1,11 +1,9 @@
 import hashlib
 import hmac
-import json
 
-import pytest
 from fastapi.testclient import TestClient
 
-from talon.webhook import app, _verify_hmac, _extract_labels
+from talon.webhook import _extract_labels, _verify_hmac, app
 
 client = TestClient(app)
 
@@ -70,7 +68,8 @@ class TestLinearWebhook:
     def test_label_filter_blocks_untagged(self, monkeypatch):
         monkeypatch.setenv("WEBHOOK_LABEL", "agent-task")
         payload = {
-            "action": "create", "type": "Issue",
+            "action": "create",
+            "type": "Issue",
             "data": {"title": "Fix bug", "labels": [{"name": "other"}]},
         }
         r = client.post("/webhook/linear", json=payload)
@@ -79,9 +78,11 @@ class TestLinearWebhook:
 
     def test_no_label_filter_accepts_all(self, monkeypatch):
         import talon.webhook
+
         monkeypatch.setattr(talon.webhook, "WEBHOOK_LABEL", "")
         payload = {
-            "action": "create", "type": "Issue",
+            "action": "create",
+            "type": "Issue",
             "data": {"title": "Do the thing", "labels": []},
         }
         r = client.post("/webhook/linear", json=payload)
@@ -90,7 +91,10 @@ class TestLinearWebhook:
 
     def test_bad_signature_rejected(self, monkeypatch):
         monkeypatch.setenv("LINEAR_WEBHOOK_SECRET", "real-secret")
-        import importlib, talon.webhook
+        import importlib
+
+        import talon.webhook
+
         importlib.reload(talon.webhook)
         c = TestClient(talon.webhook.app)
         r = c.post("/webhook/linear", json={}, headers={"Linear-Signature": "wrong"})
@@ -101,7 +105,8 @@ class TestLinearWebhook:
 class TestGithubWebhook:
     def test_non_issue_event_skipped(self):
         r = client.post(
-            "/webhook/github", json={"action": "opened"},
+            "/webhook/github",
+            json={"action": "opened"},
             headers={"X-GitHub-Event": "push"},
         )
         assert r.status_code == 200
@@ -130,7 +135,11 @@ class TestGithubWebhook:
         monkeypatch.setenv("WEBHOOK_LABEL", "agent-task")
         payload = {
             "action": "opened",
-            "issue": {"title": "Do the thing", "body": "Details", "labels": [{"name": "agent-task"}]},
+            "issue": {
+                "title": "Do the thing",
+                "body": "Details",
+                "labels": [{"name": "agent-task"}],
+            },
         }
         r = client.post("/webhook/github", json=payload, headers={"X-GitHub-Event": "issues"})
         assert r.status_code == 200

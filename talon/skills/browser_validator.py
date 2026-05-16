@@ -12,6 +12,7 @@ To enable:
   playwright install chromium
   Set BROWSER_VALIDATOR_ENABLED=true in .env
 """
+
 from __future__ import annotations
 
 import os
@@ -33,7 +34,8 @@ async def run(state: RunState, app_url: str, runs_dir: str) -> str | None:
     """
     if not ENABLED:
         console.print(
-            "\n[dim]browser-validator[/dim] [dim](disabled — set BROWSER_VALIDATOR_ENABLED=true)[/dim]"
+            "\n[dim]browser-validator[/dim] "
+            "[dim](disabled — set BROWSER_VALIDATOR_ENABLED=true)[/dim]"
         )
         return None
 

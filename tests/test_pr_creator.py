@@ -8,10 +8,10 @@ import pytest
 from talon.skills.pr_creator import _commit_and_push, _create_github_pr
 from talon.types import ReviewFeedback, ReviewVerdict, RunState
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_git_repo(path: Path) -> Path:
     """Init a bare 'remote' and a working clone; return the clone path."""
@@ -41,7 +41,8 @@ def _make_worktree(repo: Path, run_id: str) -> Path:
     wt = repo.parent / f"wt-{run_id}"
     subprocess.run(
         ["git", "worktree", "add", "-b", branch, str(wt)],
-        cwd=repo, capture_output=True,
+        cwd=repo,
+        capture_output=True,
     )
     return wt
 
@@ -55,6 +56,7 @@ def _make_state(workspace: str | None = None) -> RunState:
 # ---------------------------------------------------------------------------
 # _commit_and_push
 # ---------------------------------------------------------------------------
+
 
 class TestCommitAndPush:
     def test_pushes_clean_worktree(self, tmp_path):
@@ -76,7 +78,9 @@ class TestCommitAndPush:
 
         log = subprocess.run(
             ["git", "log", "--oneline", "-1"],
-            cwd=str(wt), capture_output=True, text=True,
+            cwd=str(wt),
+            capture_output=True,
+            text=True,
         )
         assert "Add health endpoint" in log.stdout
 
@@ -92,7 +96,9 @@ class TestCommitAndPush:
 
         log = subprocess.run(
             ["git", "log", "--format=%s", "-1"],
-            cwd=str(wt), capture_output=True, text=True,
+            cwd=str(wt),
+            capture_output=True,
+            text=True,
         )
         subject = log.stdout.strip()
         assert len(subject) <= 80  # "feat: " + 69 chars + "…"
@@ -105,6 +111,7 @@ class TestCommitAndPush:
 # ---------------------------------------------------------------------------
 # _create_github_pr
 # ---------------------------------------------------------------------------
+
 
 class TestCreateGithubPr:
     def _mock_response(self, pr_url: str):
@@ -131,15 +138,17 @@ class TestCreateGithubPr:
         monkeypatch.setattr("talon.skills.pr_creator.GITHUB_REPO", "owner/repo")
 
         state = _make_state()
-        state.review_results.append(ReviewFeedback(
-            verdict=ReviewVerdict.PASS,
-            score=0.95,
-            summary="Looks good",
-            criteria=[],
-            blocking_issues=[],
-            suggestions=[],
-            iteration=1,
-        ))
+        state.review_results.append(
+            ReviewFeedback(
+                verdict=ReviewVerdict.PASS,
+                score=0.95,
+                summary="Looks good",
+                criteria=[],
+                blocking_issues=[],
+                suggestions=[],
+                iteration=1,
+            )
+        )
 
         captured = {}
 
@@ -154,12 +163,20 @@ class TestCreateGithubPr:
 
     def test_returns_none_on_http_error(self, monkeypatch):
         import urllib.error
+
         monkeypatch.setattr("talon.skills.pr_creator.GITHUB_TOKEN", "tok")
         monkeypatch.setattr("talon.skills.pr_creator.GITHUB_REPO", "owner/repo")
 
-        with patch("urllib.request.urlopen", side_effect=urllib.error.HTTPError(
-            url="", code=422, msg="Unprocessable", hdrs=None, fp=MagicMock(read=lambda: b"err"),
-        )):
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=urllib.error.HTTPError(
+                url="",
+                code=422,
+                msg="Unprocessable",
+                hdrs=None,
+                fp=MagicMock(read=lambda: b"err"),
+            ),
+        ):
             result = _create_github_pr("agent/run-abc", _make_state())
 
         assert result is None
@@ -169,12 +186,14 @@ class TestCreateGithubPr:
 # pr_creator.run()
 # ---------------------------------------------------------------------------
 
+
 class TestPrCreatorRun:
     @pytest.mark.asyncio
     async def test_skips_when_no_workspace(self, monkeypatch):
         monkeypatch.setattr("talon.skills.pr_creator.GITHUB_TOKEN", "tok")
         monkeypatch.setattr("talon.skills.pr_creator.GITHUB_REPO", "owner/repo")
         from talon.skills import pr_creator
+
         result = await pr_creator.run(_make_state(workspace=None), None)
         assert result is None
 
@@ -183,6 +202,7 @@ class TestPrCreatorRun:
         monkeypatch.setattr("talon.skills.pr_creator.GITHUB_TOKEN", "")
         monkeypatch.setattr("talon.skills.pr_creator.GITHUB_REPO", "owner/repo")
         from talon.skills import pr_creator
+
         result = await pr_creator.run(_make_state(workspace="/tmp"), None)
         assert result is None
 
@@ -193,6 +213,7 @@ class TestPrCreatorRun:
         plain = tmp_path / "plain"
         plain.mkdir()
         from talon.skills import pr_creator
+
         result = await pr_creator.run(_make_state(workspace=str(plain)), None)
         assert result is None
 
@@ -217,6 +238,7 @@ class TestPrCreatorRun:
         response.read.return_value = json.dumps({"html_url": pr_url}).encode()
 
         from talon.skills import pr_creator
+
         with patch("urllib.request.urlopen", return_value=response):
             result = await pr_creator.run(state, None)
 

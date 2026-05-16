@@ -1,5 +1,6 @@
 import pytest
-from talon.config import resolve_model, model_config_summary, _resolution_source
+
+from talon.config import _resolution_source, model_config_summary, resolve_model
 
 
 class TestAutoSelection:
