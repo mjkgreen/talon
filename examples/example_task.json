@@ -1,0 +1,25 @@
+{
+  "description": "Example: run the loop against a simple coding task",
+  "commands": [
+    "python -m src.main run \"Create a Python module src/calculator.py with add, subtract, multiply, divide functions and a test file tests/test_calculator.py\" --working-dir ./workspace --skip-board"
+  ],
+  "expected_loop": {
+    "iteration_1": {
+      "task_executor": "Decomposes into subtasks: create calculator.py, create tests, run tests",
+      "self_reviewer": "Checks files exist, imports work, tests pass",
+      "outcome": "pass (ideally) or needs_work"
+    },
+    "iteration_2_if_needed": {
+      "refiner": "Addresses any failing tests or missing functions",
+      "task_executor": "Re-implements with fixes",
+      "self_reviewer": "Re-evaluates"
+    }
+  },
+  "sample_goals": [
+    "Add a /health endpoint returning {status: ok} to src/app.py",
+    "Refactor src/utils.py to use dataclasses instead of dicts",
+    "Add input validation and error handling to the POST /users endpoint",
+    "Write unit tests for all functions in src/auth.py",
+    "Convert the callback-based API in src/db.js to async/await"
+  ]
+}
