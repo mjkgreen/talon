@@ -13,9 +13,9 @@ class TestAutoSelection:
 
     def test_gemini_only(self, monkeypatch):
         monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-        assert resolve_model("orchestrator") == "gemini/gemini-1.5-pro"
-        assert resolve_model("subagent") == "gemini/gemini-1.5-pro"
-        assert resolve_model("refiner") == "gemini/gemini-2.0-flash"
+        assert resolve_model("orchestrator") == "gemini/gemini-flash-latest"
+        assert resolve_model("subagent") == "gemini/gemini-flash-latest"
+        assert resolve_model("refiner") == "gemini/gemini-flash-latest"
 
     def test_openai_only(self, monkeypatch):
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
