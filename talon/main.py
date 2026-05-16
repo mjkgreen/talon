@@ -149,7 +149,7 @@ def cmd_serve(port: int) -> None:
     console.print("  GET  /health          — health check")
     console.print("  GET  /docs            — OpenAPI docs\n")
 
-    from talon.webhook import app
+    from talon.server import app
 
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
 

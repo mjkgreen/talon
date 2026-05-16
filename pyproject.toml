@@ -26,6 +26,8 @@ dependencies = [
   "fastapi>=0.111.0",
   "uvicorn>=0.29.0",
   "asyncio-throttle>=1.0.2",
+  "websockets>=12.0",
+  "aiosqlite>=0.20.0",
 ]
 
 [project.optional-dependencies]
