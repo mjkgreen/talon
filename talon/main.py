@@ -56,6 +56,10 @@ def cmd_run(goal: str, working_dir: str | None, app_url: str | None, skip_board:
     console.print(f"\n[dim]Full run saved to: {Path(runs_dir) / state.run_id / 'state.json'}[/dim]")
     if state.workspace:
         console.print(f"[dim]Workspace kept at:  {state.workspace}[/dim]")
+    if state.pr_url:
+        console.print(f"[green]PR opened:           {state.pr_url}[/green]")
+    if state.board_url:
+        console.print(f"[green]Board updated:       {state.board_url}[/green]")
     sys.exit(0 if state.status == "passed" else 1)
 
 
@@ -70,7 +74,7 @@ def cmd_list() -> None:
     table.add_column("Status")
     table.add_column("Score")
     table.add_column("Iter")
-    table.add_column("Workspace")
+    table.add_column("PR")
     table.add_column("Goal")
 
     for run_dir in sorted(runs_dir.iterdir(), reverse=True):
@@ -82,14 +86,14 @@ def cmd_list() -> None:
         score = f"{last_review.get('score', 0):.2f}" if last_review else "—"
         status = data["status"]
         color = "green" if status == "passed" else "red"
-        ws = data.get("workspace") or "—"
-        ws_display = Path(ws).name if ws != "—" else "—"
+        pr = data.get("pr_url") or "—"
+        pr_display = f"[link={pr}]#{pr.split('/')[-1]}[/link]" if pr != "—" else "—"
         table.add_row(
             data["run_id"],
             f"[{color}]{status}[/{color}]",
             score,
             str(data["iteration"]),
-            ws_display,
+            pr_display,
             data["goal"][:50],
         )
 
