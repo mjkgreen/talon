@@ -18,7 +18,7 @@ from rich.rule import Rule
 
 from talon.config import model_config_summary
 from talon.types import ReviewVerdict, RunState, RunStatus
-from talon.skills import task_executor, self_reviewer, refiner, browser_validator, board_updater
+from talon.skills import task_executor, self_reviewer, refiner, browser_validator, board_updater, pr_creator
 from talon import workspace
 
 console = Console()
@@ -146,9 +146,15 @@ async def run(
         state.video_path = video_path
         _save_state(state)
 
-    # --- Step 5: Board update ---
+    # --- Step 5: Create PR ---
+    if state.status == RunStatus.PASSED:
+        pr_url = await pr_creator.run(state, working_dir)
+        state.pr_url = pr_url
+        _save_state(state)
+
+    # --- Step 6: Board update ---
     if not skip_board:
-        board_url = await board_updater.run(state, state.video_path)
+        board_url = await board_updater.run(state, state.video_path, state.pr_url)
         state.board_url = board_url
         _save_state(state)
 
