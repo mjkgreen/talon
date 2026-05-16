@@ -29,6 +29,8 @@ export default function KanbanBoard() {
   const [issues, setIssues] = useState<Issue[]>([]);
   const [newTitle, setNewTitle] = useState('');
   
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [newDescription, setNewDescription] = useState('');
   // Wizard State: 0 = Hidden, 1 = PAT Step, 2 = Repo Step
   const [wizardStep, setWizardStep] = useState(0);
   const [isConfigured, setIsConfigured] = useState(true);
@@ -152,10 +154,14 @@ export default function KanbanBoard() {
     const res = await fetch(apiUrl('/api/issues'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: newTitle, status: 'Backlog' })
+      body: JSON.stringify({ title: newTitle, description: newDescription, status: 'Backlog' })
     });
     
-    if (res.ok) setNewTitle('');
+    if (res.ok) {
+      setNewTitle('');
+      setNewDescription('');
+      setIsAddModalOpen(false);
+    }
   };
 
   const deleteIssue = async (id: number) => {
@@ -211,18 +217,12 @@ export default function KanbanBoard() {
                 Sync Issues
               </button>
             )}
-            <form onSubmit={addIssue} className="flex gap-2">
-              <input
-                type="text"
-                value={newTitle}
-                onChange={e => setNewTitle(e.target.value)}
-                placeholder="Add a new task..."
-                className="bg-neutral-800 border border-neutral-700 rounded px-4 py-2 text-sm focus:outline-none focus:border-blue-500 w-64"
-              />
-              <button type="submit" className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded flex items-center gap-2 text-sm transition-colors">
-                <Plus size={16} /> Add
-              </button>
-            </form>
+            <button 
+              onClick={() => setIsAddModalOpen(true)}
+              className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded flex items-center gap-2 text-sm transition-colors"
+            >
+              <Plus size={16} /> Add Task
+            </button>
             <button 
               onClick={() => {
                 // If opening settings from the gear icon, start at step 1
@@ -310,6 +310,53 @@ export default function KanbanBoard() {
           </div>
         </DragDropContext>
       </div>
+
+      {isAddModalOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
+          <div className="bg-neutral-900 border border-neutral-800 p-6 rounded-xl w-full max-w-lg shadow-2xl">
+            <h2 className="text-xl font-bold mb-4">Add New Task</h2>
+            <form onSubmit={addIssue} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-neutral-300 mb-1">Title</label>
+                <input 
+                  type="text" 
+                  value={newTitle}
+                  onChange={e => setNewTitle(e.target.value)}
+                  autoFocus
+                  placeholder="e.g., Create a new landing page"
+                  className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-neutral-300 mb-1">Description (Optional)</label>
+                <textarea 
+                  value={newDescription}
+                  onChange={e => setNewDescription(e.target.value)}
+                  placeholder="Provide any additional context, instructions, or acceptance criteria for the agent..."
+                  rows={5}
+                  className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all resize-none"
+                />
+              </div>
+              <div className="flex justify-end gap-3 mt-6">
+                <button 
+                  type="button"
+                  onClick={() => setIsAddModalOpen(false)}
+                  className="px-4 py-2 text-sm text-neutral-400 hover:text-white"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit"
+                  disabled={!newTitle.trim()}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-neutral-800 disabled:text-neutral-500 text-white rounded text-sm transition-colors"
+                >
+                  Create Task
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {wizardStep > 0 && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 backdrop-blur-sm">

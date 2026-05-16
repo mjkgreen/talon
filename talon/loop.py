@@ -116,8 +116,8 @@ async def run(
         )
         state.executor_results.append(exec_result)
         _save_state(state)
-    if on_step:
-        await on_step(state)
+        if on_step:
+            await on_step(state)
 
         # --- Step 2: Review ---
         review = await self_reviewer.run(
@@ -127,8 +127,8 @@ async def run(
         )
         state.review_results.append(review)
         _save_state(state)
-    if on_step:
-        await on_step(state)
+        if on_step:
+            await on_step(state)
 
         if review.verdict == ReviewVerdict.PASS:
             state.status = RunStatus.PASSED
@@ -148,8 +148,8 @@ async def run(
         )
         state.refinement_results.append(refinement)
         _save_state(state)
-    if on_step:
-        await on_step(state)
+        if on_step:
+            await on_step(state)
 
     state.finished_at = datetime.utcnow()
 

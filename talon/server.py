@@ -226,6 +226,15 @@ async def sync_github_issues():
 async def get_issues():
     return await db.list_issues()
 
+@app.get("/api/runs/{run_id}")
+async def get_run_state(run_id: str):
+    run_dir = os.path.join(os.getenv("RUNS_DIR", "./runs"), run_id)
+    state_file = os.path.join(run_dir, "state.json")
+    if os.path.exists(state_file):
+        with open(state_file, "r") as f:
+            return json.load(f)
+    raise HTTPException(status_code=404, detail="Run state not found")
+
 @app.post("/api/issues")
 async def create_issue(issue: db.IssueCreate, background_tasks: BackgroundTasks):
     new_issue = await db.create_issue(issue)
