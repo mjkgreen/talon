@@ -33,14 +33,26 @@ self-reviewer          Inspects files + runs tests, returns pass/fail + score
 
 ## Model selection
 
-Set `AGENT_MODEL` in `.env` using LiteLLM's provider-prefix format:
+Three modes — pick one in `.env`:
 
+**Auto** (just set API keys, leave model vars unset):
 ```
-AGENT_MODEL=openai/gpt-4o              OPENAI_API_KEY=sk-...
-AGENT_MODEL=openai/o3                  # stronger reasoning
-AGENT_MODEL=gemini/gemini-2.0-flash    GEMINI_API_KEY=...
-AGENT_MODEL=anthropic/claude-sonnet-4-6  ANTHROPIC_API_KEY=sk-ant-...
-AGENT_MODEL=groq/llama3-70b-8192       GROQ_API_KEY=...
+OPENAI_API_KEY=sk-...
+GEMINI_API_KEY=...
+# System picks best model per role from what's available
+```
+
+**Global override** (one model everywhere):
+```
+AGENT_MODEL=openai/gpt-4o   OPENAI_API_KEY=sk-...
+```
+
+**Per-role** (full control):
+```
+ORCHESTRATOR_MODEL=openai/o3                  # reasoning
+SUBAGENT_MODEL=openai/gpt-4o                  # coding
+REVIEWER_MODEL=openai/o3                      # strict review
+REFINER_MODEL=gemini/gemini-2.0-flash         # fast synthesis
 ```
 
 Full provider list: https://docs.litellm.ai/docs/providers

@@ -83,7 +83,7 @@ def _build_review_prompt(goal: str, executor_result: ExecutorResult, working_dir
 
 
 async def run(goal: str, executor_result: ExecutorResult, working_dir: str) -> ReviewFeedback:
-    provider = get_provider()
+    provider = get_provider("reviewer")
     iteration = executor_result.iteration
 
     console.print(f"\n[bold yellow]self-reviewer[/bold yellow] iteration={iteration}")

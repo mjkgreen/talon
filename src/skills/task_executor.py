@@ -58,7 +58,7 @@ Rules:
 
 
 async def _decompose_goal(goal: str, refinement: str | None) -> list[Subtask]:
-    provider = get_provider()
+    provider = get_provider("orchestrator")
     user_content = f"Goal: {goal}"
     if refinement:
         user_content += f"\n\nRefinement instructions from previous review:\n{refinement}"
@@ -81,7 +81,7 @@ async def _decompose_goal(goal: str, refinement: str | None) -> list[Subtask]:
 
 async def _run_subagent(subtask: Subtask, goal: str, working_dir: str) -> SubtaskResult:
     console.print(f"  [cyan]→ Sub-agent[/cyan] [{subtask.id}] {subtask.description[:70]}")
-    provider = get_provider()
+    provider = get_provider("subagent")
 
     messages: list[dict] = [
         {

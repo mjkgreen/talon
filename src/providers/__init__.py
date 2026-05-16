@@ -1,22 +1,18 @@
 """
 Provider factory.
 
-Model is selected via AGENT_MODEL in .env using LiteLLM's provider-prefix format:
-  anthropic/claude-sonnet-4-6    ANTHROPIC_API_KEY
-  openai/gpt-4o                  OPENAI_API_KEY
-  gemini/gemini-2.0-flash        GEMINI_API_KEY
-  groq/llama3-70b-8192           GROQ_API_KEY
+  get_provider(role)  →  LiteLLMProvider configured for that role's model.
 
-Full model list: https://docs.litellm.ai/docs/providers
+Model resolution is handled by src.config.resolve_model — see that module
+for the full priority/override logic.
 """
 from __future__ import annotations
 
-import os
-
+from src.config import resolve_model
 from src.providers.base import BaseProvider
 from src.providers.litellm_p import LiteLLMProvider
 
 
-def get_provider() -> BaseProvider:
-    model = os.getenv("AGENT_MODEL", "anthropic/claude-sonnet-4-6")
+def get_provider(role: str = "subagent") -> BaseProvider:
+    model = resolve_model(role)
     return LiteLLMProvider(model=model)

@@ -57,7 +57,7 @@ def _build_prompt(goal: str, executor_result: ExecutorResult, feedback: ReviewFe
 
 
 async def run(goal: str, executor_result: ExecutorResult, feedback: ReviewFeedback) -> RefinementResult:
-    provider = get_provider()
+    provider = get_provider("refiner")
     iteration = feedback.iteration
 
     console.print(f"\n[bold magenta]refiner[/bold magenta] iteration={iteration}")

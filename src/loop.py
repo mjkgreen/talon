@@ -16,6 +16,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.rule import Rule
 
+from src.config import model_config_summary
 from src.types import ReviewVerdict, RunState, RunStatus
 from src.skills import task_executor, self_reviewer, refiner, browser_validator, board_updater
 
@@ -35,8 +36,13 @@ def _save_state(state: RunState) -> None:
 
 
 def _print_header(goal: str, run_id: str) -> None:
+    cfg = model_config_summary()
+    model_lines = "\n".join(
+        f"  [dim]{role:<14}[/dim] {info['model']}  [dim]({info['source']})[/dim]"
+        for role, info in cfg.items()
+    )
     console.print(Panel(
-        f"[bold]Goal:[/bold] {goal}\n[dim]Run ID: {run_id}[/dim]",
+        f"[bold]Goal:[/bold] {goal}\n[dim]Run ID: {run_id}[/dim]\n\n{model_lines}",
         title="[bold blue]Autonomous Agent Loop[/bold blue]",
         border_style="blue",
     ))

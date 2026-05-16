@@ -71,15 +71,24 @@ python -m src.main review <run-id>         # dump run state JSON
 
 ## Environment variables
 
-See `.env.example` for the full list. Model routing uses LiteLLM — set `AGENT_MODEL` to any supported model string:
+See `.env.example` for the full list. Model routing uses LiteLLM.
 
+**Auto mode** (recommended): set API keys, leave model vars unset — the system picks the best model for each role.
+
+**Global override**: one model for all roles:
 ```
-AGENT_MODEL=anthropic/claude-sonnet-4-6   ANTHROPIC_API_KEY=sk-ant-...
-AGENT_MODEL=openai/gpt-4o                 OPENAI_API_KEY=sk-...
-AGENT_MODEL=gemini/gemini-2.0-flash       GEMINI_API_KEY=...
-AGENT_MODEL=groq/llama3-70b-8192          GROQ_API_KEY=...
+AGENT_MODEL=gemini/gemini-2.0-flash   GEMINI_API_KEY=...
 ```
 
+**Per-role assignment** (full control):
+```
+ORCHESTRATOR_MODEL=gemini/gemini-1.5-pro    # goal decomposition (reasoning-heavy)
+SUBAGENT_MODEL=anthropic/claude-sonnet-4-6  # code writing
+REVIEWER_MODEL=gemini/gemini-1.5-pro        # quality gate (reasoning-heavy)
+REFINER_MODEL=gemini/gemini-2.0-flash       # fix planning (speed-optimised)
+```
+
+Resolution order per role: `{ROLE}_MODEL` → `AGENT_MODEL` → auto.  
 Full provider list: https://docs.litellm.ai/docs/providers
 
 ## Phase 2 TODOs
