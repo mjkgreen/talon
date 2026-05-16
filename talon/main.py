@@ -2,12 +2,12 @@
 CLI entry point for the autonomous agent system.
 
 Usage:
-  python -m src.main run "Add user authentication to the Express API"
-  python -m src.main run "..." --working-dir ./my-project --url http://localhost:3000
-  python -m src.main list
-  python -m src.main review <run-id>
-  python -m src.main cleanup <run-id>
-  python -m src.main serve [--port 8080]
+  talon run "Add user authentication to the Express API"
+  talon run "..." --working-dir ./my-project --url http://localhost:3000
+  talon list
+  talon review <run-id>
+  talon cleanup <run-id>
+  talon serve [--port 8080]
 """
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ def _check_env() -> None:
 
 
 def cmd_run(goal: str, working_dir: str | None, app_url: str | None, skip_board: bool) -> None:
-    from src.loop import run
+    from talon.loop import run
     _check_env()
     state = asyncio.run(run(goal=goal, working_dir=working_dir, app_url=app_url, skip_board=skip_board))
     runs_dir = os.getenv("RUNS_DIR", "./runs")
@@ -111,7 +111,7 @@ def cmd_cleanup(run_id: str) -> None:
         console.print(f"[dim]Run {run_id} has no workspace to clean up.[/dim]")
         return
 
-    from src import workspace
+    from talon import workspace
     working_dir = None  # we don't track the original base_dir; teardown handles both cases
     workspace.teardown(run_id, working_dir, ws)
 
@@ -136,7 +136,7 @@ def cmd_serve(port: int) -> None:
     console.print(f"  GET  /health          — health check")
     console.print(f"  GET  /docs            — OpenAPI docs\n")
 
-    from src.webhook import app
+    from talon.webhook import app
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
 
 
@@ -151,7 +151,7 @@ def main() -> None:
 
     if cmd == "run":
         if len(args) < 2:
-            console.print("[red]Usage: python -m src.main run <goal>[/red]")
+            console.print("[red]Usage: talon run <goal>[/red]")
             sys.exit(1)
         goal = args[1]
         working_dir = None
@@ -174,13 +174,13 @@ def main() -> None:
 
     elif cmd == "review":
         if len(args) < 2:
-            console.print("[red]Usage: python -m src.main review <run-id>[/red]")
+            console.print("[red]Usage: talon review <run-id>[/red]")
             sys.exit(1)
         cmd_review(args[1])
 
     elif cmd == "cleanup":
         if len(args) < 2:
-            console.print("[red]Usage: python -m src.main cleanup <run-id>[/red]")
+            console.print("[red]Usage: talon cleanup <run-id>[/red]")
             sys.exit(1)
         cmd_cleanup(args[1])
 

@@ -24,14 +24,14 @@ Run the **self-reviewer** skill: evaluate whether an executor's output actually 
 
 ```bash
 # Review the latest run
-python -m src.main list          # find a run-id
-python -m src.main review <run-id>
+talon list          # find a run-id
+talon review <run-id>
 ```
 
 Or run the full loop which includes review automatically:
 
 ```bash
-python -m src.main run "your goal here"
+talon run "your goal here"
 ```
 
 ## Pass threshold

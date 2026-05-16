@@ -14,10 +14,10 @@ import os
 
 from rich.console import Console
 
-from src.providers import get_provider
-from src.providers.base import ToolResult
-from src.tools import TOOL_DEFINITIONS, dispatch_tool
-from src.types import ExecutorResult, RefinementResult, Subtask, SubtaskResult
+from talon.providers import get_provider
+from talon.providers.base import ToolResult
+from talon.tools import TOOL_DEFINITIONS, dispatch_tool
+from talon.types import ExecutorResult, RefinementResult, Subtask, SubtaskResult
 
 console = Console()
 

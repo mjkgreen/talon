@@ -2,7 +2,7 @@
 Webhook listener — receives Linear and GitHub events and triggers the agent loop.
 
 Start:
-  python -m src.main serve [--port 8080]
+  talon serve [--port 8080]
 
 Linear setup:
   Settings → API → Webhooks → URL: https://your-host/webhook/linear
@@ -71,7 +71,7 @@ async def _run_loop(goal: str, source: str, working_dir: str | None = None) -> N
     async with sem:
         console.print(f"\n[bold green]▶ Webhook trigger[/bold green] [{source}] {goal[:80]}")
         try:
-            from src.loop import run
+            from talon.loop import run
             await run(goal=goal, working_dir=working_dir, skip_board=False)
         except Exception as e:
             console.print(f"[red]Loop error: {e}[/red]")

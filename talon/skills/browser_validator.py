@@ -19,7 +19,7 @@ from pathlib import Path
 
 from rich.console import Console
 
-from src.types import RunState
+from talon.types import RunState
 
 console = Console()
 

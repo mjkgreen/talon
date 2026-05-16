@@ -32,7 +32,7 @@ BROWSER_VALIDATOR_ENABLED=true
 ## Run with the full loop
 
 ```bash
-python -m src.main run "your goal" --url http://localhost:3000
+talon run "your goal" --url http://localhost:3000
 ```
 
 The browser-validator only runs if the loop reaches `pass` status.

@@ -16,10 +16,10 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.rule import Rule
 
-from src.config import model_config_summary
-from src.types import ReviewVerdict, RunState, RunStatus
-from src.skills import task_executor, self_reviewer, refiner, browser_validator, board_updater
-from src import workspace
+from talon.config import model_config_summary
+from talon.types import ReviewVerdict, RunState, RunStatus
+from talon.skills import task_executor, self_reviewer, refiner, browser_validator, board_updater
+from talon import workspace
 
 console = Console()
 

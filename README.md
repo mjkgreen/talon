@@ -1,4 +1,4 @@
-# matthews-agentic-setup
+# talon-agent
 
 Autonomous agentic coding system. Give it a goal; it decomposes the work into subtasks, runs parallel sub-agents to implement them, reviews the result, iterates until passing, records a video walkthrough, and posts to your Kanban board — no Matthew required.
 
@@ -30,8 +30,8 @@ reviewer            Reads files, runs tests, returns pass/fail + score (0–1)
 
 ```bash
 cp .env.example .env      # add at least one API key
-pip install -r requirements.txt
-python -m src.main run "Add a /health endpoint to the Flask app" --working-dir ./workspace
+pip install -e .
+talon run "Add a /health endpoint to the Flask app" --working-dir ./workspace
 ```
 
 ## Model configuration
@@ -78,14 +78,14 @@ Per-role vars override `AGENT_MODEL` which overrides auto. The run header always
 ## CLI
 
 ```bash
-python -m src.main run "goal"                          # full loop
-python -m src.main run "goal" --working-dir ./my-app  # branch from existing project
-python -m src.main run "goal" --url http://localhost:3000  # + browser recording
-python -m src.main run "goal" --skip-board             # skip Linear/GitHub post
-python -m src.main list                                # show all runs + workspaces
-python -m src.main review <run-id>                     # dump run state JSON
-python -m src.main cleanup <run-id>                    # remove kept workspace
-python -m src.main serve [--port 8080]                 # start webhook listener
+talon run "goal"                          # full loop
+talon run "goal" --working-dir ./my-app  # branch from existing project
+talon run "goal" --url http://localhost:3000  # + browser recording
+talon run "goal" --skip-board             # skip Linear/GitHub post
+talon list                                # show all runs + workspaces
+talon review <run-id>                     # dump run state JSON
+talon cleanup <run-id>                    # remove kept workspace
+talon serve [--port 8080]                 # start webhook listener
 ```
 
 ## Workspace isolation
@@ -100,14 +100,14 @@ Every run gets its own isolated directory so concurrent runs never conflict.
 
 On **pass**: workspace is kept at `workspace/<run-id>/` — inspect the code or create a PR.  
 On **fail**: workspace is removed automatically.  
-Use `python -m src.main cleanup <run-id>` to remove a kept workspace when done.
+Use `talon cleanup <run-id>` to remove a kept workspace when done.
 
 ## Webhook listener
 
 Start the server once; it triggers a full loop run whenever a tagged issue arrives.
 
 ```bash
-python -m src.main serve --port 8080
+talon serve --port 8080
 ```
 
 ### Linear setup
@@ -137,17 +137,17 @@ The server accepts up to `MAX_CONCURRENT_RUNS` (default 3) simultaneous runs; ad
 
 | Path | Purpose |
 |------|---------|
-| `src/config.py` | Model resolution: per-role env vars, global fallback, auto-select |
-| `src/providers/litellm_p.py` | LiteLLM wrapper — normalises tool calling across all providers |
-| `src/tools.py` | Tool implementations: `read_file`, `write_file`, `run_command`, `search_files` |
-| `src/types.py` | Pydantic models: `RunState`, `ExecutorResult`, `ReviewFeedback`, … |
-| `src/skills/task_executor.py` | Goal decomposition + concurrent sub-agent runner |
-| `src/skills/self_reviewer.py` | Reviewer tool-use loop + JSON verdict |
-| `src/skills/refiner.py` | Blocking issues → refined action plan |
-| `src/skills/browser_validator.py` | Playwright recording (opt-in) |
-| `src/skills/board_updater.py` | Linear API poster |
-| `src/loop.py` | Orchestrates the full loop, persists state after every step |
-| `src/main.py` | CLI entry point |
+| `talon/config.py` | Model resolution: per-role env vars, global fallback, auto-select |
+| `talon/providers/litellm_p.py` | LiteLLM wrapper — normalises tool calling across all providers |
+| `talon/tools.py` | Tool implementations: `read_file`, `write_file`, `run_command`, `search_files` |
+| `talon/types.py` | Pydantic models: `RunState`, `ExecutorResult`, `ReviewFeedback`, … |
+| `talon/skills/task_executor.py` | Goal decomposition + concurrent sub-agent runner |
+| `talon/skills/self_reviewer.py` | Reviewer tool-use loop + JSON verdict |
+| `talon/skills/refiner.py` | Blocking issues → refined action plan |
+| `talon/skills/browser_validator.py` | Playwright recording (opt-in) |
+| `talon/skills/board_updater.py` | Linear API poster |
+| `talon/loop.py` | Orchestrates the full loop, persists state after every step |
+| `talon/main.py` | CLI entry point |
 | `runs/<id>/state.json` | Full audit trail for every run |
 | `workspace/` | Default directory where sub-agents read/write code |
 

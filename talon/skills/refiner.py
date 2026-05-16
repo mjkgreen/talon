@@ -12,8 +12,8 @@ import os
 
 from rich.console import Console
 
-from src.providers import get_provider
-from src.types import ExecutorResult, ReviewFeedback, RefinementResult
+from talon.providers import get_provider
+from talon.types import ExecutorResult, ReviewFeedback, RefinementResult
 
 console = Console()
 

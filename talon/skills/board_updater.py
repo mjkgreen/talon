@@ -19,7 +19,7 @@ from pathlib import Path
 import anthropic
 from rich.console import Console
 
-from src.types import RunState, RunStatus
+from talon.types import RunState, RunStatus
 
 console = Console()
 

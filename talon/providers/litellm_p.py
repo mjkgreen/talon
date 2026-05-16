@@ -19,7 +19,7 @@ import os
 
 import litellm
 
-from src.providers.base import BaseProvider, ProviderResponse, ToolCall, ToolResult
+from talon.providers.base import BaseProvider, ProviderResponse, ToolCall, ToolResult
 
 litellm.drop_params = True  # silently drop unsupported params per-provider
 
