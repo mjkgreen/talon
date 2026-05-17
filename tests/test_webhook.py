@@ -1,9 +1,11 @@
 import hashlib
 import hmac
+from unittest.mock import AsyncMock
 
 from fastapi.testclient import TestClient
 
-from talon.webhook import _extract_labels, _verify_hmac, app
+from talon.db import Issue
+from talon.server import _extract_labels, _verify_hmac, app
 
 client = TestClient(app)
 
@@ -77,9 +79,21 @@ class TestLinearWebhook:
         assert r.json()["skipped"]
 
     def test_no_label_filter_accepts_all(self, monkeypatch):
-        import talon.webhook
+        import talon.server
 
-        monkeypatch.setattr(talon.webhook, "WEBHOOK_LABEL", "")
+        monkeypatch.setattr(talon.server, "WEBHOOK_LABEL", "")
+        fake_issue = Issue(
+            id=1,
+            title="Do the thing",
+            description="",
+            status="In Progress",
+            run_id=None,
+            created_at="2024-01-01",
+            updated_at="2024-01-01",
+        )
+        monkeypatch.setattr(talon.server.db, "create_issue", AsyncMock(return_value=fake_issue))
+        monkeypatch.setattr(talon.server, "broadcast_issue_update", AsyncMock())
+        monkeypatch.setattr(talon.server, "_run_loop", AsyncMock())
         payload = {
             "action": "create",
             "type": "Issue",
@@ -93,13 +107,13 @@ class TestLinearWebhook:
         monkeypatch.setenv("LINEAR_WEBHOOK_SECRET", "real-secret")
         import importlib
 
-        import talon.webhook
+        import talon.server
 
-        importlib.reload(talon.webhook)
-        c = TestClient(talon.webhook.app)
+        importlib.reload(talon.server)
+        c = TestClient(talon.server.app)
         r = c.post("/webhook/linear", json={}, headers={"Linear-Signature": "wrong"})
         assert r.status_code == 401
-        importlib.reload(talon.webhook)
+        importlib.reload(talon.server)
 
 
 class TestGithubWebhook:
@@ -132,7 +146,22 @@ class TestGithubWebhook:
         assert r.json()["skipped"]
 
     def test_tagged_issue_triggers(self, monkeypatch):
+        import talon.server
+
         monkeypatch.setenv("WEBHOOK_LABEL", "agent-task")
+        monkeypatch.setattr(talon.server, "WEBHOOK_LABEL", "agent-task")
+        fake_issue = Issue(
+            id=2,
+            title="Do the thing",
+            description="Details",
+            status="In Progress",
+            run_id=None,
+            created_at="2024-01-01",
+            updated_at="2024-01-01",
+        )
+        monkeypatch.setattr(talon.server.db, "create_issue", AsyncMock(return_value=fake_issue))
+        monkeypatch.setattr(talon.server, "broadcast_issue_update", AsyncMock())
+        monkeypatch.setattr(talon.server, "_run_loop", AsyncMock())
         payload = {
             "action": "opened",
             "issue": {

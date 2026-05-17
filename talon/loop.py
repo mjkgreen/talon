@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 from datetime import datetime
 from pathlib import Path
+from typing import Awaitable, Callable
 
 from rich.console import Console
 from rich.panel import Panel
@@ -38,8 +39,6 @@ def _save_state(state: RunState) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "state.json").write_text(state.model_dump_json(indent=2))
 
-
-from typing import Callable, Awaitable
 
 def _print_header(goal: str, run_id: str) -> None:
     cfg = model_config_summary()
