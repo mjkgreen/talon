@@ -38,15 +38,31 @@ def _is_git_repo(path: Path) -> bool:
         return False
 
 
-def setup(run_id: str, base_dir: str | None = None) -> str:
+def setup(run_id: str, base_dir: str | None = None, repo_url: str | None = None) -> str:
     """
     Create and return an isolated workspace path for this run.
 
     Args:
         run_id:   Unique run identifier.
         base_dir: Existing project directory to branch from, or None for fresh.
+        repo_url: Git repository URL to clone (takes priority over base_dir).
     """
     run_ws = Path(WORKSPACE_BASE) / run_id
+
+    if repo_url:
+        run_ws.parent.mkdir(parents=True, exist_ok=True)
+        if run_ws.exists():
+            shutil.rmtree(run_ws)
+
+        console.print(f"  [dim]Cloning repository for run {run_id}...[/dim]")
+        try:
+            subprocess.run(
+                ["git", "clone", repo_url, str(run_ws)], check=True, capture_output=True, text=True
+            )
+            console.print(f"  [dim]workspace -> {run_ws} (cloned)[/dim]")
+            return str(run_ws)
+        except subprocess.CalledProcessError as e:
+            console.print(f"  [red]Failed to clone repo: {e.stderr}[/red]")
 
     if base_dir is None:
         run_ws.mkdir(parents=True, exist_ok=True)
