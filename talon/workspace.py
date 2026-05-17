@@ -53,15 +53,12 @@ def setup(run_id: str, base_dir: str | None = None, repo_url: str | None = None)
         run_ws.parent.mkdir(parents=True, exist_ok=True)
         if run_ws.exists():
             shutil.rmtree(run_ws)
-            
+
         console.print(f"  [dim]Cloning repository for run {run_id}...[/dim]")
         try:
             # We clone into run_ws
             subprocess.run(
-                ["git", "clone", repo_url, str(run_ws)],
-                check=True,
-                capture_output=True,
-                text=True
+                ["git", "clone", repo_url, str(run_ws)], check=True, capture_output=True, text=True
             )
             console.print(f"  [dim]workspace -> {run_ws} (cloned)[/dim]")
             return str(run_ws)

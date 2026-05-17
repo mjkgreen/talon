@@ -14,11 +14,19 @@ import json
 import os
 from datetime import datetime
 
-from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 import httpx
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi import (
+    BackgroundTasks,
+    FastAPI,
+    Header,
+    HTTPException,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from rich.console import Console
 
 from talon import db
@@ -34,7 +42,7 @@ app = FastAPI(title="Talon Server", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # For Vite dev server
+    allow_origins=["*"],  # For Vite dev server
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -62,6 +70,7 @@ def _verify_hmac(secret: str, body: bytes, received: str, prefix: str = "") -> b
 def _extract_labels(items: list[dict]) -> list[str]:
     return [item.get("name", "") for item in items]
 
+
 class ConnectionManager:
     def __init__(self):
         self.active_connections: list[WebSocket] = []
@@ -81,75 +90,90 @@ class ConnectionManager:
             except Exception:
                 pass
 
+
 manager = ConnectionManager()
+
 
 async def broadcast_issue_update(issue_id: int):
     issue = await db.get_issue(issue_id)
     if issue:
         await manager.broadcast({"type": "issue_updated", "issue": issue.model_dump()})
 
-async def _run_loop(goal: str, source: str, issue_id: int | None = None, working_dir: str | None = None) -> None:
+
+async def _run_loop(
+    goal: str, source: str, issue_id: int | None = None, working_dir: str | None = None
+) -> None:
     sem = _get_semaphore()
     if sem.locked():
         console.print(f"[yellow]Webhook queued (at concurrency limit): {goal[:60]}[/yellow]")
-    
+
     if issue_id:
         await db.update_issue(issue_id, db.IssueUpdate(status="In Progress"))
         await broadcast_issue_update(issue_id)
-        
+
     async with sem:
         console.print(f"\n[bold green]-  Triggered[/bold green] [{source}] {goal[:80]}")
         try:
             from talon.loop import run
-            
+
             async def on_step(state):
                 if issue_id:
                     # Update run_id in DB on first step
                     if state.iteration == 0 and not getattr(state, "_db_updated", False):
                         await db.update_issue(issue_id, db.IssueUpdate(run_id=state.run_id))
                         state._db_updated = True
-                        
+
                     # Broadcast run state to UI
-                    await manager.broadcast({
-                        "type": "run_state_updated",
-                        "issue_id": issue_id,
-                        "state": state.model_dump()
-                    })
+                    await manager.broadcast(
+                        {
+                            "type": "run_state_updated",
+                            "issue_id": issue_id,
+                            "state": state.model_dump(),
+                        }
+                    )
 
             # Check if we have a selected repo to clone
             github_token = await db.get_setting("github_token")
             selected_repo = await db.get_setting("selected_repo")
-            
+
             repo_url = None
             if github_token and selected_repo:
                 repo_url = f"https://x-access-token:{github_token}@github.com/{selected_repo}.git"
 
-            # Pass repo_url to run if available, otherwise it falls back to creating an empty workspace
-            # Wait, talon.loop.run takes working_dir. 
-            # Let's pass the repo_url via a new kwarg to loop.run, or handle it in workspace.setup.
-            # We'll pass it as `repo_url=repo_url` to loop.run.
-            state = await run(goal=goal, working_dir=working_dir, repo_url=repo_url, skip_board=False, on_step=on_step)
-            
+            state = await run(
+                goal=goal,
+                working_dir=working_dir,
+                repo_url=repo_url,
+                skip_board=False,
+                on_step=on_step,
+            )
+
             if issue_id:
                 final_status = "Done" if state.status == "passed" else "Failed"
-                await db.update_issue(issue_id, db.IssueUpdate(status=final_status, run_id=state.run_id))
+                await db.update_issue(
+                    issue_id, db.IssueUpdate(status=final_status, run_id=state.run_id)
+                )
                 await broadcast_issue_update(issue_id)
-                
+
         except Exception as e:
             console.print(f"[red]Loop error: {e}[/red]")
             if issue_id:
                 await db.update_issue(issue_id, db.IssueUpdate(status="Failed"))
                 await broadcast_issue_update(issue_id)
 
+
 @app.on_event("startup")
 async def startup_event():
     await db.init_db()
+
 
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
 
+
 # --- REST APIs for Kanban ---
+
 
 @app.get("/api/settings")
 async def get_settings():
@@ -158,6 +182,7 @@ async def get_settings():
     if "github_token" in settings and settings["github_token"]:
         settings["github_token"] = "***" + settings["github_token"][-4:]
     return settings
+
 
 @app.post("/api/settings")
 async def update_settings(updates: db.SettingsUpdate):
@@ -169,22 +194,29 @@ async def update_settings(updates: db.SettingsUpdate):
         await db.set_setting("selected_repo", updates.selected_repo)
     return {"ok": True}
 
+
 @app.get("/api/github/repos")
 async def list_github_repos():
     token = await db.get_setting("github_token")
     if not token:
         raise HTTPException(status_code=401, detail="GitHub token not configured")
-    
+
     async with httpx.AsyncClient() as client:
         # Fetch repos the user has access to
         res = await client.get(
             "https://api.github.com/user/repos?per_page=100&sort=updated",
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.v3+json"}
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github.v3+json",
+            },
         )
         if res.status_code != 200:
-            raise HTTPException(status_code=res.status_code, detail="Failed to fetch repos from GitHub")
+            raise HTTPException(
+                status_code=res.status_code, detail="Failed to fetch repos from GitHub"
+            )
         repos = res.json()
         return [{"full_name": r["full_name"], "name": r["name"]} for r in repos]
+
 
 @app.post("/api/github/sync")
 async def sync_github_issues():
@@ -196,35 +228,40 @@ async def sync_github_issues():
     async with httpx.AsyncClient() as client:
         res = await client.get(
             f"https://api.github.com/repos/{repo}/issues?state=open&per_page=100",
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.v3+json"}
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github.v3+json",
+            },
         )
         if res.status_code != 200:
-            raise HTTPException(status_code=res.status_code, detail="Failed to fetch issues from GitHub")
-        
+            raise HTTPException(
+                status_code=res.status_code, detail="Failed to fetch issues from GitHub"
+            )
+
         issues = res.json()
         synced = 0
         existing = await db.list_issues()
         existing_titles = {i.title for i in existing}
-        
+
         for issue in issues:
             if "pull_request" in issue:
-                continue # Skip PRs
+                continue  # Skip PRs
             title = issue["title"]
             if title not in existing_titles:
                 body = issue.get("body") or ""
-                new_issue = await db.create_issue(db.IssueCreate(
-                    title=title,
-                    description=body,
-                    status="Backlog"
-                ))
+                new_issue = await db.create_issue(
+                    db.IssueCreate(title=title, description=body, status="Backlog")
+                )
                 await broadcast_issue_update(new_issue.id)
                 synced += 1
-                
+
         return {"ok": True, "synced": synced}
+
 
 @app.get("/api/issues")
 async def get_issues():
     return await db.list_issues()
+
 
 @app.get("/api/runs/{run_id}")
 async def get_run_state(run_id: str):
@@ -234,7 +271,7 @@ async def get_run_state(run_id: str):
     if os.path.exists(state_file):
         with open(state_file, "r") as f:
             return json.load(f)
-            
+
     # Try finding it in case of partial match or issues with id storage
     runs_dir_path = os.getenv("RUNS_DIR", "./runs")
     if os.path.exists(runs_dir_path):
@@ -246,6 +283,7 @@ async def get_run_state(run_id: str):
                         return json.load(f)
 
     raise HTTPException(status_code=404, detail=f"Run state not found for {run_id} at {state_file}")
+
 
 @app.get("/api/runs/{run_id}/video")
 async def get_run_video(run_id: str):
@@ -259,6 +297,7 @@ async def get_run_video(run_id: str):
                 return FileResponse(video_path)
     raise HTTPException(status_code=404, detail="Video not found")
 
+
 @app.post("/api/issues")
 async def create_issue(issue: db.IssueCreate, background_tasks: BackgroundTasks):
     new_issue = await db.create_issue(issue)
@@ -268,23 +307,29 @@ async def create_issue(issue: db.IssueCreate, background_tasks: BackgroundTasks)
         # Actually, let's just create it. The user can drag to trigger.
         pass
     elif new_issue.status == "In Progress":
-        background_tasks.add_task(_run_loop, f"{issue.title}\n\n{issue.description}", "ui", new_issue.id)
+        background_tasks.add_task(
+            _run_loop, f"{issue.title}\n\n{issue.description}", "ui", new_issue.id
+        )
     return new_issue
+
 
 @app.patch("/api/issues/{issue_id}")
 async def update_issue(issue_id: int, updates: db.IssueUpdate, background_tasks: BackgroundTasks):
     old_issue = await db.get_issue(issue_id)
     if not old_issue:
         raise HTTPException(status_code=404, detail="Issue not found")
-        
+
     updated = await db.update_issue(issue_id, updates)
     await broadcast_issue_update(issue_id)
-    
+
     # If dragged into In Progress from Backlog, trigger run
     if updates.status == "In Progress" and old_issue.status != "In Progress":
-        background_tasks.add_task(_run_loop, f"{updated.title}\n\n{updated.description}", "ui", updated.id)
-        
+        background_tasks.add_task(
+            _run_loop, f"{updated.title}\n\n{updated.description}", "ui", updated.id
+        )
+
     return updated
+
 
 @app.delete("/api/issues/{issue_id}")
 async def delete_issue(issue_id: int):
@@ -294,7 +339,9 @@ async def delete_issue(issue_id: int):
         return {"ok": True}
     raise HTTPException(status_code=404, detail="Issue not found")
 
+
 # --- WebSockets ---
+
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -305,7 +352,9 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
+
 # --- Webhooks (Legacy/Optional Sync) ---
+
 
 @app.post("/webhook/linear")
 async def linear_webhook(
@@ -328,9 +377,11 @@ async def linear_webhook(
 
     title = data.get("title", "")
     description = data.get("description", "") or ""
-    
+
     # Mirror linear issue to local SQLite
-    issue = await db.create_issue(db.IssueCreate(title=title, description=description, status="In Progress"))
+    issue = await db.create_issue(
+        db.IssueCreate(title=title, description=description, status="In Progress")
+    )
     await broadcast_issue_update(issue.id)
 
     goal = f"{title}\n\n{description}".strip() if description else title
@@ -360,14 +411,17 @@ async def github_webhook(
 
     title = issue_data.get("title", "")
     body_text = issue_data.get("body", "") or ""
-    
+
     # Mirror github issue to local SQLite
-    issue = await db.create_issue(db.IssueCreate(title=title, description=body_text, status="In Progress"))
+    issue = await db.create_issue(
+        db.IssueCreate(title=title, description=body_text, status="In Progress")
+    )
     await broadcast_issue_update(issue.id)
 
     goal = f"{title}\n\n{body_text}".strip() if body_text else title
     background_tasks.add_task(_run_loop, goal, "github", issue.id)
     return {"ok": True, "triggered": True, "goal": goal[:80]}
+
 
 # --- UI Serving ---
 
@@ -375,7 +429,7 @@ ui_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ui", "dist")
 
 if os.path.exists(ui_dir):
     app.mount("/assets", StaticFiles(directory=os.path.join(ui_dir, "assets")), name="assets")
-    
+
     @app.get("/{full_path:path}")
     async def serve_ui(full_path: str):
         path = os.path.join(ui_dir, full_path)
