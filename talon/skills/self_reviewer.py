@@ -154,6 +154,6 @@ async def run(goal: str, executor_result: ExecutorResult, working_dir: str) -> R
         f"  [{color}]{icon} verdict={feedback.verdict} score={feedback.score:.2f}[/{color}]"
     )
     for issue in feedback.blocking_issues:
-        console.print(f"  [red]  • {issue}[/red]")
+        console.print(f"  [red]  - {issue}[/red]")
 
     return feedback

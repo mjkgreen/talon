@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
-import { Play, CheckCircle2, AlertCircle, Clock, Trash2, Plus, Settings as SettingsIcon, RefreshCw, ArrowLeft, ArrowRight, Check } from 'lucide-react';
+import { Play, CheckCircle2, AlertCircle, Clock, Trash2, Plus, Settings as SettingsIcon, RefreshCw, ArrowLeft, ArrowRight, Check, X, FileText, Activity } from 'lucide-react';
 
 const GithubLogo = ({ size = 24 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -31,6 +31,10 @@ export default function KanbanBoard() {
   
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [newDescription, setNewDescription] = useState('');
+  
+  const [selectedIssue, setSelectedIssue] = useState<Issue | null>(null);
+  const [runState, setRunState] = useState<any>(null);
+  const [loadingRunState, setLoadingRunState] = useState(false);
   // Wizard State: 0 = Hidden, 1 = PAT Step, 2 = Repo Step
   const [wizardStep, setWizardStep] = useState(0);
   const [isConfigured, setIsConfigured] = useState(true);
@@ -66,6 +70,21 @@ export default function KanbanBoard() {
   }, []);
 
   const apiUrl = (path: string) => import.meta.env.DEV ? `http://localhost:8080${path}` : path;
+
+  useEffect(() => {
+    if (selectedIssue?.run_id) {
+      setLoadingRunState(true);
+      fetch(apiUrl(`/api/runs/${selectedIssue.run_id}`))
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          setRunState(data);
+          setLoadingRunState(false);
+        })
+        .catch(() => setLoadingRunState(false));
+    } else {
+      setRunState(null);
+    }
+  }, [selectedIssue]);
 
   const fetchIssues = async () => {
     const res = await fetch(apiUrl('/api/issues'));
@@ -256,23 +275,24 @@ export default function KanbanBoard() {
                       {getIssuesByStatus(column).map((issue, index) => (
                         <Draggable key={issue.id} draggableId={issue.id.toString()} index={index}>
                           {(provided, snapshot) => (
-                            <div
-                              ref={provided.innerRef}
-                              {...provided.draggableProps}
-                              {...provided.dragHandleProps}
-                              className={`bg-neutral-800 border border-neutral-700 p-4 rounded-lg mb-3 shadow-sm
-                                ${snapshot.isDragging ? 'shadow-lg border-blue-500/50' : 'hover:border-neutral-600'}
-                                transition-colors group`}
-                            >
-                              <div className="flex justify-between items-start mb-2">
-                                <span className="text-xs text-neutral-500 font-mono">T-{issue.id}</span>
-                                <button 
-                                  onClick={() => deleteIssue(issue.id)}
-                                  className="text-neutral-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              </div>
+                              <div
+                                ref={provided.innerRef}
+                                {...provided.draggableProps}
+                                {...provided.dragHandleProps}
+                                onClick={() => setSelectedIssue(issue)}
+                                className={`bg-neutral-800 border border-neutral-700 p-4 rounded-lg mb-3 shadow-sm cursor-pointer
+                                  ${snapshot.isDragging ? 'shadow-lg border-blue-500/50' : 'hover:border-neutral-600'}
+                                  transition-colors group`}
+                              >
+                                <div className="flex justify-between items-start mb-2">
+                                  <span className="text-xs text-neutral-500 font-mono">T-{issue.id}</span>
+                                  <button 
+                                    onClick={(e) => { e.stopPropagation(); deleteIssue(issue.id); }}
+                                    className="text-neutral-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
                               <h3 className="text-sm font-medium text-neutral-200 mb-3">{issue.title}</h3>
                               
                               <div className="flex items-center gap-3 text-xs">
@@ -455,6 +475,128 @@ export default function KanbanBoard() {
                   </div>
                </div>
              )}
+          </div>
+        </div>
+      )}
+      {selectedIssue && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+          <div className="bg-neutral-900 border border-neutral-800 p-8 rounded-2xl w-full max-w-4xl shadow-2xl relative overflow-hidden flex flex-col h-[90vh]">
+            <button 
+              onClick={() => setSelectedIssue(null)}
+              className="absolute top-4 right-4 p-2 text-neutral-500 hover:text-white bg-neutral-800 hover:bg-neutral-700 rounded-lg transition-colors z-10"
+            >
+              <X size={20} />
+            </button>
+            
+            <div className="flex items-start gap-4 mb-6 pr-12">
+              <div className="bg-neutral-800 p-3 rounded-xl border border-neutral-700 text-blue-400">
+                <FileText size={24} />
+              </div>
+              <div>
+                <div className="flex items-center gap-3 mb-1">
+                  <span className="text-xs font-mono text-neutral-500 bg-neutral-950 px-2 py-1 rounded">T-{selectedIssue.id}</span>
+                  <span className={`text-xs px-2 py-1 rounded-full flex items-center gap-1 ${
+                    selectedIssue.status === 'Done' ? 'bg-green-500/10 text-green-400 border border-green-500/20' :
+                    selectedIssue.status === 'Failed' ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
+                    selectedIssue.status === 'In Progress' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' :
+                    'bg-neutral-800 text-neutral-400 border border-neutral-700'
+                  }`}>
+                    {selectedIssue.status === 'In Progress' && <Play size={10} className="animate-pulse" />}
+                    {selectedIssue.status === 'Done' && <CheckCircle2 size={10} />}
+                    {selectedIssue.status === 'Failed' && <AlertCircle size={10} />}
+                    {selectedIssue.status}
+                  </span>
+                </div>
+                <h2 className="text-2xl font-bold text-white">{selectedIssue.title}</h2>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto pr-2 space-y-6">
+              {selectedIssue.description && (
+                <div className="bg-neutral-950/50 border border-neutral-800/50 rounded-xl p-5">
+                  <h3 className="text-sm font-medium text-neutral-400 mb-3 uppercase tracking-wider">Description</h3>
+                  <div className="text-neutral-300 text-sm whitespace-pre-wrap">{selectedIssue.description}</div>
+                </div>
+              )}
+
+              {loadingRunState ? (
+                <div className="flex items-center justify-center p-12 text-neutral-500 gap-3">
+                  <RefreshCw size={20} className="animate-spin" /> Fetching agent logs...
+                </div>
+              ) : runState ? (
+                <div className="space-y-6">
+                  <div className="bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden">
+                    <div className="bg-neutral-900 border-b border-neutral-800 p-4 flex justify-between items-center">
+                      <h3 className="text-sm font-medium text-neutral-300 flex items-center gap-2">
+                        <Activity size={16} className="text-blue-400" />
+                        Execution Trace
+                      </h3>
+                      <span className="text-xs text-neutral-500 font-mono">Run: {runState.run_id}</span>
+                    </div>
+                    <div className="p-0">
+                      {(!runState.executor_results || runState.executor_results.length === 0) && (
+                         <div className="p-8 text-center text-neutral-500 text-sm">
+                           Agent is initializing or has not completed its first iteration...
+                         </div>
+                      )}
+                      {runState.executor_results?.map((res: any, idx: number) => (
+                        <div key={idx} className="border-b border-neutral-800 last:border-0">
+                          <div className="p-4 bg-neutral-900/50">
+                            <h4 className="text-sm font-medium text-blue-300 mb-2">Iteration {idx + 1}</h4>
+                            <div className="bg-neutral-950 p-4 rounded border border-neutral-800/50 overflow-x-auto">
+                              <pre className="text-xs text-neutral-400 font-mono whitespace-pre-wrap">{res.aggregated_output || "No output"}</pre>
+                            </div>
+                          </div>
+                          
+                          {runState.review_results?.[idx] && (
+                            <div className="p-4 border-t border-neutral-800/50">
+                              <div className="flex items-center gap-3 mb-2">
+                                <span className={`text-xs px-2 py-1 rounded font-medium ${runState.review_results[idx].verdict === 'pass' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+                                  Review: {runState.review_results[idx].verdict.toUpperCase()}
+                                </span>
+                                <span className="text-xs text-neutral-500">Score: {runState.review_results[idx].score}/10</span>
+                              </div>
+                              <div className="bg-neutral-950 p-4 rounded border border-neutral-800/50">
+                                <p className="text-xs text-neutral-300">{runState.review_results[idx].feedback}</p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {runState.video_path && (
+                    <div className="bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden">
+                      <div className="bg-neutral-900 border-b border-neutral-800 p-4">
+                        <h3 className="text-sm font-medium text-neutral-300 flex items-center gap-2">
+                          <Play size={16} className="text-blue-400" />
+                          Video Verification
+                        </h3>
+                      </div>
+                      <div className="p-4 flex justify-center bg-black">
+                        <video 
+                          controls 
+                          className="max-w-full max-h-[400px] rounded border border-neutral-800"
+                          src={apiUrl(`/api/runs/${runState.run_id}/video`)}
+                        >
+                          Your browser does not support the video tag.
+                        </video>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : selectedIssue.run_id ? (
+                <div className="p-8 text-center text-neutral-500 border border-neutral-800/50 border-dashed rounded-xl">
+                  <div className="mb-2">Run data not found on disk for ID: <code className="bg-neutral-800 px-1 py-0.5 rounded text-xs">{selectedIssue.run_id}</code></div>
+                  <div className="text-xs">It may still be booting up or the file might have been deleted.</div>
+                </div>
+              ) : (
+                <div className="p-8 text-center text-neutral-500 border border-neutral-800/50 border-dashed rounded-xl">
+                  Agent has not started yet. Move to "In Progress" to begin execution.
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

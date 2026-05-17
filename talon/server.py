@@ -230,10 +230,34 @@ async def get_issues():
 async def get_run_state(run_id: str):
     run_dir = os.path.join(os.getenv("RUNS_DIR", "./runs"), run_id)
     state_file = os.path.join(run_dir, "state.json")
+    # For Windows, handle path properly if needed
     if os.path.exists(state_file):
         with open(state_file, "r") as f:
             return json.load(f)
-    raise HTTPException(status_code=404, detail="Run state not found")
+            
+    # Try finding it in case of partial match or issues with id storage
+    runs_dir_path = os.getenv("RUNS_DIR", "./runs")
+    if os.path.exists(runs_dir_path):
+        for item in os.listdir(runs_dir_path):
+            if item.startswith(run_id) or run_id.startswith(item):
+                alt_state = os.path.join(runs_dir_path, item, "state.json")
+                if os.path.exists(alt_state):
+                    with open(alt_state, "r") as f:
+                        return json.load(f)
+
+    raise HTTPException(status_code=404, detail=f"Run state not found for {run_id} at {state_file}")
+
+@app.get("/api/runs/{run_id}/video")
+async def get_run_video(run_id: str):
+    run_dir = os.path.join(os.getenv("RUNS_DIR", "./runs"), run_id)
+    state_file = os.path.join(run_dir, "state.json")
+    if os.path.exists(state_file):
+        with open(state_file, "r") as f:
+            data = json.load(f)
+            video_path = data.get("video_path")
+            if video_path and os.path.exists(video_path):
+                return FileResponse(video_path)
+    raise HTTPException(status_code=404, detail="Video not found")
 
 @app.post("/api/issues")
 async def create_issue(issue: db.IssueCreate, background_tasks: BackgroundTasks):
