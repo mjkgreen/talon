@@ -82,9 +82,9 @@ AGENT_MODEL=gemini/gemini-2.0-flash   GEMINI_API_KEY=...
 
 **Per-role assignment** (full control):
 ```
-ORCHESTRATOR_MODEL=gemini/gemini-1.5-pro    # goal decomposition (reasoning-heavy)
+ORCHESTRATOR_MODEL=gemini/gemini-3-pro    # goal decomposition (reasoning-heavy)
 SUBAGENT_MODEL=anthropic/claude-sonnet-4-6  # code writing
-REVIEWER_MODEL=gemini/gemini-1.5-pro        # quality gate (reasoning-heavy)
+REVIEWER_MODEL=gemini/gemini-3-pro        # quality gate (reasoning-heavy)
 REFINER_MODEL=gemini/gemini-2.0-flash       # fix planning (speed-optimised)
 ```
 

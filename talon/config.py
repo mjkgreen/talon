@@ -2,7 +2,7 @@
 Model resolution for each agent role.
 
 Resolution order (first match wins):
-  1. {ROLE}_MODEL env var  (e.g. ORCHESTRATOR_MODEL=gemini/gemini-1.5-pro)
+  1. {ROLE}_MODEL env var  (e.g. ORCHESTRATOR_MODEL=gemini/gemini-3.1-pro)
   2. AGENT_MODEL           (global fallback — current behaviour preserved)
   3. Auto-select           (scan available API keys, pick best for the role)
 
@@ -39,10 +39,10 @@ ROLE_PRIORITY: dict[str, list[str]] = {
     "orchestrator": [
         "anthropic/claude-opus-4-7",
         "openai/o3",
-        "gemini/gemini-1.5-pro",
+        "gemini/gemini-flash-latest",
         "anthropic/claude-sonnet-4-6",
         "openai/gpt-4o",
-        "gemini/gemini-2.0-flash",
+        "gemini/gemini-flash-latest",
         "groq/llama3-70b-8192",
         "mistral/mistral-large-latest",
     ],
@@ -51,8 +51,8 @@ ROLE_PRIORITY: dict[str, list[str]] = {
         "anthropic/claude-sonnet-4-6",
         "openai/gpt-4o",
         "anthropic/claude-opus-4-7",
-        "gemini/gemini-1.5-pro",
-        "gemini/gemini-2.0-flash",
+        "gemini/gemini-flash-latest",
+        "gemini/gemini-flash-latest",
         "mistral/mistral-large-latest",
         "groq/llama3-70b-8192",
         "anthropic/claude-haiku-4-5-20251001",
@@ -62,17 +62,17 @@ ROLE_PRIORITY: dict[str, list[str]] = {
     "reviewer": [
         "anthropic/claude-opus-4-7",
         "openai/o3",
-        "gemini/gemini-1.5-pro",
+        "gemini/gemini-flash-latest",
         "anthropic/claude-sonnet-4-6",
         "openai/gpt-4o",
-        "gemini/gemini-2.0-flash",
+        "gemini/gemini-flash-latest",
         "groq/llama3-70b-8192",
         "mistral/mistral-large-latest",
     ],
     # Refiner: synthesis task, lighter than orchestrator — speed matters more
     "refiner": [
         "anthropic/claude-sonnet-4-6",
-        "gemini/gemini-2.0-flash",
+        "gemini/gemini-flash-latest",
         "openai/gpt-4o",
         "anthropic/claude-haiku-4-5-20251001",
         "gemini/gemini-1.5-flash",

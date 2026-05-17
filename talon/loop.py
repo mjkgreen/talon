@@ -39,6 +39,8 @@ def _save_state(state: RunState) -> None:
     (run_dir / "state.json").write_text(state.model_dump_json(indent=2))
 
 
+from typing import Callable, Awaitable
+
 def _print_header(goal: str, run_id: str) -> None:
     cfg = model_config_summary()
     model_lines = "\n".join(
@@ -70,7 +72,9 @@ async def run(
     goal: str,
     working_dir: str | None = None,
     app_url: str | None = None,
+    repo_url: str | None = None,
     skip_board: bool = False,
+    on_step: Callable[[RunState], Awaitable[None]] | None = None,
 ) -> RunState:
     """
     Run the full autonomous loop for the given goal.
@@ -78,8 +82,9 @@ async def run(
     Args:
         goal:        The high-level coding goal.
         working_dir: Existing project dir to branch from (git worktree or copy).
-                     None → fresh isolated workspace per run.
+                     None ?" fresh isolated workspace per run.
         app_url:     URL to validate with browser-validator (optional).
+        repo_url:    URL of a git repository to clone.
         skip_board:  Skip posting to Linear/GitHub.
 
     Returns:
@@ -88,11 +93,13 @@ async def run(
     state = RunState(goal=goal)
 
     # --- Isolate workspace for this run ---
-    run_workspace = workspace.setup(state.run_id, working_dir)
+    run_workspace = workspace.setup(state.run_id, working_dir, repo_url=repo_url)
     state.workspace = run_workspace
 
     _print_header(goal, state.run_id)
     _save_state(state)
+    if on_step:
+        await on_step(state)
 
     refinement = None
 
@@ -109,6 +116,8 @@ async def run(
         )
         state.executor_results.append(exec_result)
         _save_state(state)
+        if on_step:
+            await on_step(state)
 
         # --- Step 2: Review ---
         review = await self_reviewer.run(
@@ -118,6 +127,8 @@ async def run(
         )
         state.review_results.append(review)
         _save_state(state)
+        if on_step:
+            await on_step(state)
 
         if review.verdict == ReviewVerdict.PASS:
             state.status = RunStatus.PASSED
@@ -137,6 +148,8 @@ async def run(
         )
         state.refinement_results.append(refinement)
         _save_state(state)
+        if on_step:
+            await on_step(state)
 
     state.finished_at = datetime.utcnow()
 
@@ -151,18 +164,24 @@ async def run(
         video_path = await browser_validator.run(state, app_url, RUNS_DIR)
         state.video_path = video_path
         _save_state(state)
+    if on_step:
+        await on_step(state)
 
     # --- Step 5: Create PR ---
     if state.status == RunStatus.PASSED:
         pr_url = await pr_creator.run(state, working_dir)
         state.pr_url = pr_url
         _save_state(state)
+    if on_step:
+        await on_step(state)
 
     # --- Step 6: Board update ---
     if not skip_board:
         board_url = await board_updater.run(state, state.video_path, state.pr_url)
         state.board_url = board_url
         _save_state(state)
+    if on_step:
+        await on_step(state)
 
     _print_footer(state)
     return state

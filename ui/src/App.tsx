@@ -1,0 +1,605 @@
+import React, { useState, useEffect } from 'react';
+import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
+import { Play, CheckCircle2, AlertCircle, Clock, Trash2, Plus, Settings as SettingsIcon, RefreshCw, ArrowLeft, ArrowRight, Check, X, FileText, Activity } from 'lucide-react';
+
+const GithubLogo = ({ size = 24 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path>
+  </svg>
+);
+
+interface Issue {
+  id: number;
+  title: string;
+  description: string;
+  status: string;
+  run_id?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface Repo {
+  full_name: string;
+  name: string;
+}
+
+const COLUMNS = ['Backlog', 'In Progress', 'Done', 'Failed'];
+
+export default function KanbanBoard() {
+  const [issues, setIssues] = useState<Issue[]>([]);
+  const [newTitle, setNewTitle] = useState('');
+  
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [newDescription, setNewDescription] = useState('');
+  
+  const [selectedIssue, setSelectedIssue] = useState<Issue | null>(null);
+  const [runState, setRunState] = useState<any>(null);
+  const [loadingRunState, setLoadingRunState] = useState(false);
+  // Wizard State: 0 = Hidden, 1 = PAT Step, 2 = Repo Step
+  const [wizardStep, setWizardStep] = useState(0);
+  const [isConfigured, setIsConfigured] = useState(true);
+  
+  const [githubToken, setGithubToken] = useState('');
+  const [selectedRepo, setSelectedRepo] = useState('');
+  const [repos, setRepos] = useState<Repo[]>([]);
+  const [loadingRepos, setLoadingRepos] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+
+  useEffect(() => {
+    fetchIssues();
+    fetchSettings();
+    const wsUrl = window.location.protocol === 'https:' ? 'wss://' : 'ws://' + window.location.host + '/ws';
+    const ws = new WebSocket(import.meta.env.DEV ? 'ws://localhost:8080/ws' : wsUrl);
+    
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === 'issue_updated') {
+        setIssues(prev => {
+          const exists = prev.find(i => i.id === data.issue.id);
+          if (exists) {
+            return prev.map(i => i.id === data.issue.id ? data.issue : i);
+          }
+          return [data.issue, ...prev];
+        });
+      } else if (data.type === 'issue_deleted') {
+        setIssues(prev => prev.filter(i => i.id !== data.issue_id));
+      }
+    };
+
+    return () => ws.close();
+  }, []);
+
+  const apiUrl = (path: string) => import.meta.env.DEV ? `http://localhost:8080${path}` : path;
+
+  useEffect(() => {
+    if (selectedIssue?.run_id) {
+      setLoadingRunState(true);
+      fetch(apiUrl(`/api/runs/${selectedIssue.run_id}`))
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          setRunState(data);
+          setLoadingRunState(false);
+        })
+        .catch(() => setLoadingRunState(false));
+    } else {
+      setRunState(null);
+    }
+  }, [selectedIssue]);
+
+  const fetchIssues = async () => {
+    const res = await fetch(apiUrl('/api/issues'));
+    if (res.ok) setIssues(await res.json());
+  };
+
+  const fetchSettings = async () => {
+    try {
+      const res = await fetch(apiUrl('/api/settings'));
+      if (res.ok) {
+        const data = await res.json();
+        const hasToken = !!data.github_token;
+        const hasRepo = !!data.selected_repo;
+        
+        if (hasToken) setGithubToken(data.github_token);
+        if (hasRepo) setSelectedRepo(data.selected_repo);
+        
+        setIsConfigured(hasToken && hasRepo);
+
+        // Enforce wizard if missing credentials
+        if (!hasToken) {
+          setWizardStep(1);
+        } else if (!hasRepo) {
+          setWizardStep(2);
+          fetchRepos(); // Safe to fetch since API uses DB token
+        }
+      }
+    } catch (e) {
+      console.error("Failed to fetch settings", e);
+    }
+  };
+
+  const fetchRepos = async () => {
+    setLoadingRepos(true);
+    try {
+      const res = await fetch(apiUrl('/api/github/repos'));
+      if (res.ok) {
+        setRepos(await res.json());
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    setLoadingRepos(false);
+  };
+
+  const saveTokenAndContinue = async () => {
+    // Save token to DB
+    await fetch(apiUrl('/api/settings'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ github_token: githubToken })
+    });
+    // Immediately fetch repos using the newly saved token
+    await fetchRepos();
+    setWizardStep(2);
+  };
+
+  const saveRepoAndFinish = async () => {
+    await fetch(apiUrl('/api/settings'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ selected_repo: selectedRepo })
+    });
+    setIsConfigured(true);
+    setWizardStep(0);
+  };
+
+  const syncGithubIssues = async () => {
+    if (!selectedRepo) return;
+    setSyncing(true);
+    const res = await fetch(apiUrl('/api/github/sync'), { method: 'POST' });
+    if (res.ok) {
+      const data = await res.json();
+      alert(`Synced ${data.synced} new issues from GitHub!`);
+      fetchIssues();
+    } else {
+      alert("Failed to sync issues.");
+    }
+    setSyncing(false);
+  };
+
+  const addIssue = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTitle.trim()) return;
+    
+    const res = await fetch(apiUrl('/api/issues'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: newTitle, description: newDescription, status: 'Backlog' })
+    });
+    
+    if (res.ok) {
+      setNewTitle('');
+      setNewDescription('');
+      setIsAddModalOpen(false);
+    }
+  };
+
+  const deleteIssue = async (id: number) => {
+    await fetch(apiUrl(`/api/issues/${id}`), { method: 'DELETE' });
+  };
+
+  const onDragEnd = async (result: any) => {
+    if (!result.destination) return;
+    
+    const sourceStatus = result.source.droppableId;
+    const destStatus = result.destination.droppableId;
+    const issueId = parseInt(result.draggableId);
+
+    if (sourceStatus === destStatus) return;
+
+    setIssues(prev => prev.map(i => i.id === issueId ? { ...i, status: destStatus } : i));
+
+    await fetch(apiUrl(`/api/issues/${issueId}`), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: destStatus })
+    });
+  };
+
+  const getIssuesByStatus = (status: string) => issues.filter(i => i.status === status).sort((a, b) => b.id - a.id);
+
+  return (
+    <div className="min-h-screen bg-neutral-900 text-neutral-100 p-8 font-sans relative">
+      <div className="max-w-7xl mx-auto">
+        <header className="mb-8 flex justify-between items-end">
+          <div>
+            <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent flex items-center gap-3">
+              Talon Board
+            </h1>
+            <div className="text-neutral-400 mt-2 flex items-center gap-3">
+               Autonomous Agent Tracker
+               {selectedRepo && (
+                 <span className="bg-neutral-800 text-xs px-2 py-1 rounded flex items-center gap-1 border border-neutral-700">
+                   <GithubLogo size={12} /> {selectedRepo}
+                 </span>
+               )}
+            </div>
+          </div>
+          
+          <div className="flex gap-4 items-center">
+            {selectedRepo && (
+              <button 
+                onClick={syncGithubIssues} 
+                disabled={syncing}
+                className="text-sm bg-neutral-800 hover:bg-neutral-700 text-neutral-300 px-3 py-2 rounded flex items-center gap-2 transition-colors border border-neutral-700 disabled:opacity-50"
+              >
+                <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} /> 
+                Sync Issues
+              </button>
+            )}
+            <button 
+              onClick={() => setIsAddModalOpen(true)}
+              className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded flex items-center gap-2 text-sm transition-colors"
+            >
+              <Plus size={16} /> Add Task
+            </button>
+            <button 
+              onClick={() => {
+                // If opening settings from the gear icon, start at step 1
+                setWizardStep(1);
+              }}
+              className="p-2 bg-neutral-800 hover:bg-neutral-700 rounded text-neutral-400 hover:text-white transition-colors"
+            >
+              <SettingsIcon size={20} />
+            </button>
+          </div>
+        </header>
+
+        <DragDropContext onDragEnd={onDragEnd}>
+          <div className="flex gap-6 h-[calc(100vh-200px)]">
+            {COLUMNS.map(column => (
+              <div key={column} className="flex-1 flex flex-col bg-neutral-800/50 rounded-xl overflow-hidden border border-neutral-800">
+                <div className="p-4 border-b border-neutral-800 bg-neutral-800/80 flex justify-between items-center">
+                  <h2 className="font-semibold text-neutral-300">{column}</h2>
+                  <span className="bg-neutral-700 text-xs px-2 py-1 rounded-full text-neutral-300">
+                    {getIssuesByStatus(column).length}
+                  </span>
+                </div>
+                
+                <Droppable droppableId={column}>
+                  {(provided, snapshot) => (
+                    <div
+                      ref={provided.innerRef}
+                      {...provided.droppableProps}
+                      className={`flex-1 p-4 overflow-y-auto ${snapshot.isDraggingOver ? 'bg-neutral-800/80' : ''}`}
+                    >
+                      {getIssuesByStatus(column).map((issue, index) => (
+                        <Draggable key={issue.id} draggableId={issue.id.toString()} index={index}>
+                          {(provided, snapshot) => (
+                              <div
+                                ref={provided.innerRef}
+                                {...provided.draggableProps}
+                                {...provided.dragHandleProps}
+                                onClick={() => setSelectedIssue(issue)}
+                                className={`bg-neutral-800 border border-neutral-700 p-4 rounded-lg mb-3 shadow-sm cursor-pointer
+                                  ${snapshot.isDragging ? 'shadow-lg border-blue-500/50' : 'hover:border-neutral-600'}
+                                  transition-colors group`}
+                              >
+                                <div className="flex justify-between items-start mb-2">
+                                  <span className="text-xs text-neutral-500 font-mono">T-{issue.id}</span>
+                                  <button 
+                                    onClick={(e) => { e.stopPropagation(); deleteIssue(issue.id); }}
+                                    className="text-neutral-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              <h3 className="text-sm font-medium text-neutral-200 mb-3">{issue.title}</h3>
+                              
+                              <div className="flex items-center gap-3 text-xs">
+                                {issue.status === 'In Progress' && (
+                                  <span className="flex items-center gap-1 text-blue-400 bg-blue-400/10 px-2 py-1 rounded">
+                                    <Play size={12} className="animate-pulse" /> Agent running
+                                  </span>
+                                )}
+                                {issue.status === 'Done' && (
+                                  <span className="flex items-center gap-1 text-green-400 bg-green-400/10 px-2 py-1 rounded">
+                                    <CheckCircle2 size={12} /> Passed
+                                  </span>
+                                )}
+                                {issue.status === 'Failed' && (
+                                  <span className="flex items-center gap-1 text-red-400 bg-red-400/10 px-2 py-1 rounded">
+                                    <AlertCircle size={12} /> Needs Work
+                                  </span>
+                                )}
+                                {issue.status === 'Backlog' && (
+                                  <span className="flex items-center gap-1 text-neutral-400">
+                                    <Clock size={12} /> Queued
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </Draggable>
+                      ))}
+                      {provided.placeholder}
+                    </div>
+                  )}
+                </Droppable>
+              </div>
+            ))}
+          </div>
+        </DragDropContext>
+      </div>
+
+      {isAddModalOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
+          <div className="bg-neutral-900 border border-neutral-800 p-6 rounded-xl w-full max-w-lg shadow-2xl">
+            <h2 className="text-xl font-bold mb-4">Add New Task</h2>
+            <form onSubmit={addIssue} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-neutral-300 mb-1">Title</label>
+                <input 
+                  type="text" 
+                  value={newTitle}
+                  onChange={e => setNewTitle(e.target.value)}
+                  autoFocus
+                  placeholder="e.g., Create a new landing page"
+                  className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-neutral-300 mb-1">Description (Optional)</label>
+                <textarea 
+                  value={newDescription}
+                  onChange={e => setNewDescription(e.target.value)}
+                  placeholder="Provide any additional context, instructions, or acceptance criteria for the agent..."
+                  rows={5}
+                  className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all resize-none"
+                />
+              </div>
+              <div className="flex justify-end gap-3 mt-6">
+                <button 
+                  type="button"
+                  onClick={() => setIsAddModalOpen(false)}
+                  className="px-4 py-2 text-sm text-neutral-400 hover:text-white"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit"
+                  disabled={!newTitle.trim()}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-neutral-800 disabled:text-neutral-500 text-white rounded text-sm transition-colors"
+                >
+                  Create Task
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {wizardStep > 0 && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+          <div className="bg-neutral-900 border border-neutral-800 p-8 rounded-2xl w-full max-w-md shadow-2xl relative overflow-hidden">
+             
+             {/* Decorative background glow */}
+             <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full h-32 bg-blue-500/10 blur-3xl rounded-full pointer-events-none" />
+
+             {wizardStep === 1 && (
+               <div className="relative">
+                  <h2 className="text-2xl font-bold mb-2 flex items-center gap-2">
+                    <GithubLogo size={24} /> Connect GitHub
+                  </h2>
+                  <p className="text-sm text-neutral-400 mb-6">
+                    Talon needs a GitHub Personal Access Token (PAT) to clone your codebase and sync issues.
+                  </p>
+                  
+                  <div className="bg-blue-500/10 border border-blue-500/20 p-4 rounded-lg mb-6">
+                    <h3 className="text-sm font-semibold text-blue-400 mb-2">How to get a PAT:</h3>
+                    <ol className="text-xs text-blue-300/80 space-y-2 list-decimal list-inside">
+                      <li>Go to <a href="https://github.com/settings/tokens/new?scopes=repo&description=Talon+Agent" target="_blank" rel="noreferrer" className="text-blue-400 hover:underline font-medium">GitHub Token Settings</a></li>
+                      <li>Ensure the <strong>repo</strong> scope is checked (this allows Talon to clone the code and read/write issues/PRs)</li>
+                      <li>Generate and copy the token</li>
+                    </ol>
+                  </div>
+
+                  <div className="mb-6">
+                    <label className="block text-sm font-medium text-neutral-300 mb-2">Personal Access Token</label>
+                    <input 
+                      type="password" 
+                      value={githubToken}
+                      onChange={e => setGithubToken(e.target.value)}
+                      placeholder="ghp_..."
+                      className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+                    />
+                  </div>
+
+                  <div className="flex justify-end gap-3">
+                    {isConfigured && (
+                      <button onClick={() => setWizardStep(0)} className="px-5 py-2.5 text-sm text-neutral-400 hover:text-white transition-colors">Cancel</button>
+                    )}
+                    <button 
+                      onClick={saveTokenAndContinue}
+                      disabled={!githubToken}
+                      className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-neutral-800 disabled:text-neutral-500 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                    >
+                      Next Step <ArrowRight size={16} />
+                    </button>
+                  </div>
+               </div>
+             )}
+
+             {wizardStep === 2 && (
+               <div className="relative">
+                  <button onClick={() => setWizardStep(1)} className="text-neutral-500 hover:text-neutral-300 mb-4 flex items-center gap-1 text-sm transition-colors">
+                    <ArrowLeft size={14} /> Back to Token
+                  </button>
+                  <h2 className="text-2xl font-bold mb-2 flex items-center gap-2">
+                    Select Repository
+                  </h2>
+                  <p className="text-sm text-neutral-400 mb-6">
+                    Choose the codebase you want Talon to work on.
+                  </p>
+
+                  <div className="mb-6">
+                    <label className="block text-sm font-medium text-neutral-300 mb-2">Target Repository</label>
+                    <div className="relative">
+                      <select
+                        value={selectedRepo}
+                        onChange={e => setSelectedRepo(e.target.value)}
+                        className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all appearance-none text-neutral-200"
+                      >
+                        <option value="">Select a repository...</option>
+                        {repos.map(r => (
+                          <option key={r.full_name} value={r.full_name}>{r.full_name}</option>
+                        ))}
+                      </select>
+                      <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none">
+                        <svg className="w-4 h-4 text-neutral-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                      </div>
+                    </div>
+                    {loadingRepos && <p className="text-xs text-blue-400 mt-2 animate-pulse">Loading your repositories...</p>}
+                  </div>
+
+                  <div className="flex justify-end gap-3 mt-8">
+                    {isConfigured && (
+                      <button onClick={() => setWizardStep(0)} className="px-5 py-2.5 text-sm text-neutral-400 hover:text-white transition-colors">Cancel</button>
+                    )}
+                    <button 
+                      onClick={saveRepoAndFinish}
+                      disabled={!selectedRepo}
+                      className="px-5 py-2.5 bg-green-600 hover:bg-green-500 disabled:bg-neutral-800 disabled:text-neutral-500 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                    >
+                      Complete Setup <Check size={16} />
+                    </button>
+                  </div>
+               </div>
+             )}
+          </div>
+        </div>
+      )}
+      {selectedIssue && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+          <div className="bg-neutral-900 border border-neutral-800 p-8 rounded-2xl w-full max-w-4xl shadow-2xl relative overflow-hidden flex flex-col h-[90vh]">
+            <button 
+              onClick={() => setSelectedIssue(null)}
+              className="absolute top-4 right-4 p-2 text-neutral-500 hover:text-white bg-neutral-800 hover:bg-neutral-700 rounded-lg transition-colors z-10"
+            >
+              <X size={20} />
+            </button>
+            
+            <div className="flex items-start gap-4 mb-6 pr-12">
+              <div className="bg-neutral-800 p-3 rounded-xl border border-neutral-700 text-blue-400">
+                <FileText size={24} />
+              </div>
+              <div>
+                <div className="flex items-center gap-3 mb-1">
+                  <span className="text-xs font-mono text-neutral-500 bg-neutral-950 px-2 py-1 rounded">T-{selectedIssue.id}</span>
+                  <span className={`text-xs px-2 py-1 rounded-full flex items-center gap-1 ${
+                    selectedIssue.status === 'Done' ? 'bg-green-500/10 text-green-400 border border-green-500/20' :
+                    selectedIssue.status === 'Failed' ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
+                    selectedIssue.status === 'In Progress' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' :
+                    'bg-neutral-800 text-neutral-400 border border-neutral-700'
+                  }`}>
+                    {selectedIssue.status === 'In Progress' && <Play size={10} className="animate-pulse" />}
+                    {selectedIssue.status === 'Done' && <CheckCircle2 size={10} />}
+                    {selectedIssue.status === 'Failed' && <AlertCircle size={10} />}
+                    {selectedIssue.status}
+                  </span>
+                </div>
+                <h2 className="text-2xl font-bold text-white">{selectedIssue.title}</h2>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto pr-2 space-y-6">
+              {selectedIssue.description && (
+                <div className="bg-neutral-950/50 border border-neutral-800/50 rounded-xl p-5">
+                  <h3 className="text-sm font-medium text-neutral-400 mb-3 uppercase tracking-wider">Description</h3>
+                  <div className="text-neutral-300 text-sm whitespace-pre-wrap">{selectedIssue.description}</div>
+                </div>
+              )}
+
+              {loadingRunState ? (
+                <div className="flex items-center justify-center p-12 text-neutral-500 gap-3">
+                  <RefreshCw size={20} className="animate-spin" /> Fetching agent logs...
+                </div>
+              ) : runState ? (
+                <div className="space-y-6">
+                  <div className="bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden">
+                    <div className="bg-neutral-900 border-b border-neutral-800 p-4 flex justify-between items-center">
+                      <h3 className="text-sm font-medium text-neutral-300 flex items-center gap-2">
+                        <Activity size={16} className="text-blue-400" />
+                        Execution Trace
+                      </h3>
+                      <span className="text-xs text-neutral-500 font-mono">Run: {runState.run_id}</span>
+                    </div>
+                    <div className="p-0">
+                      {(!runState.executor_results || runState.executor_results.length === 0) && (
+                         <div className="p-8 text-center text-neutral-500 text-sm">
+                           Agent is initializing or has not completed its first iteration...
+                         </div>
+                      )}
+                      {runState.executor_results?.map((res: any, idx: number) => (
+                        <div key={idx} className="border-b border-neutral-800 last:border-0">
+                          <div className="p-4 bg-neutral-900/50">
+                            <h4 className="text-sm font-medium text-blue-300 mb-2">Iteration {idx + 1}</h4>
+                            <div className="bg-neutral-950 p-4 rounded border border-neutral-800/50 overflow-x-auto">
+                              <pre className="text-xs text-neutral-400 font-mono whitespace-pre-wrap">{res.aggregated_output || "No output"}</pre>
+                            </div>
+                          </div>
+                          
+                          {runState.review_results?.[idx] && (
+                            <div className="p-4 border-t border-neutral-800/50">
+                              <div className="flex items-center gap-3 mb-2">
+                                <span className={`text-xs px-2 py-1 rounded font-medium ${runState.review_results[idx].verdict === 'pass' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+                                  Review: {runState.review_results[idx].verdict.toUpperCase()}
+                                </span>
+                                <span className="text-xs text-neutral-500">Score: {runState.review_results[idx].score}/10</span>
+                              </div>
+                              <div className="bg-neutral-950 p-4 rounded border border-neutral-800/50">
+                                <p className="text-xs text-neutral-300">{runState.review_results[idx].feedback}</p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {runState.video_path && (
+                    <div className="bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden">
+                      <div className="bg-neutral-900 border-b border-neutral-800 p-4">
+                        <h3 className="text-sm font-medium text-neutral-300 flex items-center gap-2">
+                          <Play size={16} className="text-blue-400" />
+                          Video Verification
+                        </h3>
+                      </div>
+                      <div className="p-4 flex justify-center bg-black">
+                        <video 
+                          controls 
+                          className="max-w-full max-h-[400px] rounded border border-neutral-800"
+                          src={apiUrl(`/api/runs/${runState.run_id}/video`)}
+                        >
+                          Your browser does not support the video tag.
+                        </video>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : selectedIssue.run_id ? (
+                <div className="p-8 text-center text-neutral-500 border border-neutral-800/50 border-dashed rounded-xl">
+                  <div className="mb-2">Run data not found on disk for ID: <code className="bg-neutral-800 px-1 py-0.5 rounded text-xs">{selectedIssue.run_id}</code></div>
+                  <div className="text-xs">It may still be booting up or the file might have been deleted.</div>
+                </div>
+              ) : (
+                <div className="p-8 text-center text-neutral-500 border border-neutral-800/50 border-dashed rounded-xl">
+                  Agent has not started yet. Move to "In Progress" to begin execution.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

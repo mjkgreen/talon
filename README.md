@@ -1,6 +1,6 @@
 # talon-agent
 
-Autonomous agentic coding system. Give it a goal; it decomposes the work into subtasks, runs parallel sub-agents to implement them, reviews the result, iterates until passing, records a video walkthrough, and posts to your Kanban board — no Matthew required.
+Autonomous agentic coding system. Give it a goal; it decomposes the work into subtasks, runs parallel sub-agents to implement them, reviews the result, iterates until passing, records a video walkthrough, and posts to your Kanban board.
 
 ## How it works
 
@@ -30,6 +30,8 @@ reviewer            Reads files, runs tests, returns pass/fail + score (0–1)
 
 ```bash
 cp .env.example .env      # add at least one API key
+python -m venv venv 
+.\venv\Scripts\activate  #or .venv/bin/activate
 pip install -e .
 talon run "Add a /health endpoint to the Flask app" --working-dir ./workspace
 ```
@@ -67,10 +69,10 @@ GEMINI_API_KEY=...
 ### Per-role assignment
 Full control:
 ```bash
-ORCHESTRATOR_MODEL=gemini/gemini-1.5-pro    # reasoning-heavy
+ORCHESTRATOR_MODEL=gemini/gemini-3-pro    # reasoning-heavy
 SUBAGENT_MODEL=anthropic/claude-sonnet-4-6  # coding
-REVIEWER_MODEL=gemini/gemini-1.5-pro        # reasoning-heavy
-REFINER_MODEL=gemini/gemini-2.0-flash       # speed-optimised
+REVIEWER_MODEL=gemini/gemini-3-pro        # reasoning-heavy
+REFINER_MODEL=gemini/gemini-3.1-flash       # speed-optimised
 ```
 
 Per-role vars override `AGENT_MODEL` which overrides auto. The run header always shows which model was picked for each role and why.
