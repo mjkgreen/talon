@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 
 from rich.console import Console
 
@@ -89,6 +90,40 @@ def _build_review_prompt(goal: str, executor_result: ExecutorResult, working_dir
     )
 
 
+def _extract_json(text: str) -> dict | None:
+    """Extract a JSON object from reviewer output, handling prose and code fences."""
+    # 1. Try the raw text first
+    try:
+        return json.loads(text.strip())
+    except json.JSONDecodeError:
+        pass
+
+    # 2. Extract from ```json ... ``` or ``` ... ``` blocks anywhere in text
+    fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if fence_match:
+        try:
+            return json.loads(fence_match.group(1))
+        except json.JSONDecodeError:
+            pass
+
+    # 3. Find the first { ... } spanning the whole JSON object
+    start = text.find("{")
+    if start != -1:
+        depth = 0
+        for i, ch in enumerate(text[start:], start):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(text[start : i + 1])
+                    except json.JSONDecodeError:
+                        break
+
+    return None
+
+
 async def run(goal: str, executor_result: ExecutorResult, working_dir: str) -> ReviewFeedback:
     provider = get_provider("reviewer")
     iteration = executor_result.iteration
@@ -119,16 +154,10 @@ async def run(goal: str, executor_result: ExecutorResult, working_dir: str) -> R
             tool_results.append(ToolResult(id=tc.id, content=result_str))
         provider.append_tool_results(messages, tool_results)
 
-    raw = raw_verdict.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
+    data = _extract_json(raw_verdict)
+    if data is None:
         console.print("  [red]Warning: could not parse reviewer JSON, defaulting to fail[/red]")
+        console.print(f"  [dim]Raw reviewer output (first 500 chars): {raw_verdict[:500]!r}[/dim]")
         data = {
             "verdict": "fail",
             "score": 0.0,
