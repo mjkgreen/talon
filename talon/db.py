@@ -1,4 +1,5 @@
 import os
+import sqlite3
 from datetime import datetime
 from typing import List, Optional
 
@@ -32,6 +33,8 @@ class IssueUpdate(BaseModel):
 class SettingsUpdate(BaseModel):
     github_token: Optional[str] = None
     selected_repo: Optional[str] = None
+    local_path: Optional[str] = None
+    workspace_mode: Optional[str] = None  # "github" | "local" | "none"
 
 
 async def init_db():
@@ -55,6 +58,16 @@ async def init_db():
             )
         """)
         await db.commit()
+
+
+def sync_get_setting(key: str) -> Optional[str]:
+    """Synchronous setting read for use in non-async contexts (e.g. skills)."""
+    if not os.path.exists(DB_PATH):
+        return None
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.execute("SELECT value FROM settings WHERE key = ?", (key,))
+        row = cursor.fetchone()
+        return row[0] if row else None
 
 
 async def get_setting(key: str) -> Optional[str]:

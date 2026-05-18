@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import json
 import os
+import traceback
 from datetime import datetime
 
 import httpx
@@ -27,6 +28,7 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 from rich.console import Console
 
 from talon import db
@@ -37,6 +39,7 @@ WEBHOOK_LABEL = os.getenv("WEBHOOK_LABEL", "agent-task")
 LINEAR_SECRET = os.getenv("LINEAR_WEBHOOK_SECRET", "")
 GITHUB_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET", "")
 MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT_RUNS", "3"))
+GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "")
 
 app = FastAPI(title="Talon Server", version="1.0.0")
 
@@ -118,12 +121,14 @@ async def _run_loop(
 
             async def on_step(state):
                 if issue_id:
-                    # Update run_id in DB on first step
+                    # Update run_id in DB on first step and notify frontend
                     if state.iteration == 0 and not getattr(state, "_db_updated", False):
                         await db.update_issue(issue_id, db.IssueUpdate(run_id=state.run_id))
                         state._db_updated = True
+                        # Notify frontend so issue detail modal picks up the run_id
+                        await broadcast_issue_update(issue_id)
 
-                    # Broadcast run state to UI
+                    # Broadcast full run state to UI for live log display
                     await manager.broadcast(
                         {
                             "type": "run_state_updated",
@@ -132,17 +137,21 @@ async def _run_loop(
                         }
                     )
 
-            # Check if we have a selected repo to clone
             github_token = await db.get_setting("github_token")
             selected_repo = await db.get_setting("selected_repo")
+            workspace_mode = await db.get_setting("workspace_mode")
+            local_path = await db.get_setting("local_path")
 
             repo_url = None
-            if github_token and selected_repo:
+            base_dir = working_dir
+            if workspace_mode == "github" and github_token and selected_repo:
                 repo_url = f"https://x-access-token:{github_token}@github.com/{selected_repo}.git"
+            elif workspace_mode == "local" and local_path:
+                base_dir = local_path
 
             state = await run(
                 goal=goal,
-                working_dir=working_dir,
+                working_dir=base_dir,
                 repo_url=repo_url,
                 skip_board=False,
                 on_step=on_step,
@@ -157,7 +166,15 @@ async def _run_loop(
 
         except Exception as e:
             console.print(f"[red]Loop error: {e}[/red]")
+            console.print(traceback.format_exc())
             if issue_id:
+                await manager.broadcast(
+                    {
+                        "type": "run_error",
+                        "issue_id": issue_id,
+                        "error": str(e),
+                    }
+                )
                 await db.update_issue(issue_id, db.IssueUpdate(status="Failed"))
                 await broadcast_issue_update(issue_id)
 
@@ -186,13 +203,90 @@ async def get_settings():
 
 @app.post("/api/settings")
 async def update_settings(updates: db.SettingsUpdate):
-    if updates.github_token:
-        # Don't update if it's the masked version
-        if not updates.github_token.startswith("***"):
-            await db.set_setting("github_token", updates.github_token)
+    if updates.github_token and not updates.github_token.startswith("***"):
+        await db.set_setting("github_token", updates.github_token)
     if updates.selected_repo:
         await db.set_setting("selected_repo", updates.selected_repo)
+    if updates.local_path is not None:
+        await db.set_setting("local_path", updates.local_path)
+    if updates.workspace_mode is not None:
+        await db.set_setting("workspace_mode", updates.workspace_mode)
     return {"ok": True}
+
+
+class _GitHubPollRequest(BaseModel):
+    device_code: str
+
+
+@app.get("/api/local/browse")
+async def browse_local_folder():
+    """Open a native OS folder-picker dialog and return the selected path."""
+    def _pick() -> str:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        path = filedialog.askdirectory(title="Select project folder")
+        root.destroy()
+        return path or ""
+
+    path = await asyncio.get_running_loop().run_in_executor(None, _pick)
+    return {"path": path}
+
+
+@app.post("/api/auth/github/start")
+async def github_auth_start():
+    """Initiate GitHub Device Flow. Returns user_code and verification_uri."""
+    if not GITHUB_CLIENT_ID:
+        raise HTTPException(
+            status_code=400,
+            detail="GITHUB_CLIENT_ID not configured. Register an OAuth App at github.com/settings/developers.",
+        )
+    async with httpx.AsyncClient() as client:
+        res = await client.post(
+            "https://github.com/login/device/code",
+            headers={"Accept": "application/json"},
+            json={"client_id": GITHUB_CLIENT_ID, "scope": "repo"},
+        )
+    if res.status_code != 200:
+        raise HTTPException(status_code=502, detail="Failed to initiate GitHub device flow")
+    data = res.json()
+    return {
+        "device_code": data["device_code"],
+        "user_code": data["user_code"],
+        "verification_uri": data["verification_uri"],
+        "expires_in": data.get("expires_in", 900),
+        "interval": data.get("interval", 5),
+    }
+
+
+@app.post("/api/auth/github/poll")
+async def github_auth_poll(body: _GitHubPollRequest):
+    """Poll GitHub for a device flow token. Saves token to DB on success."""
+    if not GITHUB_CLIENT_ID:
+        raise HTTPException(status_code=400, detail="GITHUB_CLIENT_ID not configured")
+    async with httpx.AsyncClient() as client:
+        res = await client.post(
+            "https://github.com/login/oauth/access_token",
+            headers={"Accept": "application/json"},
+            json={
+                "client_id": GITHUB_CLIENT_ID,
+                "device_code": body.device_code,
+                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            },
+        )
+    data = res.json()
+    error = data.get("error")
+    if error in ("authorization_pending", "slow_down"):
+        return {"status": "pending"}
+    if error in ("expired_token", "access_denied"):
+        return {"status": "expired"}
+    if "access_token" in data:
+        await db.set_setting("github_token", data["access_token"])
+        return {"status": "complete"}
+    return {"status": "error", "detail": error}
 
 
 @app.get("/api/github/repos")
@@ -269,7 +363,7 @@ async def get_run_state(run_id: str):
     state_file = os.path.join(run_dir, "state.json")
     # For Windows, handle path properly if needed
     if os.path.exists(state_file):
-        with open(state_file, "r") as f:
+        with open(state_file, "r", encoding="utf-8") as f:
             return json.load(f)
 
     # Try finding it in case of partial match or issues with id storage
@@ -290,7 +384,7 @@ async def get_run_video(run_id: str):
     run_dir = os.path.join(os.getenv("RUNS_DIR", "./runs"), run_id)
     state_file = os.path.join(run_dir, "state.json")
     if os.path.exists(state_file):
-        with open(state_file, "r") as f:
+        with open(state_file, "r", encoding="utf-8") as f:
             data = json.load(f)
             video_path = data.get("video_path")
             if video_path and os.path.exists(video_path):

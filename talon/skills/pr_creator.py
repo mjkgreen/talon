@@ -23,13 +23,17 @@ from pathlib import Path
 
 from rich.console import Console
 
+from talon.db import sync_get_setting
 from talon.types import RunState
 
 console = Console()
 
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "")
 GITHUB_BASE_BRANCH = os.getenv("GITHUB_BASE_BRANCH", "main")
+
+
+def _get_github_token() -> str:
+    return os.getenv("GITHUB_TOKEN") or sync_get_setting("github_token") or ""
 
 
 def _git(args: list[str], cwd: str) -> subprocess.CompletedProcess:
@@ -100,7 +104,7 @@ def _create_github_pr(branch: str, state: RunState) -> str | None:
         f"https://api.github.com/repos/{GITHUB_REPO}/pulls",
         data=payload,
         headers={
-            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Authorization": f"Bearer {_get_github_token()}",
             "Accept": "application/vnd.github+json",
             "Content-Type": "application/json",
             "X-GitHub-Api-Version": "2022-11-28",
@@ -129,7 +133,7 @@ async def run(state: RunState, working_dir: str | None) -> str | None:
     if not state.workspace:
         return None
 
-    if not GITHUB_TOKEN or not GITHUB_REPO:
+    if not _get_github_token() or not GITHUB_REPO:
         console.print("  [dim]pr-creator: GITHUB_TOKEN/GITHUB_REPO not set, skipping[/dim]")
         return None
 

@@ -37,7 +37,7 @@ RUNS_DIR = os.getenv("RUNS_DIR", "./runs")
 def _save_state(state: RunState) -> None:
     run_dir = Path(RUNS_DIR) / state.run_id
     run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "state.json").write_text(state.model_dump_json(indent=2))
+    (run_dir / "state.json").write_text(state.model_dump_json(indent=2), encoding="utf-8")
 
 
 def _print_header(goal: str, run_id: str) -> None:
@@ -91,64 +91,83 @@ async def run(
     """
     state = RunState(goal=goal)
 
-    # --- Isolate workspace for this run ---
-    run_workspace = workspace.setup(state.run_id, working_dir, repo_url=repo_url)
-    state.workspace = run_workspace
-
-    _print_header(goal, state.run_id)
+    # Save immediately so the state file always exists from the first moment,
+    # even if workspace setup or the first LLM call fails.
     _save_state(state)
-    if on_step:
-        await on_step(state)
+
+    try:
+        # --- Isolate workspace for this run ---
+        run_workspace = workspace.setup(state.run_id, working_dir, repo_url=repo_url)
+        state.workspace = run_workspace
+
+        _print_header(goal, state.run_id)
+        _save_state(state)
+        if on_step:
+            await on_step(state)
+    except Exception as e:
+        state.status = RunStatus.FAILED
+        state.error = str(e)
+        state.finished_at = datetime.utcnow()
+        _save_state(state)
+        raise
 
     refinement = None
 
-    for i in range(1, MAX_ITERATIONS + 1):
-        state.iteration = i
-        console.print(Rule(f"Iteration {i}/{MAX_ITERATIONS}", style="blue"))
+    try:
+        for i in range(1, MAX_ITERATIONS + 1):
+            state.iteration = i
+            console.print(Rule(f"Iteration {i}/{MAX_ITERATIONS}", style="blue"))
 
-        # --- Step 1: Execute ---
-        exec_result = await task_executor.run(
-            goal=goal,
-            working_dir=run_workspace,
-            iteration=i,
-            refinement=refinement,
-        )
-        state.executor_results.append(exec_result)
+            # --- Step 1: Execute ---
+            exec_result = await task_executor.run(
+                goal=goal,
+                working_dir=run_workspace,
+                iteration=i,
+                refinement=refinement,
+            )
+            state.executor_results.append(exec_result)
+            _save_state(state)
+            if on_step:
+                await on_step(state)
+
+            # --- Step 2: Review ---
+            review = await self_reviewer.run(
+                goal=goal,
+                executor_result=exec_result,
+                working_dir=run_workspace,
+            )
+            state.review_results.append(review)
+            _save_state(state)
+            if on_step:
+                await on_step(state)
+
+            if review.verdict == ReviewVerdict.PASS:
+                state.status = RunStatus.PASSED
+                state.final_output = exec_result.aggregated_output
+                break
+
+            if i == MAX_ITERATIONS:
+                state.status = RunStatus.MAX_ITERATIONS
+                state.final_output = exec_result.aggregated_output
+                break
+
+            # --- Step 3: Refine (only if more iterations remain) ---
+            refinement = await refiner.run(
+                goal=goal,
+                executor_result=exec_result,
+                feedback=review,
+            )
+            state.refinement_results.append(refinement)
+            _save_state(state)
+            if on_step:
+                await on_step(state)
+
+    except Exception as e:
+        state.status = RunStatus.FAILED
+        state.error = str(e)
+        state.finished_at = datetime.utcnow()
         _save_state(state)
-        if on_step:
-            await on_step(state)
-
-        # --- Step 2: Review ---
-        review = await self_reviewer.run(
-            goal=goal,
-            executor_result=exec_result,
-            working_dir=run_workspace,
-        )
-        state.review_results.append(review)
-        _save_state(state)
-        if on_step:
-            await on_step(state)
-
-        if review.verdict == ReviewVerdict.PASS:
-            state.status = RunStatus.PASSED
-            state.final_output = exec_result.aggregated_output
-            break
-
-        if i == MAX_ITERATIONS:
-            state.status = RunStatus.MAX_ITERATIONS
-            state.final_output = exec_result.aggregated_output
-            break
-
-        # --- Step 3: Refine (only if more iterations remain) ---
-        refinement = await refiner.run(
-            goal=goal,
-            executor_result=exec_result,
-            feedback=review,
-        )
-        state.refinement_results.append(refinement)
-        _save_state(state)
-        if on_step:
-            await on_step(state)
+        raise
 
     state.finished_at = datetime.utcnow()
 

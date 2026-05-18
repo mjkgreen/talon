@@ -126,12 +126,23 @@ async def _run_subagent(subtask: Subtask, goal: str, working_dir: str) -> Subtas
 
         provider.append_tool_results(messages, tool_results)
 
+    # If the tool-use loop ended without a text summary, request one explicitly.
+    if not final_output:
+        summary_response = await provider.chat(
+            system=_SUBAGENT_SYSTEM,
+            messages=messages + [{"role": "user", "content": "Summarize what you did and what the outcome was."}],
+            tools=[],
+            max_tokens=1024,
+        )
+        final_output = summary_response.text or ""
+
+    did_work = bool(files_modified or commands_run)
     return SubtaskResult(
         subtask=subtask,
-        output=final_output or "(no output)",
+        output=final_output or "(no output — no files written or commands run)",
         files_modified=files_modified,
         commands_run=commands_run,
-        success=bool(final_output),
+        success=bool(final_output) or did_work,
     )
 
 

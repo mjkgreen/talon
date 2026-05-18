@@ -85,3 +85,4 @@ class RunState(BaseModel):
     board_url: Optional[str] = None
     started_at: datetime = Field(default_factory=datetime.utcnow)
     finished_at: Optional[datetime] = None
+    error: Optional[str] = None

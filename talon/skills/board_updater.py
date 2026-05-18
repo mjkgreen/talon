@@ -19,16 +19,20 @@ from datetime import datetime
 
 from rich.console import Console
 
+from talon.db import sync_get_setting
 from talon.types import RunState, RunStatus
 
 console = Console()
 
 LINEAR_API_KEY = os.getenv("LINEAR_API_KEY")
 LINEAR_TEAM_ID = os.getenv("LINEAR_TEAM_ID")
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "")
 _pn = os.getenv("GITHUB_PROJECT_NUMBER", "")
 GITHUB_PROJECT_NUMBER: int | None = int(_pn) if _pn.isdigit() else None
+
+
+def _get_github_token() -> str:
+    return os.getenv("GITHUB_TOKEN") or sync_get_setting("github_token") or ""
 
 
 def _format_payload(state: RunState, video_url: str | None, pr_url: str | None) -> dict:
@@ -95,7 +99,7 @@ def _graphql(query: str, variables: dict) -> dict:
         "https://api.github.com/graphql",
         data=body,
         headers={
-            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Authorization": f"Bearer {_get_github_token()}",
             "Content-Type": "application/json",
             "X-GitHub-Api-Version": "2022-11-28",
         },
@@ -107,7 +111,7 @@ def _graphql(query: str, variables: dict) -> dict:
 
 async def _post_to_github_projects(payload: dict) -> str | None:
     """Add a draft issue to GitHub Projects v2. Returns the project URL."""
-    if not GITHUB_TOKEN or not GITHUB_REPO or not GITHUB_PROJECT_NUMBER:
+    if not _get_github_token() or not GITHUB_REPO or not GITHUB_PROJECT_NUMBER:
         return None
     try:
         owner, repo = GITHUB_REPO.split("/", 1)
@@ -185,7 +189,7 @@ async def run(
             console.print(f"  [green]Linear: {url}[/green]")
             board_url = board_url or url
 
-    if GITHUB_TOKEN and GITHUB_PROJECT_NUMBER:
+    if _get_github_token() and GITHUB_PROJECT_NUMBER:
         url = await _post_to_github_projects(payload)
         if url:
             console.print(f"  [green]GitHub Projects: {url}[/green]")
