@@ -28,12 +28,13 @@ from talon.types import RunState
 
 console = Console()
 
+GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "")
 GITHUB_BASE_BRANCH = os.getenv("GITHUB_BASE_BRANCH", "main")
 
 
 def _get_github_token() -> str:
-    return os.getenv("GITHUB_TOKEN") or sync_get_setting("github_token") or ""
+    return GITHUB_TOKEN or sync_get_setting("github_token") or ""
 
 
 def _git(args: list[str], cwd: str) -> subprocess.CompletedProcess:

@@ -244,7 +244,10 @@ async def github_auth_authorize():
     if not GITHUB_CLIENT_ID:
         raise HTTPException(
             status_code=400,
-            detail="GITHUB_CLIENT_ID not configured. Register an OAuth App at github.com/settings/developers.",
+            detail=(
+                "GITHUB_CLIENT_ID not configured. "
+                "Register an OAuth App at github.com/settings/developers."
+            ),
         )
     state = secrets.token_urlsafe(16)
     url = (
@@ -279,7 +282,10 @@ async def github_auth_exchange(body: _GitHubExchangeRequest):
         )
     data = res.json()
     if "access_token" not in data:
-        raise HTTPException(status_code=400, detail=data.get("error_description", "Token exchange failed"))
+        raise HTTPException(
+            status_code=400,
+            detail=data.get("error_description", "Token exchange failed"),
+        )
     await db.set_setting("github_token", data["access_token"])
     # Notify any open UI windows that auth is complete
     await manager.broadcast({"type": "github_auth_complete"})
@@ -310,7 +316,10 @@ async def github_auth_start():
     if not GITHUB_CLIENT_ID:
         raise HTTPException(
             status_code=400,
-            detail="GITHUB_CLIENT_ID not configured. Register an OAuth App at github.com/settings/developers.",
+            detail=(
+                "GITHUB_CLIENT_ID not configured. "
+                "Register an OAuth App at github.com/settings/developers."
+            ),
         )
     async with httpx.AsyncClient() as client:
         res = await client.post(

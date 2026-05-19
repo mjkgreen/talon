@@ -135,7 +135,9 @@ async def _run_subagent(subtask: Subtask, goal: str, working_dir: str) -> Subtas
     if not final_output:
         summary_response = await provider.chat(
             system=_SUBAGENT_SYSTEM,
-            messages=messages + [{"role": "user", "content": "Summarize what you did and what the outcome was."}],
+            messages=messages + [
+                {"role": "user", "content": "Summarize what you did and what the outcome was."}
+            ],
             tools=[],
             max_tokens=1024,
         )

@@ -50,6 +50,7 @@ def main() -> None:
     signal.signal(signal.SIGINT, _shutdown)
 
     import uvicorn
+
     from talon.server import app
 
     uvicorn.run(
