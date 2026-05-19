@@ -131,6 +131,7 @@ export default function KanbanBoard() {
   const [renamingProjectId, setRenamingProjectId] = useState<number | null>(null);
   const [renamingName, setRenamingName] = useState("");
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const activeProjectIdRef = useRef<number | null>(null);
 
   const apiUrl = (path: string) => (import.meta.env.DEV ? `http://localhost:8080${path}` : path);
 
@@ -138,6 +139,7 @@ export default function KanbanBoard() {
 
   const setActiveProject = (id: number) => {
     setActiveProjectIdState(id);
+    activeProjectIdRef.current = id;
     localStorage.setItem("talon_active_project", String(id));
     fetchIssues(id);
   };
@@ -160,9 +162,11 @@ export default function KanbanBoard() {
     const storedId = stored ? parseInt(stored) : null;
     if (storedId && list.find((p) => p.id === storedId)) {
       setActiveProjectIdState(storedId);
+      activeProjectIdRef.current = storedId;
       return storedId;
     } else if (list.length > 0) {
       setActiveProjectIdState(list[0].id);
+      activeProjectIdRef.current = list[0].id;
       localStorage.setItem("talon_active_project", String(list[0].id));
       return list[0].id;
     }
@@ -278,7 +282,7 @@ export default function KanbanBoard() {
           ? "wss://" + window.location.host + "/ws"
           : "ws://" + window.location.host + "/ws";
       ws = new WebSocket(import.meta.env.DEV ? "ws://localhost:8080/ws" : wsUrl);
-      ws.onopen = () => fetchIssues();
+      ws.onopen = () => fetchIssues(activeProjectIdRef.current);
       ws.onmessage = handleMessage;
       ws.onclose = () => { if (alive) reconnectTimer = setTimeout(connect, 2000); };
       ws.onerror = () => ws.close();
@@ -494,6 +498,10 @@ export default function KanbanBoard() {
   };
 
   const deleteProject = async (projectId: number) => {
+    if (projects.length <= 1) {
+      alert("Cannot delete the last project.");
+      return;
+    }
     if (!confirm("Delete this project and all its tasks?")) return;
     await fetch(apiUrl(`/api/projects/${projectId}`), { method: "DELETE" });
     const remaining = projects.filter((p) => p.id !== projectId);

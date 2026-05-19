@@ -303,53 +303,16 @@ async def update_settings(updates: db.SettingsUpdate):
     if updates.workspace_mode is not None:
         await db.set_setting("workspace_mode", updates.workspace_mode)
 
-    # --- AI provider keys ---
-    for field, db_key, env_key in [
-        ("anthropic_api_key", "anthropic_api_key", "ANTHROPIC_API_KEY"),
-        ("openai_api_key",    "openai_api_key",    "OPENAI_API_KEY"),
-        ("gemini_api_key",    "gemini_api_key",    "GEMINI_API_KEY"),
-        ("groq_api_key",      "groq_api_key",      "GROQ_API_KEY"),
-        ("mistral_api_key",   "mistral_api_key",   "MISTRAL_API_KEY"),
-    ]:
-        val = getattr(updates, field)
+    # --- AI keys, model routing, run limits (all share the same DB key as field name) ---
+    for db_key, env_key in _DB_TO_ENV.items():
+        val = getattr(updates, db_key, None)
         if val is None:
             continue
         if val == "":
             await db.delete_setting(db_key)
             os.environ.pop(env_key, None)
-        elif not val.startswith("***"):
-            await db.set_setting(db_key, val)
-            os.environ[env_key] = val
-
-    # --- Model routing ---
-    for field, db_key, env_key in [
-        ("agent_model",        "agent_model",        "AGENT_MODEL"),
-        ("orchestrator_model", "orchestrator_model", "ORCHESTRATOR_MODEL"),
-        ("subagent_model",     "subagent_model",     "SUBAGENT_MODEL"),
-        ("reviewer_model",     "reviewer_model",     "REVIEWER_MODEL"),
-        ("refiner_model",      "refiner_model",      "REFINER_MODEL"),
-    ]:
-        val = getattr(updates, field)
-        if val is None:
-            continue
-        if val == "":
-            await db.delete_setting(db_key)
-            os.environ.pop(env_key, None)
-        else:
-            await db.set_setting(db_key, val)
-            os.environ[env_key] = val
-
-    # --- Run limits ---
-    for field, db_key, env_key in [
-        ("max_iterations",  "max_iterations",  "MAX_ITERATIONS"),
-        ("agent_max_tokens", "agent_max_tokens", "AGENT_MAX_TOKENS"),
-    ]:
-        val = getattr(updates, field)
-        if val is None:
-            continue
-        if val == "":
-            await db.delete_setting(db_key)
-            os.environ.pop(env_key, None)
+        elif db_key in _API_KEY_SETTINGS and val.startswith("***"):
+            pass  # masked display value from frontend — don't overwrite with the mask
         else:
             await db.set_setting(db_key, val)
             os.environ[env_key] = val
@@ -383,6 +346,9 @@ async def update_project(project_id: int, updates: db.ProjectUpdate):
 
 @app.delete("/api/projects/{project_id}")
 async def delete_project(project_id: int):
+    all_projects = await db.list_projects()
+    if len(all_projects) <= 1:
+        raise HTTPException(status_code=400, detail="Cannot delete the last project")
     deleted = await db.delete_project(project_id)
     if deleted:
         await manager.broadcast({"type": "project_deleted", "project_id": project_id})
@@ -731,8 +697,9 @@ async def linear_webhook(
     title = data.get("title", "")
     description = data.get("description", "") or ""
 
+    project_id = await db.get_first_project_id()
     issue = await db.create_issue(
-        db.IssueCreate(title=title, description=description, status="In Progress")
+        db.IssueCreate(title=title, description=description, status="In Progress", project_id=project_id)
     )
     await broadcast_issue_update(issue.id)
 
@@ -764,8 +731,9 @@ async def github_webhook(
     title = issue_data.get("title", "")
     body_text = issue_data.get("body", "") or ""
 
+    project_id = await db.get_first_project_id()
     issue = await db.create_issue(
-        db.IssueCreate(title=title, description=body_text, status="In Progress")
+        db.IssueCreate(title=title, description=body_text, status="In Progress", project_id=project_id)
     )
     await broadcast_issue_update(issue.id)
 

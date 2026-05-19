@@ -164,10 +164,13 @@ def sync_get_setting(key: str) -> Optional[str]:
     """Synchronous setting read for use in non-async contexts (e.g. skills)."""
     if not os.path.exists(DB_PATH):
         return None
-    with sqlite3.connect(DB_PATH) as conn:
-        cursor = conn.execute("SELECT value FROM settings WHERE key = ?", (key,))
-        row = cursor.fetchone()
-        return row[0] if row else None
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.execute("SELECT value FROM settings WHERE key = ?", (key,))
+            row = cursor.fetchone()
+            return row[0] if row else None
+    except sqlite3.OperationalError:
+        return None
 
 
 async def get_setting(key: str) -> Optional[str]:
@@ -233,21 +236,36 @@ async def list_projects() -> List[Project]:
             return [Project(**dict(row)) for row in rows]
 
 
+async def get_first_project_id() -> Optional[int]:
+    """Return the ID of the first project (by creation order), or None if no projects exist."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT id FROM projects ORDER BY id ASC LIMIT 1") as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else None
+
+
 async def update_project(project_id: int, updates: ProjectUpdate) -> Optional[Project]:
     now = datetime.utcnow().isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
-        fields, values = [], []
+        fields = []
+        values = []
         if updates.name is not None:
-            fields.append("name = ?"); values.append(updates.name)
+            fields.append("name = ?")
+            values.append(updates.name)
         if updates.workspace_mode is not None:
-            fields.append("workspace_mode = ?"); values.append(updates.workspace_mode)
+            fields.append("workspace_mode = ?")
+            values.append(updates.workspace_mode)
         if updates.selected_repo is not None:
-            fields.append("selected_repo = ?"); values.append(updates.selected_repo)
+            fields.append("selected_repo = ?")
+            values.append(updates.selected_repo or None)  # "" → NULL to allow clearing
         if updates.local_path is not None:
-            fields.append("local_path = ?"); values.append(updates.local_path)
+            fields.append("local_path = ?")
+            values.append(updates.local_path or None)  # "" → NULL to allow clearing
         if not fields:
             return await get_project(project_id)
-        fields.append("updated_at = ?"); values.append(now); values.append(project_id)
+        fields.append("updated_at = ?")
+        values.append(now)
+        values.append(project_id)
         await db.execute(f"UPDATE projects SET {', '.join(fields)} WHERE id = ?", tuple(values))
         await db.commit()
         return await get_project(project_id)
