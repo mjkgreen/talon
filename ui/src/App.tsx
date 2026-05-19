@@ -50,29 +50,27 @@ export default function KanbanBoard() {
   const [syncing, setSyncing] = useState(false);
   const [browsing, setBrowsing] = useState(false);
 
-  type DeviceFlow = { device_code: string; user_code: string; verification_uri: string; interval: number };
-  const [deviceFlow, setDeviceFlow] = useState<DeviceFlow | null>(null);
-  const [deviceFlowStatus, setDeviceFlowStatus] = useState<'idle' | 'pending' | 'complete' | 'expired'>('idle');
-  const [deviceFlowError, setDeviceFlowError] = useState('');
-  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [githubAuthStatus, setGithubAuthStatus] = useState<'idle' | 'waiting' | 'error'>('idle');
+  const [githubAuthError, setGithubAuthError] = useState('');
+  const [activeIterationTab, setActiveIterationTab] = useState(0);
+  const followLatestRef = useRef(true);
 
   useEffect(() => {
     fetchIssues();
     fetchSettings();
-    const wsUrl = window.location.protocol === 'https:' ? 'wss://' : 'ws://' + window.location.host + '/ws';
-    const ws = new WebSocket(import.meta.env.DEV ? 'ws://localhost:8080/ws' : wsUrl);
-    
-    ws.onmessage = (event) => {
+
+    let ws: WebSocket;
+    let reconnectTimer: ReturnType<typeof setTimeout>;
+    let alive = true;
+
+    const handleMessage = (event: MessageEvent) => {
       const data = JSON.parse(event.data);
       if (data.type === 'issue_updated') {
         setIssues(prev => {
           const exists = prev.find(i => i.id === data.issue.id);
-          if (exists) {
-            return prev.map(i => i.id === data.issue.id ? data.issue : i);
-          }
+          if (exists) return prev.map(i => i.id === data.issue.id ? data.issue : i);
           return [data.issue, ...prev];
         });
-        // Keep the selected issue detail in sync (picks up run_id when agent starts)
         setSelectedIssue(prev => prev?.id === data.issue.id ? data.issue : prev);
       } else if (data.type === 'issue_deleted') {
         setIssues(prev => prev.filter(i => i.id !== data.issue_id));
@@ -80,10 +78,32 @@ export default function KanbanBoard() {
         setLiveRunStates(prev => ({ ...prev, [data.issue_id]: data.state }));
       } else if (data.type === 'run_error') {
         setRunErrors(prev => ({ ...prev, [data.issue_id]: data.error }));
+      } else if (data.type === 'github_auth_complete') {
+        setGithubAuthStatus('idle');
+        setHasGithubToken(true);
+        fetchRepos().then(() => setWizardStep(3));
       }
     };
 
-    return () => ws.close();
+    const connect = () => {
+      const wsUrl = window.location.protocol === 'https:'
+        ? 'wss://' + window.location.host + '/ws'
+        : 'ws://' + window.location.host + '/ws';
+      ws = new WebSocket(import.meta.env.DEV ? 'ws://localhost:8080/ws' : wsUrl);
+      ws.onopen = () => fetchIssues();
+      ws.onmessage = handleMessage;
+      ws.onclose = () => {
+        if (alive) reconnectTimer = setTimeout(connect, 2000);
+      };
+      ws.onerror = () => ws.close();
+    };
+
+    connect();
+    return () => {
+      alive = false;
+      clearTimeout(reconnectTimer);
+      ws?.close();
+    };
   }, []);
 
   const apiUrl = (path: string) => import.meta.env.DEV ? `http://localhost:8080${path}` : path;
@@ -105,6 +125,18 @@ export default function KanbanBoard() {
   // Only re-fetch when the issue itself or its run_id changes, not on every status update
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIssue?.id, selectedIssue?.run_id]);
+
+  useEffect(() => {
+    setActiveIterationTab(0);
+    followLatestRef.current = true;
+  }, [selectedIssue?.id]);
+
+  useEffect(() => {
+    if (!selectedIssue || !followLatestRef.current) return;
+    const state = liveRunStates[selectedIssue.id];
+    const count = state?.executor_results?.length ?? 0;
+    if (count > 0) setActiveIterationTab(count - 1);
+  }, [selectedIssue?.id, liveRunStates]);
 
   const fetchIssues = async () => {
     const res = await fetch(apiUrl('/api/issues'));
@@ -178,54 +210,30 @@ export default function KanbanBoard() {
     } else {
       setWizardStep(2);
       if (mode === 'github') {
-        setDeviceFlow(null);
-        setDeviceFlowStatus('idle');
-        setDeviceFlowError('');
+        setGithubAuthStatus('idle');
+        setGithubAuthError('');
       }
     }
   };
 
-  const startDeviceFlow = async () => {
-    setDeviceFlowError('');
-    const res = await fetch(apiUrl('/api/auth/github/start'), { method: 'POST' });
+  const startGithubOAuth = async () => {
+    setGithubAuthError('');
+    const res = await fetch(apiUrl('/api/auth/github/authorize'));
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      setDeviceFlowError(err.detail || 'Failed to start GitHub auth. Is GITHUB_CLIENT_ID set?');
+      setGithubAuthError(err.detail || 'Failed to start GitHub auth. Is GITHUB_CLIENT_ID set?');
       return;
     }
-    const data: DeviceFlow & { expires_in: number } = await res.json();
-    setDeviceFlow(data);
-    setDeviceFlowStatus('pending');
+    const data: { url: string } = await res.json();
+    setGithubAuthStatus('waiting');
+    // Open in system browser — works both in Electron (via preload) and plain browser.
+    if (typeof window !== 'undefined' && (window as any).talon?.openExternal) {
+      (window as any).talon.openExternal(data.url);
+    } else {
+      window.open(data.url, '_blank', 'noopener,noreferrer');
+    }
+    // github_auth_complete WebSocket message will advance the wizard.
   };
-
-  useEffect(() => {
-    if (deviceFlowStatus !== 'pending' || !deviceFlow) return;
-    const intervalMs = (deviceFlow.interval + 1) * 1000;
-    pollIntervalRef.current = setInterval(async () => {
-      try {
-        const res = await fetch(apiUrl('/api/auth/github/poll'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ device_code: deviceFlow.device_code }),
-        });
-        const data = await res.json();
-        if (data.status === 'complete') {
-          clearInterval(pollIntervalRef.current!);
-          setDeviceFlowStatus('complete');
-          setHasGithubToken(true);
-          await fetchRepos();
-          setWizardStep(3);
-        } else if (data.status === 'expired') {
-          clearInterval(pollIntervalRef.current!);
-          setDeviceFlowStatus('expired');
-        }
-      } catch {
-        // ignore transient network errors, keep polling
-      }
-    }, intervalMs);
-    return () => { if (pollIntervalRef.current) clearInterval(pollIntervalRef.current); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deviceFlowStatus, deviceFlow]);
 
   const saveLocalPathAndFinish = async () => {
     await fetch(apiUrl('/api/settings'), {
@@ -264,14 +272,19 @@ export default function KanbanBoard() {
   const addIssue = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTitle.trim()) return;
-    
+
     const res = await fetch(apiUrl('/api/issues'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: newTitle, description: newDescription, status: 'Backlog' })
     });
-    
+
     if (res.ok) {
+      const created: Issue = await res.json();
+      setIssues(prev => {
+        if (prev.find(i => i.id === created.id)) return prev;
+        return [created, ...prev];
+      });
       setNewTitle('');
       setNewDescription('');
       setIsAddModalOpen(false);
@@ -279,6 +292,7 @@ export default function KanbanBoard() {
   };
 
   const deleteIssue = async (id: number) => {
+    setIssues(prev => prev.filter(i => i.id !== id));
     await fetch(apiUrl(`/api/issues/${id}`), { method: 'DELETE' });
   };
 
@@ -310,18 +324,8 @@ export default function KanbanBoard() {
             <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent flex items-center gap-3">
               Talon Board
             </h1>
-            <div className="text-neutral-400 mt-2 flex items-center gap-3">
+            <div className="text-neutral-400 mt-2">
                Autonomous Agent Tracker
-               {workspaceMode === 'github' && selectedRepo && (
-                 <span className="bg-neutral-800 text-xs px-2 py-1 rounded flex items-center gap-1 border border-neutral-700">
-                   <GithubLogo size={12} /> {selectedRepo}
-                 </span>
-               )}
-               {workspaceMode === 'local' && localPath && (
-                 <span className="bg-neutral-800 text-xs px-2 py-1 rounded flex items-center gap-1 border border-neutral-700">
-                   <Folder size={12} /> {localPath}
-                 </span>
-               )}
             </div>
           </div>
           
@@ -537,53 +541,34 @@ export default function KanbanBoard() {
                   Authorize Talon via GitHub's device flow — no passwords or tokens to copy.
                 </p>
 
-                {deviceFlowStatus === 'idle' && (
-                  <>
-                    {deviceFlowError && (
-                      <div className="mb-4 text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-3">{deviceFlowError}</div>
-                    )}
-                    <button
-                      onClick={startDeviceFlow}
-                      className="w-full py-3 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 rounded-xl text-sm font-medium flex items-center justify-center gap-2 transition-colors"
-                    >
-                      <GithubLogo size={16} /> Authorize with GitHub
-                    </button>
-                  </>
+                {githubAuthError && (
+                  <div className="mb-4 text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-3">{githubAuthError}</div>
                 )}
 
-                {(deviceFlowStatus === 'pending' || deviceFlowStatus === 'complete') && deviceFlow && (
+                {githubAuthStatus === 'idle' && (
+                  <button
+                    onClick={startGithubOAuth}
+                    className="w-full py-3 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 rounded-xl text-sm font-medium flex items-center justify-center gap-2 transition-colors"
+                  >
+                    <GithubLogo size={16} /> Login with GitHub
+                  </button>
+                )}
+
+                {githubAuthStatus === 'waiting' && (
                   <div className="space-y-4">
                     <div className="bg-neutral-950 border border-neutral-800 rounded-xl p-5 text-center">
-                      <p className="text-xs text-neutral-500 mb-2">Visit this URL and enter the code:</p>
-                      <a
-                        href={deviceFlow.verification_uri}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-blue-400 hover:underline text-sm font-mono block mb-4"
-                      >
-                        {deviceFlow.verification_uri}
-                      </a>
-                      <div className="bg-neutral-900 border border-neutral-700 rounded-lg px-6 py-3 inline-block">
-                        <span className="text-2xl font-mono font-bold tracking-widest text-white">{deviceFlow.user_code}</span>
-                      </div>
+                      <p className="text-sm text-neutral-400">A browser window has opened for GitHub authorization.</p>
+                      <p className="text-xs text-neutral-500 mt-2">Once you approve, this window will advance automatically.</p>
                     </div>
                     <div className="flex items-center gap-2 text-sm text-neutral-400">
                       <RefreshCw size={14} className="animate-spin shrink-0" />
                       Waiting for authorization…
                     </div>
-                  </div>
-                )}
-
-                {deviceFlowStatus === 'expired' && (
-                  <div className="space-y-4">
-                    <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-3">
-                      Code expired. Click below to try again.
-                    </div>
                     <button
-                      onClick={() => { setDeviceFlowStatus('idle'); setDeviceFlow(null); }}
-                      className="w-full py-3 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 rounded-xl text-sm font-medium transition-colors"
+                      onClick={() => setGithubAuthStatus('idle')}
+                      className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
                     >
-                      Restart Authorization
+                      Cancel
                     </button>
                   </div>
                 )}
@@ -760,132 +745,160 @@ export default function KanbanBoard() {
                 </div>
               )}
 
-              {activeRunState && (
-                <div className="space-y-6">
-                  <div className="bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden">
-                    <div className="bg-neutral-900 border-b border-neutral-800 p-4 flex justify-between items-center">
-                      <h3 className="text-sm font-medium text-neutral-300 flex items-center gap-2">
-                        <Activity size={16} className="text-blue-400" />
-                        Execution Trace
-                        {isLive && (
-                          <span className="flex items-center gap-1 text-xs text-blue-400 bg-blue-400/10 px-2 py-0.5 rounded-full ml-1">
-                            <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-                            Live
-                          </span>
-                        )}
-                      </h3>
-                      <span className="text-xs text-neutral-500 font-mono">Run: {activeRunState.run_id}</span>
-                    </div>
-                    <div className="p-0">
-                      {(!activeRunState.executor_results || activeRunState.executor_results.length === 0) && (
+              {activeRunState && (() => {
+                const iterations: any[] = activeRunState.executor_results ?? [];
+                const totalIterations = iterations.length;
+                const clampedTab = totalIterations === 0 ? 0 : Math.min(activeIterationTab, totalIterations - 1);
+                const currentIteration = iterations[clampedTab];
+                const currentReview = activeRunState.review_results?.[clampedTab];
+                const currentRefinement = activeRunState.refinement_results?.[clampedTab];
+                return (
+                  <div className="space-y-4">
+                    <div className="bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden">
+                      <div className="bg-neutral-900 border-b border-neutral-800 p-4 flex justify-between items-center">
+                        <h3 className="text-sm font-medium text-neutral-300 flex items-center gap-2">
+                          <Activity size={16} className="text-blue-400" />
+                          Execution Trace
+                          {isLive && (
+                            <span className="flex items-center gap-1 text-xs text-blue-400 bg-blue-400/10 px-2 py-0.5 rounded-full ml-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                              Live
+                            </span>
+                          )}
+                        </h3>
+                        <span className="text-xs text-neutral-500 font-mono">Run: {activeRunState.run_id}</span>
+                      </div>
+
+                      {totalIterations === 0 ? (
                         <div className="p-8 text-center text-neutral-500 text-sm flex flex-col items-center gap-3">
                           <RefreshCw size={20} className="animate-spin text-blue-500" />
                           Agent initializing — decomposing goal into subtasks...
                         </div>
-                      )}
-                      {activeRunState.executor_results?.map((res: any, idx: number) => (
-                        <div key={idx} className="border-b border-neutral-800 last:border-0">
-                          <div className="p-4 bg-neutral-900/50">
-                            <h4 className="text-sm font-medium text-blue-300 mb-3 flex items-center gap-2">
-                              Iteration {idx + 1}
-                              {isLive && idx === activeRunState.executor_results.length - 1 && !activeRunState.review_results?.[idx] && (
-                                <span className="text-xs text-neutral-500 flex items-center gap-1">
-                                  <RefreshCw size={10} className="animate-spin" /> reviewing...
-                                </span>
-                              )}
-                            </h4>
-                            {res.subtasks?.length > 0 && (
-                              <div className="mb-3 space-y-1">
-                                {res.subtasks.map((st: any, si: number) => {
-                                  const stResult = res.subtask_results?.[si];
-                                  return (
-                                    <div key={si} className="flex items-start gap-2 text-xs text-neutral-400">
-                                      <span className={`mt-0.5 shrink-0 ${stResult?.success ? 'text-green-400' : 'text-neutral-600'}`}>
-                                        {stResult ? (stResult.success ? '✓' : '✗') : '○'}
-                                      </span>
-                                      <span>{st.description}</span>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            )}
-                            <div className="bg-neutral-950 p-4 rounded border border-neutral-800/50 overflow-x-auto">
-                              <pre className="text-xs text-neutral-400 font-mono whitespace-pre-wrap">{res.aggregated_output || "No output yet"}</pre>
-                            </div>
+                      ) : (
+                        <>
+                          <div className="flex border-b border-neutral-800 bg-neutral-900/30 overflow-x-auto">
+                            {iterations.map((_: any, idx: number) => {
+                              const review = activeRunState.review_results?.[idx];
+                              const isActive = clampedTab === idx;
+                              const isPassing = review?.verdict === 'pass';
+                              const isFailing = review && review.verdict !== 'pass';
+                              const isRunning = isLive && idx === totalIterations - 1 && !review;
+                              return (
+                                <button
+                                  key={idx}
+                                  onClick={() => {
+                                    setActiveIterationTab(idx);
+                                    followLatestRef.current = idx === totalIterations - 1;
+                                  }}
+                                  className={`flex items-center gap-2 px-4 py-3 text-xs font-medium whitespace-nowrap border-b-2 transition-colors ${
+                                    isActive
+                                      ? 'border-blue-500 text-white bg-neutral-800/50'
+                                      : 'border-transparent text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800/30'
+                                  }`}
+                                >
+                                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isPassing ? 'bg-green-400' : isFailing ? 'bg-amber-400' : isRunning ? 'bg-blue-400 animate-pulse' : 'bg-neutral-600'}`} />
+                                  Iteration {idx + 1}
+                                  {isRunning && <RefreshCw size={10} className="animate-spin text-neutral-500" />}
+                                </button>
+                              );
+                            })}
                           </div>
 
-                          {activeRunState.review_results?.[idx] && (
-                            <div className="p-4 border-t border-neutral-800/50">
-                              <div className="flex items-center gap-3 mb-2">
-                                <span className={`text-xs px-2 py-1 rounded font-medium ${activeRunState.review_results[idx].verdict === 'pass' ? 'bg-green-500/10 text-green-400' : 'bg-amber-500/10 text-amber-400'}`}>
-                                  Review: {activeRunState.review_results[idx].verdict.toUpperCase()}
-                                </span>
-                                <span className="text-xs text-neutral-500">
-                                  Score: {Math.round((activeRunState.review_results[idx].score ?? 0) * 10)}/10
-                                </span>
-                              </div>
-                              {activeRunState.review_results[idx].summary && (
-                                <div className="bg-neutral-950 p-4 rounded border border-neutral-800/50 mb-2">
-                                  <p className="text-xs text-neutral-300">{activeRunState.review_results[idx].summary}</p>
-                                </div>
-                              )}
-                              {activeRunState.review_results[idx].blocking_issues?.length > 0 && (
-                                <div className="text-xs text-red-400 space-y-1 mt-2">
-                                  {activeRunState.review_results[idx].blocking_issues.map((issue: string, bi: number) => (
-                                    <div key={bi} className="flex items-start gap-1">
-                                      <span className="shrink-0">✗</span> {issue}
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          )}
-
-                          {activeRunState.refinement_results?.[idx] && (
-                            <div className="p-4 border-t border-neutral-800/30 bg-amber-500/5">
-                              <div className="text-xs text-amber-400 font-medium mb-2">Refinement plan for next iteration</div>
-                              <div className="text-xs text-neutral-400 space-y-1">
-                                {activeRunState.refinement_results[idx].changes_planned?.map((c: string, ci: number) => (
-                                  <div key={ci} className="flex items-start gap-1">
-                                    <span className="shrink-0 text-amber-500">→</span> {c}
+                          {currentIteration && (
+                            <div>
+                              {currentIteration.subtasks?.length > 0 && (
+                                <div className="p-4 border-b border-neutral-800/50">
+                                  <div className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-3">Subagents</div>
+                                  <div className="space-y-1.5">
+                                    {currentIteration.subtasks.map((st: any, si: number) => {
+                                      const stResult = currentIteration.subtask_results?.[si];
+                                      return (
+                                        <div key={si} className="flex items-start gap-2 text-xs text-neutral-400">
+                                          <span className={`mt-0.5 shrink-0 ${stResult?.success ? 'text-green-400' : stResult ? 'text-red-400' : 'text-neutral-600'}`}>
+                                            {stResult ? (stResult.success ? '✓' : '✗') : '○'}
+                                          </span>
+                                          <span>{st.description}</span>
+                                        </div>
+                                      );
+                                    })}
                                   </div>
-                                ))}
+                                </div>
+                              )}
+
+                              <div className="p-4 border-b border-neutral-800/50">
+                                <div className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-3">Output</div>
+                                <div className="bg-neutral-900 p-4 rounded border border-neutral-800/50 overflow-x-auto">
+                                  <pre className="text-xs text-neutral-400 font-mono whitespace-pre-wrap">{currentIteration.aggregated_output || 'No output yet'}</pre>
+                                </div>
+                                {isLive && clampedTab === totalIterations - 1 && !currentReview && (
+                                  <div className="mt-3 flex items-center gap-2 text-xs text-neutral-500">
+                                    <RefreshCw size={12} className="animate-spin" /> Waiting for reviewer...
+                                  </div>
+                                )}
                               </div>
+
+                              {currentReview && (
+                                <div className="p-4 border-b border-neutral-800/50">
+                                  <div className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-3">Review</div>
+                                  <div className="flex items-center gap-3 mb-3">
+                                    <span className={`text-xs px-2 py-1 rounded font-medium ${currentReview.verdict === 'pass' ? 'bg-green-500/10 text-green-400' : 'bg-amber-500/10 text-amber-400'}`}>
+                                      {currentReview.verdict.toUpperCase()}
+                                    </span>
+                                    <span className="text-xs text-neutral-500">Score: {Math.round((currentReview.score ?? 0) * 10)}/10</span>
+                                  </div>
+                                  {currentReview.summary && (
+                                    <div className="bg-neutral-900 p-4 rounded border border-neutral-800/50 mb-3">
+                                      <p className="text-xs text-neutral-300">{currentReview.summary}</p>
+                                    </div>
+                                  )}
+                                  {currentReview.blocking_issues?.length > 0 && (
+                                    <div className="text-xs text-red-400 space-y-1">
+                                      {currentReview.blocking_issues.map((issue: string, bi: number) => (
+                                        <div key={bi} className="flex items-start gap-1">
+                                          <span className="shrink-0">✗</span> {issue}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {currentRefinement && (
+                                <div className="p-4 bg-amber-500/5">
+                                  <div className="text-xs font-semibold text-amber-400 uppercase tracking-wider mb-3">Refinement plan</div>
+                                  <div className="text-xs text-neutral-400 space-y-1.5">
+                                    {currentRefinement.changes_planned?.map((c: string, ci: number) => (
+                                      <div key={ci} className="flex items-start gap-1.5">
+                                        <span className="shrink-0 text-amber-500">→</span> {c}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           )}
-                        </div>
-                      ))}
-
-                      {isLive && activeRunState.executor_results?.length > 0 &&
-                        activeRunState.executor_results.length > (activeRunState.review_results?.length ?? 0) && (
-                        <div className="p-4 flex items-center gap-2 text-xs text-neutral-500 border-t border-neutral-800">
-                          <RefreshCw size={12} className="animate-spin" /> Waiting for reviewer...
-                        </div>
+                        </>
                       )}
                     </div>
-                  </div>
 
-                  {activeRunState.video_path && (
-                    <div className="bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden">
-                      <div className="bg-neutral-900 border-b border-neutral-800 p-4">
-                        <h3 className="text-sm font-medium text-neutral-300 flex items-center gap-2">
-                          <Play size={16} className="text-blue-400" />
-                          Video Verification
-                        </h3>
+                    {activeRunState.video_path && (
+                      <div className="bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden">
+                        <div className="bg-neutral-900 border-b border-neutral-800 p-4">
+                          <h3 className="text-sm font-medium text-neutral-300 flex items-center gap-2">
+                            <Play size={16} className="text-blue-400" />
+                            Video Verification
+                          </h3>
+                        </div>
+                        <div className="p-4 flex justify-center bg-black">
+                          <video controls className="max-w-full max-h-[400px] rounded border border-neutral-800" src={apiUrl(`/api/runs/${activeRunState.run_id}/video`)}>
+                            Your browser does not support the video tag.
+                          </video>
+                        </div>
                       </div>
-                      <div className="p-4 flex justify-center bg-black">
-                        <video
-                          controls
-                          className="max-w-full max-h-[400px] rounded border border-neutral-800"
-                          src={apiUrl(`/api/runs/${activeRunState.run_id}/video`)}
-                        >
-                          Your browser does not support the video tag.
-                        </video>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
+                    )}
+                  </div>
+                );
+              })()}
 
               {!activeRunState && !runError && !loadingRunState && selectedIssue.run_id && (
                 <div className="p-8 text-center text-neutral-500 border border-neutral-800/50 border-dashed rounded-xl">

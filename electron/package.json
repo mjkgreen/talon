@@ -1,0 +1,110 @@
+{
+  "name": "talon",
+  "version": "0.1.0",
+  "description": "Autonomous Agent Kanban Board",
+  "author": "Chasqui AI <matthew@chasqui.ai>",
+  "license": "MIT",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "build:mac": "electron-builder --mac",
+    "build:win": "electron-builder --win",
+    "build:linux": "electron-builder --linux"
+  },
+  "build": {
+    "appId": "ai.chasqui.talon",
+    "productName": "Talon",
+    "protocols": [
+      {
+        "name": "Talon",
+        "schemes": [
+          "talon"
+        ]
+      }
+    ],
+    "directories": {
+      "buildResources": "icons",
+      "output": "../release"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "icons/icon.icns",
+      "category": "public.app-category.developer-tools",
+      "extraResources": [
+        {
+          "from": "../dist/talon-server",
+          "to": "talon-server",
+          "filter": [
+            "**/*"
+          ]
+        }
+      ]
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "icons/icon.ico",
+      "extraResources": [
+        {
+          "from": "../dist/talon-server.exe",
+          "to": "talon-server.exe"
+        }
+      ]
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "icons/icon.png",
+      "category": "Development",
+      "extraResources": [
+        {
+          "from": "../dist/talon-server",
+          "to": "talon-server",
+          "filter": [
+            "**/*"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    }
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.0"
+  },
+  "devDependencies": {
+    "electron": "^42.1.0",
+    "electron-builder": "^26.8.1"
+  }
+}

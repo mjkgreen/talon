@@ -12,6 +12,8 @@ import hashlib
 import hmac
 import json
 import os
+import io
+import sys
 import traceback
 from datetime import datetime
 
@@ -33,13 +35,18 @@ from rich.console import Console
 
 from talon import db
 
-console = Console()
+if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
+    _stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+else:
+    _stdout = sys.stdout
+console = Console(file=_stdout)
 
 WEBHOOK_LABEL = os.getenv("WEBHOOK_LABEL", "agent-task")
 LINEAR_SECRET = os.getenv("LINEAR_WEBHOOK_SECRET", "")
 GITHUB_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET", "")
 MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT_RUNS", "3"))
 GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "")
+GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "")
 
 app = FastAPI(title="Talon Server", version="1.0.0")
 
@@ -133,7 +140,7 @@ async def _run_loop(
                         {
                             "type": "run_state_updated",
                             "issue_id": issue_id,
-                            "state": state.model_dump(),
+                            "state": state.model_dump(mode="json"),
                         }
                     )
 
@@ -165,16 +172,22 @@ async def _run_loop(
                 await broadcast_issue_update(issue_id)
 
         except Exception as e:
-            console.print(f"[red]Loop error: {e}[/red]")
-            console.print(traceback.format_exc())
+            try:
+                console.print(f"[red]Loop error: {e}[/red]")
+                console.print(traceback.format_exc())
+            except Exception:
+                pass
             if issue_id:
-                await manager.broadcast(
-                    {
-                        "type": "run_error",
-                        "issue_id": issue_id,
-                        "error": str(e),
-                    }
-                )
+                try:
+                    await manager.broadcast(
+                        {
+                            "type": "run_error",
+                            "issue_id": issue_id,
+                            "error": str(e),
+                        }
+                    )
+                except Exception:
+                    pass
                 await db.update_issue(issue_id, db.IssueUpdate(status="Failed"))
                 await broadcast_issue_update(issue_id)
 
@@ -182,6 +195,9 @@ async def _run_loop(
 @app.on_event("startup")
 async def startup_event():
     await db.init_db()
+    stalled = await db.reset_stalled_issues()
+    for issue_id in stalled:
+        await broadcast_issue_update(issue_id)
 
 
 @app.get("/health")
@@ -216,6 +232,65 @@ async def update_settings(updates: db.SettingsUpdate):
 
 class _GitHubPollRequest(BaseModel):
     device_code: str
+
+
+class _GitHubExchangeRequest(BaseModel):
+    code: str
+    state: str
+
+
+# --- Deep-link OAuth (desktop app) ---
+
+@app.get("/api/auth/github/authorize")
+async def github_auth_authorize():
+    """Return a GitHub OAuth authorize URL. Electron opens this in the system browser.
+    GitHub redirects to talon://oauth-callback?code=...&state=... which Electron intercepts
+    and forwards to /api/auth/github/exchange."""
+    import secrets
+
+    if not GITHUB_CLIENT_ID:
+        raise HTTPException(
+            status_code=400,
+            detail="GITHUB_CLIENT_ID not configured. Register an OAuth App at github.com/settings/developers.",
+        )
+    state = secrets.token_urlsafe(16)
+    url = (
+        f"https://github.com/login/oauth/authorize"
+        f"?client_id={GITHUB_CLIENT_ID}"
+        f"&scope=repo"
+        f"&state={state}"
+        f"&redirect_uri=talon://oauth-callback"
+    )
+    return {"url": url, "state": state}
+
+
+@app.post("/api/auth/github/exchange")
+async def github_auth_exchange(body: _GitHubExchangeRequest):
+    """Exchange an OAuth code for an access token and save it. Called by Electron after
+    it catches the talon://oauth-callback deep link."""
+    if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
+        raise HTTPException(
+            status_code=400,
+            detail="GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET not configured.",
+        )
+    async with httpx.AsyncClient() as client:
+        res = await client.post(
+            "https://github.com/login/oauth/access_token",
+            headers={"Accept": "application/json"},
+            json={
+                "client_id": GITHUB_CLIENT_ID,
+                "client_secret": GITHUB_CLIENT_SECRET,
+                "code": body.code,
+                "redirect_uri": "talon://oauth-callback",
+            },
+        )
+    data = res.json()
+    if "access_token" not in data:
+        raise HTTPException(status_code=400, detail=data.get("error_description", "Token exchange failed"))
+    await db.set_setting("github_token", data["access_token"])
+    # Notify any open UI windows that auth is complete
+    await manager.broadcast({"type": "github_auth_complete"})
+    return {"status": "complete"}
 
 
 @app.get("/api/local/browse")
@@ -413,11 +488,15 @@ async def update_issue(issue_id: int, updates: db.IssueUpdate, background_tasks:
     if not old_issue:
         raise HTTPException(status_code=404, detail="Issue not found")
 
+    is_requeue = updates.status == "In Progress" and old_issue.status != "In Progress"
+    if is_requeue:
+        # Clear stale run_id so the UI shows a fresh slate for the new run
+        updates = updates.model_copy(update={"clear_run_id": True})
+
     updated = await db.update_issue(issue_id, updates)
     await broadcast_issue_update(issue_id)
 
-    # If dragged into In Progress from Backlog, trigger run
-    if updates.status == "In Progress" and old_issue.status != "In Progress":
+    if is_requeue:
         background_tasks.add_task(
             _run_loop, f"{updated.title}\n\n{updated.description}", "ui", updated.id
         )

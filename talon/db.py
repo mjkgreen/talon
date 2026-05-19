@@ -1,12 +1,31 @@
 import os
 import sqlite3
 from datetime import datetime
+from pathlib import Path
 from typing import List, Optional
 
 import aiosqlite
 from pydantic import BaseModel
 
-DB_PATH = os.getenv("BOARD_DB_PATH", "./runs/board.db")
+
+def _default_db_path() -> str:
+    """Return the platform-appropriate user-data path for the database.
+
+    Precedence: BOARD_DB_PATH env var → platformdirs user_data_dir → ./runs/board.db fallback.
+    """
+    if env := os.getenv("BOARD_DB_PATH"):
+        return env
+    try:
+        from platformdirs import user_data_dir
+
+        data_dir = Path(user_data_dir("Talon", "Chasqui"))
+        data_dir.mkdir(parents=True, exist_ok=True)
+        return str(data_dir / "board.db")
+    except Exception:
+        return "./runs/board.db"
+
+
+DB_PATH = _default_db_path()
 
 
 class Issue(BaseModel):
@@ -28,6 +47,7 @@ class IssueCreate(BaseModel):
 class IssueUpdate(BaseModel):
     status: Optional[str] = None
     run_id: Optional[str] = None
+    clear_run_id: bool = False  # explicitly NULL-out run_id (separate from setting one)
 
 
 class SettingsUpdate(BaseModel):
@@ -135,7 +155,10 @@ async def update_issue(issue_id: int, updates: IssueUpdate) -> Optional[Issue]:
         if updates.status is not None:
             fields.append("status = ?")
             values.append(updates.status)
-        if updates.run_id is not None:
+        if updates.clear_run_id:
+            fields.append("run_id = ?")
+            values.append(None)
+        elif updates.run_id is not None:
             fields.append("run_id = ?")
             values.append(updates.run_id)
 
@@ -150,6 +173,28 @@ async def update_issue(issue_id: int, updates: IssueUpdate) -> Optional[Issue]:
         await db.execute(query, tuple(values))
         await db.commit()
         return await get_issue(issue_id)
+
+
+async def reset_stalled_issues() -> list[int]:
+    """At startup, move any 'In Progress' issues to 'Failed'.
+
+    Covers server crash, Ctrl-C, or any other mid-run interruption that left
+    the DB in an inconsistent state.  Returns the list of affected issue IDs.
+    """
+    now = datetime.utcnow().isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT id FROM issues WHERE status = 'In Progress'"
+        ) as cursor:
+            rows = await cursor.fetchall()
+        stalled_ids = [row[0] for row in rows]
+        if stalled_ids:
+            await db.execute(
+                "UPDATE issues SET status = 'Failed', updated_at = ? WHERE status = 'In Progress'",
+                (now,),
+            )
+            await db.commit()
+    return stalled_ids
 
 
 async def delete_issue(issue_id: int) -> bool:

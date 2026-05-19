@@ -2,6 +2,8 @@
 
 Autonomous agentic coding system. Give it a goal; it decomposes the work into subtasks, runs parallel sub-agents to implement them, reviews the result, iterates until passing, records a video walkthrough, and posts to your Kanban board.
 
+Available as a **desktop app** (Electron + bundled Python server) or as a standalone CLI/server.
+
 ## How it works
 
 ```
@@ -28,10 +30,16 @@ reviewer            Reads files, runs tests, returns pass/fail + score (0–1)
 
 ## Quick start
 
+### Desktop app (recommended)
+
+Download the installer for your platform from [Releases](../../releases). The app bundles the Python server — no Python install needed.
+
+### CLI / server (developer mode)
+
 ```bash
 cp .env.example .env      # add at least one API key
 python -m venv venv 
-.\venv\Scripts\activate  #or .venv/bin/activate
+.\venv\Scripts\activate  # or .venv/bin/activate on macOS/Linux
 pip install -e .
 talon run "Add a /health endpoint to the Flask app" --working-dir ./workspace
 ```
@@ -104,6 +112,49 @@ On **pass**: workspace is kept at `workspace/<run-id>/` — inspect the code or 
 On **fail**: workspace is removed automatically.  
 Use `talon cleanup <run-id>` to remove a kept workspace when done.
 
+## Desktop app
+
+The `electron/` directory contains an Electron wrapper that ships the Python FastAPI server as a self-contained binary.
+
+**How it works:**
+1. Electron spawns the bundled `talon-server` binary (built with PyInstaller from `talon/server_entry.py`).
+2. The binary finds a free port, prints `PORT:<n>` to stdout, then starts uvicorn.
+3. Electron reads that line, stores the port, and opens the UI pointed at `http://127.0.0.1:<port>`.
+4. GitHub OAuth uses a `talon://oauth-callback` deep link — the OS routes it back to the single Electron instance, which forwards the code to `/api/auth/github/exchange`.
+
+**Building the desktop app:**
+
+```bash
+# 1. Build the React UI
+cd ui && npm ci && npm run build && cd ..
+
+# 2. Bundle the Python server with PyInstaller
+pyinstaller talon-server.spec   # outputs dist/talon-server[.exe]
+
+# 3. Build the Electron installer
+cd electron
+npm install
+npm run build:mac   # or build:win / build:linux
+```
+
+Installers land in `release/`. CI (`.github/workflows/build.yml`) builds all three platforms automatically on version tags.
+
+**GitHub OAuth (desktop):**
+
+Register an OAuth App at `github.com/settings/developers`:
+- **Homepage URL**: `http://localhost`
+- **Callback URL**: `talon://oauth-callback`
+
+Then set in `.env`:
+```bash
+GITHUB_CLIENT_ID=...
+GITHUB_CLIENT_SECRET=...
+```
+
+The app exposes two endpoints used exclusively by the Electron OAuth flow:
+- `GET /api/auth/github/authorize` — returns the GitHub authorize URL + a CSRF state token
+- `POST /api/auth/github/exchange` — exchanges the code for an access token and saves it
+
 ## Webhook listener
 
 Start the server once; it triggers a full loop run whenever a tagged issue arrives.
@@ -124,6 +175,8 @@ talon serve --port 8080
 4. Open issues with the label `agent-task`
 
 The server accepts up to `MAX_CONCURRENT_RUNS` (default 3) simultaneous runs; additional triggers are queued. A `/health` endpoint and auto-generated `/docs` (OpenAPI) are available.
+
+On startup the server automatically moves any issues left in **In Progress** to **Failed** (covers crashes and Ctrl-C interruptions). Re-dragging an issue into In Progress clears the stale run association and starts a fresh run.
 
 ## Claude Code slash commands
 
@@ -150,6 +203,9 @@ The server accepts up to `MAX_CONCURRENT_RUNS` (default 3) simultaneous runs; ad
 | `talon/skills/board_updater.py` | Linear API poster |
 | `talon/loop.py` | Orchestrates the full loop, persists state after every step |
 | `talon/main.py` | CLI entry point |
+| `talon/server_entry.py` | PyInstaller / Electron entry point — finds a free port, prints `PORT:<n>`, starts uvicorn |
+| `talon-server.spec` | PyInstaller spec that bundles the server into a single binary |
+| `electron/` | Electron desktop wrapper (npm project, `main.js` + `preload.js`) |
 | `runs/<id>/state.json` | Full audit trail for every run |
 | `workspace/` | Default directory where sub-agents read/write code |
 
@@ -170,6 +226,9 @@ See `.env.example` for the full annotated list. Required minimum: one API key.
 | `REFINER_MODEL` | Per-role override |
 | `MAX_ITERATIONS` | Executor→reviewer loop limit (default: 3) |
 | `LINEAR_API_KEY` | Post results to Linear |
+| `GITHUB_CLIENT_ID` | GitHub OAuth App client ID (desktop app) |
+| `GITHUB_CLIENT_SECRET` | GitHub OAuth App client secret (desktop app) |
+| `BOARD_DB_PATH` | Override the SQLite DB path. Defaults to the platform user-data directory (`platformdirs`) — typically `~/.local/share/Talon/board.db` on Linux, `~/Library/Application Support/Talon/board.db` on macOS, `%APPDATA%\Chasqui\Talon\board.db` on Windows. |
 | `BROWSER_VALIDATOR_ENABLED` | Enable Playwright recording (default: false) |
 
 ## Browser validator setup

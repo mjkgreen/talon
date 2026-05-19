@@ -1,0 +1,123 @@
+name: Build Desktop App
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+            python-arch: x64
+          - os: windows-latest
+            platform: win
+            python-arch: x64
+          - os: ubuntu-latest
+            platform: linux
+            python-arch: x64
+
+    runs-on: ${{ matrix.os }}
+    name: Build (${{ matrix.os }})
+
+    steps:
+      # -----------------------------------------------------------------------
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # Python + PyInstaller
+      # -----------------------------------------------------------------------
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: ${{ matrix.python-arch }}
+
+      - name: Install Python deps + PyInstaller
+        run: pip install pyinstaller -e ".[dev]"
+
+      # Build the React UI so it can be bundled into the Python binary
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Build React UI
+        working-directory: ui
+        run: |
+          npm ci
+          npm run build
+
+      # Bundle Python + UI into a single binary
+      - name: Run PyInstaller
+        run: pyinstaller talon-server.spec
+
+      # -----------------------------------------------------------------------
+      # Electron + electron-builder
+      # -----------------------------------------------------------------------
+      - name: Install Electron deps
+        working-directory: electron
+        run: npm ci
+
+      - name: Build Electron app (macOS)
+        if: matrix.os == 'macos-latest'
+        working-directory: electron
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false  # skip code signing without a cert
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run build:mac
+
+      - name: Build Electron app (Windows)
+        if: matrix.os == 'windows-latest'
+        working-directory: electron
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run build:win
+
+      - name: Build Electron app (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: electron
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          sudo apt-get install -y libgtk-3-0 libnotify-dev libnss3 libxss1 libasound2
+          npm run build:linux
+
+      # -----------------------------------------------------------------------
+      # Upload installers as GitHub Release assets
+      # -----------------------------------------------------------------------
+      - name: Upload release artifacts
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            release/**/*.dmg
+            release/**/*.zip
+            release/**/*.exe
+            release/**/*.AppImage
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Also upload as workflow artifacts for non-tag builds (testing)
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: talon-${{ matrix.platform }}
+          path: |
+            release/**/*.dmg
+            release/**/*.zip
+            release/**/*.exe
+            release/**/*.AppImage
+          if-no-files-found: warn

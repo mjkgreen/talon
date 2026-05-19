@@ -7,7 +7,9 @@ executor → reviewer → [pass] → browser-validator → board-updater → don
 
 from __future__ import annotations
 
+import io
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -28,7 +30,11 @@ from talon.skills import (
 )
 from talon.types import ReviewVerdict, RunState, RunStatus
 
-console = Console()
+if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
+    _stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+else:
+    _stdout = sys.stdout
+console = Console(file=_stdout)
 
 MAX_ITERATIONS = int(os.getenv("MAX_ITERATIONS", "3"))
 RUNS_DIR = os.getenv("RUNS_DIR", "./runs")

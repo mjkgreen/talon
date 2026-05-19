@@ -4,12 +4,15 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+release/
+electron/node_modules/
 .venv/
 venv/
 runs/
 workspace/
 *.webm
 *.png
+!electron/icons/*.png
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
