@@ -1,5 +1,5 @@
 """
-FastAPI Server ?" API, Webhooks, WebSockets, and UI serving.
+FastAPI Server → API, Webhooks, WebSockets, and UI serving.
 
 Start:
   talon serve [--port 8080]
@@ -123,9 +123,8 @@ async def _run_loop(
             async def on_step(state):
                 if issue_id:
                     # Update run_id in DB on first step and notify frontend
-                    if state.iteration == 0 and not getattr(state, "_db_updated", False):
+                    if state.iteration == 0:
                         await db.update_issue(issue_id, db.IssueUpdate(run_id=state.run_id))
-                        state._db_updated = True
                         # Notify frontend so issue detail modal picks up the run_id
                         await broadcast_issue_update(issue_id)
 

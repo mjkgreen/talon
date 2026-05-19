@@ -26,6 +26,7 @@ litellm.drop_params = True  # silently drop unsupported params per-provider
 
 MODEL = os.getenv("AGENT_MODEL", "anthropic/claude-sonnet-4-6")
 MAX_TOKENS = int(os.getenv("AGENT_MAX_TOKENS", "8096"))
+TIMEOUT = int(os.getenv("AGENT_LLM_TIMEOUT_SECS", "120"))
 
 
 def _to_litellm_tools(tools: list[dict]) -> list[dict]:
@@ -60,7 +61,7 @@ class LiteLLMProvider:
             kwargs["tools"] = _to_litellm_tools(tools)
             kwargs["tool_choice"] = "auto"
 
-        raw = await litellm.acompletion(**kwargs)
+        raw = await litellm.acompletion(**kwargs, timeout=TIMEOUT)
         msg = raw.choices[0].message
 
         text: str | None = msg.content or None

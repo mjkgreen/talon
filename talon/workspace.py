@@ -56,12 +56,15 @@ def setup(run_id: str, base_dir: str | None = None, repo_url: str | None = None)
 
         console.print(f"  [dim]Cloning repository for run {run_id}...[/dim]")
         try:
-            # We clone into run_ws
             subprocess.run(
-                ["git", "clone", repo_url, str(run_ws)], check=True, capture_output=True, text=True
+                ["git", "clone", repo_url, str(run_ws)],
+                check=True, capture_output=True, text=True, timeout=120,
             )
             console.print(f"  [dim]workspace -> {run_ws} (cloned)[/dim]")
             return str(run_ws)
+        except subprocess.TimeoutExpired:
+            shutil.rmtree(run_ws, ignore_errors=True)
+            raise RuntimeError(f"git clone timed out after 120 s: {repo_url}")
         except subprocess.CalledProcessError as e:
             console.print(f"  [red]Failed to clone repo: {e.stderr}[/red]")
             # Fall through to the rest of the logic if clone fails
