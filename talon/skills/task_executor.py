@@ -76,7 +76,12 @@ async def _decompose_goal(goal: str, refinement: str | None) -> list[Subtask]:
         raw = raw.split("```")[1]
         if raw.startswith("json"):
             raw = raw[4:]
-    data = json.loads(raw)
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(
+            f"Orchestrator returned invalid JSON: {e}\nRaw: {raw[:300]!r}"
+        ) from e
     return [Subtask(**s) for s in data["subtasks"]]
 
 

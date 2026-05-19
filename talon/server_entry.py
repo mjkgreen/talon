@@ -7,9 +7,27 @@ clean shutdown.
 """
 from __future__ import annotations
 
+import io
 import signal
 import socket
 import sys
+
+# On Windows the default stdout encoding for pipes is cp1252 (charmap).
+# Replace it with UTF-8 before any imports so every Console() instance
+# in sub-modules inherits the corrected stream and can write Unicode safely.
+if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
+    sys.stdout = io.TextIOWrapper(
+        sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True
+    )
+    if hasattr(sys.stderr, "buffer"):
+        sys.stderr = io.TextIOWrapper(
+            sys.stderr.buffer, encoding="utf-8", errors="replace", line_buffering=True
+        )
+
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 def _find_free_port() -> int:

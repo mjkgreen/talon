@@ -3,9 +3,9 @@ Per-run workspace isolation.
 
 Each run gets its own directory so concurrent runs never conflict.
 
-- If base_dir is a git repo  → git worktree add on branch agent/run-<id>
-- If base_dir is a plain dir → shutil.copytree into workspace/<id>/
-- If base_dir is None        → fresh empty workspace/<id>/
+- If base_dir is a git repo  -> git worktree add on branch agent/run-<id>
+- If base_dir is a plain dir -> shutil.copytree into workspace/<id>/
+- If base_dir is None        -> fresh empty workspace/<id>/
 
 The isolated path is stored in RunState.workspace so it can be inspected
 or used for PR creation after the run completes.
@@ -68,7 +68,7 @@ def setup(run_id: str, base_dir: str | None = None, repo_url: str | None = None)
 
     if base_dir is None:
         run_ws.mkdir(parents=True, exist_ok=True)
-        console.print(f"  [dim]workspace → {run_ws} (fresh)[/dim]")
+        console.print(f"  [dim]workspace -> {run_ws} (fresh)[/dim]")
         return str(run_ws)
 
     base = Path(base_dir).resolve()
@@ -83,15 +83,21 @@ def setup(run_id: str, base_dir: str | None = None, repo_url: str | None = None)
             text=True,
         )
         if result.returncode == 0:
-            console.print(f"  [dim]workspace → {run_ws} (worktree branch={branch})[/dim]")
+            console.print(f"  [dim]workspace -> {run_ws} (worktree branch={branch})[/dim]")
             return str(run_ws)
         console.print(
             f"  [yellow]git worktree failed ({result.stderr.strip()}),"
             " falling back to copy[/yellow]"
         )
 
-    shutil.copytree(str(base), str(run_ws), dirs_exist_ok=True)
-    console.print(f"  [dim]workspace → {run_ws} (copy of {base})[/dim]")
+    _COPY_IGNORE = shutil.ignore_patterns(
+        ".git", "node_modules", ".next", ".nuxt",
+        "venv", ".venv", "__pycache__", "*.pyc",
+        "dist", "build", ".tox",
+        "workspace", "runs",
+    )
+    shutil.copytree(str(base), str(run_ws), dirs_exist_ok=True, ignore=_COPY_IGNORE)
+    console.print(f"  [dim]workspace -> {run_ws} (copy of {base})[/dim]")
     return str(run_ws)
 
 

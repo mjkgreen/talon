@@ -12,8 +12,6 @@ import hashlib
 import hmac
 import json
 import os
-import io
-import sys
 import traceback
 from datetime import datetime
 
@@ -35,11 +33,7 @@ from rich.console import Console
 
 from talon import db
 
-if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
-    _stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-else:
-    _stdout = sys.stdout
-console = Console(file=_stdout)
+console = Console()
 
 WEBHOOK_LABEL = os.getenv("WEBHOOK_LABEL", "agent-task")
 LINEAR_SECRET = os.getenv("LINEAR_WEBHOOK_SECRET", "")

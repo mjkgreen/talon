@@ -45,7 +45,7 @@ function startPythonServer() {
     if (binaryPath) {
       proc = spawn(binaryPath, [], {
         windowsHide: true,
-        env: { ...process.env },
+        env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
       });
     } else {
       // Development: use the system Python in the venv
@@ -54,7 +54,7 @@ function startPythonServer() {
       proc = spawn(pythonExe, ['-m', 'talon.server_entry'], {
         cwd: repoRoot,
         windowsHide: true,
-        env: { ...process.env, PYTHONPATH: repoRoot },
+        env: { ...process.env, PYTHONPATH: repoRoot, PYTHONUNBUFFERED: '1', PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
       });
     }
 
@@ -67,6 +67,11 @@ function startPythonServer() {
       if (match && !serverPort) {
         serverPort = parseInt(match[1], 10);
         resolve(serverPort);
+      }
+      // Mirror server output to the Electron console in dev mode so progress
+      // is visible without needing to run the server in a separate terminal.
+      if (!app.isPackaged) {
+        process.stdout.write(`[server] ${text}`);
       }
     });
 

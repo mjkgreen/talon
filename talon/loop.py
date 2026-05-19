@@ -7,9 +7,8 @@ executor → reviewer → [pass] → browser-validator → board-updater → don
 
 from __future__ import annotations
 
-import io
+import asyncio
 import os
-import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -30,11 +29,7 @@ from talon.skills import (
 )
 from talon.types import ReviewVerdict, RunState, RunStatus
 
-if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
-    _stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-else:
-    _stdout = sys.stdout
-console = Console(file=_stdout)
+console = Console()
 
 MAX_ITERATIONS = int(os.getenv("MAX_ITERATIONS", "3"))
 RUNS_DIR = os.getenv("RUNS_DIR", "./runs")
@@ -97,19 +92,23 @@ async def run(
     """
     state = RunState(goal=goal)
 
-    # Save immediately so the state file always exists from the first moment,
-    # even if workspace setup or the first LLM call fails.
+    # Save and notify the frontend immediately so the UI transitions out of
+    # "Agent is starting up" before workspace setup even begins.
     _save_state(state)
+    if on_step:
+        await on_step(state)
 
     try:
         # --- Isolate workspace for this run ---
-        run_workspace = workspace.setup(state.run_id, working_dir, repo_url=repo_url)
+        # Run in a thread so git/copytree never blocks the asyncio event loop.
+        # Blocking the loop freezes WebSocket heartbeats and drops connections.
+        run_workspace = await asyncio.to_thread(
+            workspace.setup, state.run_id, working_dir, repo_url=repo_url
+        )
         state.workspace = run_workspace
 
         _print_header(goal, state.run_id)
         _save_state(state)
-        if on_step:
-            await on_step(state)
     except Exception as e:
         state.status = RunStatus.FAILED
         state.error = str(e)
@@ -180,7 +179,7 @@ async def run(
     # Keep workspace on pass (code is ready for review / PR creation).
     # Remove on fail to avoid accumulating broken directories.
     if state.status != RunStatus.PASSED:
-        workspace.teardown(state.run_id, working_dir, run_workspace)
+        await asyncio.to_thread(workspace.teardown, state.run_id, working_dir, run_workspace)
         state.workspace = None
 
     # --- Step 4: Browser validate (optional) ---

@@ -177,7 +177,7 @@ async def run(goal: str, executor_result: ExecutorResult, working_dir: str) -> R
         iteration=iteration,
     )
 
-    icon = "✓" if feedback.verdict == ReviewVerdict.PASS else "✗"
+    icon = "pass" if feedback.verdict == ReviewVerdict.PASS else "fail"
     color = "green" if feedback.verdict == ReviewVerdict.PASS else "red"
     console.print(
         f"  [{color}]{icon} verdict={feedback.verdict} score={feedback.score:.2f}[/{color}]"
