@@ -24,9 +24,8 @@ from talon.providers.base import ProviderResponse, ToolCall, ToolResult
 
 litellm.drop_params = True  # silently drop unsupported params per-provider
 
-MODEL = os.getenv("AGENT_MODEL", "anthropic/claude-sonnet-4-6")
-MAX_TOKENS = int(os.getenv("AGENT_MAX_TOKENS", "8096"))
-TIMEOUT = int(os.getenv("AGENT_LLM_TIMEOUT_SECS", "120"))
+_DEFAULT_MODEL = "anthropic/claude-sonnet-4-6"
+_DEFAULT_MAX_TOKENS = 8096
 
 
 def _to_litellm_tools(tools: list[dict]) -> list[dict]:
@@ -45,7 +44,7 @@ def _to_litellm_tools(tools: list[dict]) -> list[dict]:
 
 
 class LiteLLMProvider:
-    def __init__(self, model: str = MODEL) -> None:
+    def __init__(self, model: str | None = None) -> None:
         self._model = model
 
     async def chat(
@@ -53,15 +52,22 @@ class LiteLLMProvider:
         system: str,
         messages: list[dict],
         tools: list[dict],
-        max_tokens: int = MAX_TOKENS,
+        max_tokens: int | None = None,
     ) -> ProviderResponse:
+        # Read env at call time so live changes from the Settings UI take effect
+        # without restarting the server.
+        model = self._model or os.getenv("AGENT_MODEL", _DEFAULT_MODEL)
+        if max_tokens is None:
+            max_tokens = int(os.getenv("AGENT_MAX_TOKENS", str(_DEFAULT_MAX_TOKENS)))
+        timeout = int(os.getenv("AGENT_LLM_TIMEOUT_SECS", "120"))
+
         full_messages = [{"role": "system", "content": system}, *messages]
-        kwargs: dict = dict(model=self._model, messages=full_messages, max_tokens=max_tokens)
+        kwargs: dict = dict(model=model, messages=full_messages, max_tokens=max_tokens)
         if tools:
             kwargs["tools"] = _to_litellm_tools(tools)
             kwargs["tool_choice"] = "auto"
 
-        raw = await litellm.acompletion(**kwargs, timeout=TIMEOUT)
+        raw = await litellm.acompletion(**kwargs, timeout=timeout)
         msg = raw.choices[0].message
 
         text: str | None = msg.content or None
