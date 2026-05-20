@@ -87,8 +87,10 @@ export default function KanbanBoard() {
   const [loadingRunState, setLoadingRunState] = useState(false);
   const [liveRunStates, setLiveRunStates] = useState<Record<number, any>>({});
   const [runErrors, setRunErrors] = useState<Record<number, string>>({});
+  const [runLogs, setRunLogs] = useState<Record<number, string[]>>({});
   const [activeIterationTab, setActiveIterationTab] = useState(0);
   const followLatestRef = useRef(true);
+  const activityLogRef = useRef<HTMLDivElement>(null);
 
   // --- First-run wizard ---
   // 0=hidden 1=AI keys (first-run) 2=workspace mode 3=auth/path 4=repo select
@@ -123,6 +125,8 @@ export default function KanbanBoard() {
   const [advancedModelOpen, setAdvancedModelOpen] = useState(false);
   const [maxIterations, setMaxIterations] = useState("3");
   const [maxTokens, setMaxTokens] = useState("");
+  const [editLocalDirectly, setEditLocalDirectly] = useState(false);
+  const [pushOnPass, setPushOnPass] = useState(true);
 
   // --- Project management ---
   const [newProjectModalOpen, setNewProjectModalOpen] = useState(false);
@@ -201,6 +205,8 @@ export default function KanbanBoard() {
       });
       setMaxIterations(data.max_iterations || "3");
       setMaxTokens(data.agent_max_tokens || "");
+      setEditLocalDirectly(data.edit_local_directly === "true");
+      setPushOnPass(data.push_on_pass !== "false");
 
       const hasToken = !!data.github_token;
       const hasRepo  = !!data.selected_repo;
@@ -253,6 +259,12 @@ export default function KanbanBoard() {
       if (data.type === "issue_updated") {
         setIssues((prev) => {
           const exists = prev.find((i) => i.id === data.issue.id);
+          if (data.issue.status === "In Progress") {
+            const was = prev.find((i) => i.id === data.issue.id);
+            if (!was || was.status !== "In Progress") {
+              setRunLogs((logs) => ({ ...logs, [data.issue.id]: [] }));
+            }
+          }
           if (exists) return prev.map((i) => (i.id === data.issue.id ? data.issue : i));
           return [data.issue, ...prev];
         });
@@ -261,6 +273,11 @@ export default function KanbanBoard() {
         setIssues((prev) => prev.filter((i) => i.id !== data.issue_id));
       } else if (data.type === "run_state_updated") {
         setLiveRunStates((prev) => ({ ...prev, [data.issue_id]: data.state }));
+      } else if (data.type === "run_log") {
+        setRunLogs((prev) => {
+          const current = prev[data.issue_id] ?? [];
+          return { ...prev, [data.issue_id]: [...current, data.message] };
+        });
       } else if (data.type === "run_error") {
         setRunErrors((prev) => ({ ...prev, [data.issue_id]: data.error }));
       } else if (data.type === "github_auth_complete") {
@@ -323,6 +340,11 @@ export default function KanbanBoard() {
       renameInputRef.current.select();
     }
   }, [renamingProjectId]);
+
+  useEffect(() => {
+    const el = activityLogRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [runLogs, selectedIssue?.id]);
 
   // ===================== actions =====================
 
@@ -478,6 +500,22 @@ export default function KanbanBoard() {
     });
     await fetchSettings();
     setSavingSettings(false);
+  };
+
+  const toggleEditLocalDirectly = async (value: boolean) => {
+    setEditLocalDirectly(value);
+    await fetch(apiUrl("/api/settings"), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ edit_local_directly: value ? "true" : "false" }),
+    });
+  };
+
+  const togglePushOnPass = async (value: boolean) => {
+    setPushOnPass(value);
+    await fetch(apiUrl("/api/settings"), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ push_on_pass: value ? "true" : "false" }),
+    });
   };
 
   // Projects
@@ -1180,6 +1218,38 @@ export default function KanbanBoard() {
                   ) : (
                     <p className="text-sm text-neutral-500">No active project selected.</p>
                   )}
+
+                  {/* Behaviour toggles */}
+                  <div className="space-y-3 pt-2 border-t border-neutral-800">
+                    {activeProject?.workspace_mode === "local" && (
+                      <div className="flex items-center justify-between gap-4">
+                        <div>
+                          <div className="text-sm font-medium text-neutral-300">Edit local files directly</div>
+                          <div className="text-xs text-neutral-500 mt-0.5">Agents edit the real files on disk — no isolated copy or worktree</div>
+                        </div>
+                        <button
+                          onClick={() => toggleEditLocalDirectly(!editLocalDirectly)}
+                          className={`relative flex-shrink-0 inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${editLocalDirectly ? "bg-blue-600" : "bg-neutral-700"}`}
+                          aria-pressed={editLocalDirectly}
+                        >
+                          <span className={`inline-block h-3 w-3 rounded-full bg-white shadow transition-transform ${editLocalDirectly ? "translate-x-5" : "translate-x-1"}`} />
+                        </button>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <div className="text-sm font-medium text-neutral-300">Push changes & open PR on pass</div>
+                        <div className="text-xs text-neutral-500 mt-0.5">Commit, push branch, and create a GitHub PR when a run succeeds</div>
+                      </div>
+                      <button
+                        onClick={() => togglePushOnPass(!pushOnPass)}
+                        className={`relative flex-shrink-0 inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${pushOnPass ? "bg-blue-600" : "bg-neutral-700"}`}
+                        aria-pressed={pushOnPass}
+                      >
+                        <span className={`inline-block h-3 w-3 rounded-full bg-white shadow transition-transform ${pushOnPass ? "translate-x-5" : "translate-x-1"}`} />
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -1284,12 +1354,43 @@ export default function KanbanBoard() {
                     </div>
                   )}
 
-                  {selectedIssue.status === "In Progress" && !activeRunState && !runError && (
-                    <div className="flex items-center gap-3 p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl text-blue-400 text-sm">
-                      <RefreshCw size={16} className="animate-spin shrink-0" />
-                      Agent is starting up — logs will appear here shortly...
-                    </div>
-                  )}
+                  {selectedIssue.status === "In Progress" && !activeRunState && !runError && (() => {
+                    const earlyLogs = runLogs[selectedIssue.id] ?? [];
+                    return earlyLogs.length > 0 ? (
+                      <div className="bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden">
+                        <div className="bg-neutral-900 border-b border-neutral-800 p-4 flex items-center gap-2">
+                          <Activity size={16} className="text-blue-400" />
+                          <span className="text-sm font-medium text-neutral-300">Execution Trace</span>
+                          <span className="flex items-center gap-1 text-xs text-blue-400 bg-blue-400/10 px-2 py-0.5 rounded-full ml-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                            Live
+                          </span>
+                        </div>
+                        <div
+                          ref={activityLogRef}
+                          className="bg-black/30 px-4 py-3 font-mono text-xs max-h-44 overflow-y-auto overflow-x-hidden"
+                        >
+                          {earlyLogs.map((line, i) => (
+                            <div key={i} className="leading-relaxed flex gap-2 min-w-0">
+                              <span className="text-neutral-700 shrink-0 select-none">[server]</span>
+                              <span className={`break-words min-w-0 ${
+                                line.startsWith("===") ? "text-blue-500" :
+                                line.startsWith("->") ? "text-cyan-500" :
+                                line.startsWith("Files modified:") ? "text-green-500" :
+                                line.includes("modified:") ? "text-green-600" :
+                                "text-neutral-400"
+                              }`}>{line}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-3 p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl text-blue-400 text-sm">
+                        <RefreshCw size={16} className="animate-spin shrink-0" />
+                        Agent is starting up — logs will appear here shortly...
+                      </div>
+                    );
+                  })()}
 
                   {loadingRunState && !activeRunState && (
                     <div className="flex items-center justify-center p-12 text-neutral-500 gap-3">
@@ -1305,6 +1406,7 @@ export default function KanbanBoard() {
                       const currentIteration = iterations[clampedTab];
                       const currentReview = activeRunState.review_results?.[clampedTab];
                       const currentRefinement = activeRunState.refinement_results?.[clampedTab];
+                      const logs = runLogs[selectedIssue.id] ?? [];
                       return (
                         <div className="space-y-4">
                           <div className="bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden">
@@ -1322,10 +1424,36 @@ export default function KanbanBoard() {
                               <span className="text-xs text-neutral-500 font-mono">Run: {activeRunState.run_id}</span>
                             </div>
 
+                            {logs.length > 0 && (
+                              <div
+                                ref={activityLogRef}
+                                className="border-b border-neutral-800/50 bg-black/30 px-4 py-3 font-mono text-xs max-h-44 overflow-y-auto overflow-x-hidden"
+                              >
+                                {logs.map((line, i) => (
+                                  <div key={i} className="leading-relaxed flex gap-2 min-w-0">
+                                    <span className="text-neutral-700 shrink-0 select-none">[server]</span>
+                                    <span className={`break-words min-w-0 ${
+                                      line.startsWith("===") ? "text-blue-500" :
+                                      line.startsWith("->") ? "text-cyan-500" :
+                                      line.startsWith("Files modified:") ? "text-green-500" :
+                                      line.includes("modified:") ? "text-green-600" :
+                                      "text-neutral-400"
+                                    }`}>{line}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
                             {totalIterations === 0 ? (
                               <div className="p-8 text-center text-neutral-500 text-sm flex flex-col items-center gap-3">
-                                <RefreshCw size={20} className="animate-spin text-blue-500" />
-                                Agent initializing — decomposing goal into subtasks...
+                                {logs.length === 0 ? (
+                                  <>
+                                    <RefreshCw size={20} className="animate-spin text-blue-500" />
+                                    Agent initializing — decomposing goal into subtasks...
+                                  </>
+                                ) : (
+                                  <span className="text-neutral-600 text-xs">Waiting for subtasks to complete…</span>
+                                )}
                               </div>
                             ) : (
                               <>

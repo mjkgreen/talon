@@ -74,18 +74,24 @@ async def run(
     app_url: str | None = None,
     repo_url: str | None = None,
     skip_board: bool = False,
+    direct_workspace: bool = False,
+    create_pr: bool = True,
     on_step: Callable[[RunState], Awaitable[None]] | None = None,
+    on_log: Callable[[str], Awaitable[None]] | None = None,
 ) -> RunState:
     """
     Run the full autonomous loop for the given goal.
 
     Args:
-        goal:        The high-level coding goal.
-        working_dir: Existing project dir to branch from (git worktree or copy).
-                     None → fresh isolated workspace per run.
-        app_url:     URL to validate with browser-validator (optional).
-        repo_url:    URL of a git repository to clone.
-        skip_board:  Skip posting to Linear/GitHub.
+        goal:             The high-level coding goal.
+        working_dir:      Existing project dir to branch from (git worktree or
+                          copy).  None → fresh isolated workspace per run.
+        app_url:          URL to validate with browser-validator (optional).
+        repo_url:         URL of a git repository to clone.
+        skip_board:       Skip posting to Linear/GitHub.
+        direct_workspace: When True the agents edit working_dir in place — no
+                          copy or worktree is created, and teardown is skipped.
+        create_pr:        When False skip PR creation after a passing run.
 
     Returns:
         RunState with full audit trail.
@@ -103,7 +109,8 @@ async def run(
         # Run in a thread so git/copytree never blocks the asyncio event loop.
         # Blocking the loop freezes WebSocket heartbeats and drops connections.
         run_workspace = await asyncio.to_thread(
-            workspace.setup, state.run_id, working_dir, repo_url=repo_url
+            workspace.setup, state.run_id, working_dir,
+            repo_url=repo_url, direct=direct_workspace,
         )
         state.workspace = run_workspace
 
@@ -122,6 +129,8 @@ async def run(
         for i in range(1, MAX_ITERATIONS + 1):
             state.iteration = i
             console.print(Rule(f"Iteration {i}/{MAX_ITERATIONS}", style="blue"))
+            if on_log:
+                await on_log(f"=== Iteration {i}/{MAX_ITERATIONS} ===")
 
             # --- Step 1: Execute ---
             exec_result = await task_executor.run(
@@ -129,6 +138,7 @@ async def run(
                 working_dir=run_workspace,
                 iteration=i,
                 refinement=refinement,
+                on_log=on_log,
             )
             state.executor_results.append(exec_result)
             _save_state(state)
@@ -178,7 +188,8 @@ async def run(
 
     # Keep workspace on pass (code is ready for review / PR creation).
     # Remove on fail to avoid accumulating broken directories.
-    if state.status != RunStatus.PASSED:
+    # Never tear down a direct workspace — those are real files on disk.
+    if state.status != RunStatus.PASSED and not direct_workspace:
         await asyncio.to_thread(workspace.teardown, state.run_id, working_dir, run_workspace)
         state.workspace = None
 
@@ -191,7 +202,7 @@ async def run(
         await on_step(state)
 
     # --- Step 5: Create PR ---
-    if state.status == RunStatus.PASSED:
+    if state.status == RunStatus.PASSED and create_pr:
         pr_url = await pr_creator.run(state, working_dir)
         state.pr_url = pr_url
         _save_state(state)

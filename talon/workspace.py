@@ -38,7 +38,12 @@ def _is_git_repo(path: Path) -> bool:
         return False
 
 
-def setup(run_id: str, base_dir: str | None = None, repo_url: str | None = None) -> str:
+def setup(
+    run_id: str,
+    base_dir: str | None = None,
+    repo_url: str | None = None,
+    direct: bool = False,
+) -> str:
     """
     Create and return an isolated workspace path for this run.
 
@@ -46,7 +51,14 @@ def setup(run_id: str, base_dir: str | None = None, repo_url: str | None = None)
         run_id:   Unique run identifier.
         base_dir: Existing project directory to branch from, or None for fresh.
         repo_url: URL to git clone.
+        direct:   If True and base_dir is set, use base_dir as-is (no copy or
+                  worktree).  The agents will edit the real files on disk.
     """
+    if direct and base_dir:
+        base = Path(base_dir).resolve()
+        console.print(f"  [dim]workspace -> {base} (direct — editing real files)[/dim]")
+        return str(base)
+
     run_ws = Path(WORKSPACE_BASE) / run_id
 
     if repo_url:

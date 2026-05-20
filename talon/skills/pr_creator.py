@@ -1,12 +1,13 @@
 """
 pr-creator skill
 ----------------
-After a passing run, commits any workspace changes, pushes the worktree branch,
+After a passing run, commits any workspace changes, pushes an agent branch,
 and opens a GitHub pull request.
 
-Required env vars (both must be set):
+Required env vars (or DB settings):
   GITHUB_TOKEN   — personal access token or app token with repo + pull-request write
-  GITHUB_REPO    — "owner/repo" (e.g. "acme/my-app")
+  GITHUB_REPO    — "owner/repo" (e.g. "acme/my-app"); auto-detected from git
+                   remote when not set
 
 Optional:
   GITHUB_BASE_BRANCH — target branch for the PR (default: "main")
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import urllib.error
 import urllib.request
@@ -47,32 +49,85 @@ def _git(args: list[str], cwd: str) -> subprocess.CompletedProcess:
         return result
 
 
+def _detect_github_repo(workspace: str) -> str | None:
+    """Infer 'owner/repo' from the git remote URL when GITHUB_REPO is not set."""
+    result = _git(["remote", "get-url", "origin"], workspace)
+    if result.returncode != 0:
+        return None
+    m = re.search(r"github\.com[:/]([^/]+/[^/\s]+?)(?:\.git)?$", result.stdout.strip())
+    return m.group(1) if m else None
+
+
 def _commit_and_push(workspace: str, run_id: str, goal: str) -> str | None:
-    """Stage uncommitted changes, commit, push. Returns branch name or None on failure."""
-    branch = f"agent/run-{run_id}"
+    """Stage uncommitted changes, commit, push. Returns branch name or None on failure.
+
+    Handles two cases:
+    - Worktree mode: already on agent/run-{run_id} branch → commit + push.
+    - Direct mode: on the user's own branch → stash, create agent branch,
+      pop stash, commit + push, return to original branch.
+    """
+    agent_branch = f"agent/run-{run_id}"
 
     status = _git(["status", "--porcelain"], workspace)
     if status.returncode != 0:
         console.print(f"  [red]git status failed: {status.stderr.strip()}[/red]")
         return None
 
-    if status.stdout.strip():
+    current = _git(["branch", "--show-current"], workspace)
+    current_branch = current.stdout.strip() if current.returncode == 0 else ""
+
+    on_agent_branch = current_branch == agent_branch
+    has_changes = bool(status.stdout.strip())
+
+    if not on_agent_branch:
+        # Direct workspace: move changes to a fresh agent branch without
+        # disturbing the user's working branch.
+        if has_changes:
+            stash = _git(["stash", "push", "-m", f"talon-{run_id}"], workspace)
+            if stash.returncode != 0:
+                console.print(f"  [red]git stash failed: {stash.stderr.strip()}[/red]")
+                return None
+
+        create = _git(["checkout", "-b", agent_branch], workspace)
+        if create.returncode != 0:
+            console.print(f"  [red]git checkout -b failed: {create.stderr.strip()}[/red]")
+            if has_changes:
+                _git(["stash", "pop"], workspace)
+            return None
+
+        if has_changes:
+            pop = _git(["stash", "pop"], workspace)
+            if pop.returncode != 0:
+                console.print(f"  [red]git stash pop failed: {pop.stderr.strip()}[/red]")
+                _git(["checkout", current_branch], workspace)
+                return None
+
+    if has_changes:
         _git(["add", "-A"], workspace)
         short = goal[:69] + "…" if len(goal) > 72 else goal
         commit = _git(["commit", "-m", f"feat: {short}\n\n[talon run-id: {run_id}]"], workspace)
         if commit.returncode != 0:
             console.print(f"  [red]git commit failed: {commit.stderr.strip()}[/red]")
+            if not on_agent_branch and current_branch:
+                _git(["checkout", current_branch], workspace)
             return None
 
-    push = _git(["push", "--set-upstream", "origin", branch], workspace)
+    push = _git(["push", "--set-upstream", "origin", agent_branch], workspace)
     if push.returncode != 0:
         console.print(f"  [red]git push failed: {push.stderr.strip()}[/red]")
+        if not on_agent_branch and current_branch:
+            _git(["checkout", current_branch], workspace)
         return None
 
-    return branch
+    # Return to user's original branch after the push so their local state is
+    # unchanged (they can review and merge the PR from GitHub).
+    if not on_agent_branch and current_branch:
+        _git(["checkout", current_branch], workspace)
+
+    return agent_branch
 
 
-def _create_github_pr(branch: str, state: RunState) -> str | None:
+def _create_github_pr(branch: str, state: RunState, repo: str) -> str | None:
     """Open a PR via the GitHub REST API. Returns the PR html_url."""
     last_review = state.review_results[-1] if state.review_results else None
     score_str = f"{last_review.score:.0%}" if last_review else "N/A"
@@ -102,7 +157,7 @@ def _create_github_pr(branch: str, state: RunState) -> str | None:
     ).encode()
 
     req = urllib.request.Request(
-        f"https://api.github.com/repos/{GITHUB_REPO}/pulls",
+        f"https://api.github.com/repos/{repo}/pulls",
         data=payload,
         headers={
             "Authorization": f"Bearer {_get_github_token()}",
@@ -128,20 +183,28 @@ def _create_github_pr(branch: str, state: RunState) -> str | None:
 
 async def run(state: RunState, working_dir: str | None) -> str | None:
     """
-    Commit workspace changes, push the branch, and open a GitHub PR.
+    Commit workspace changes, push an agent branch, and open a GitHub PR.
     Returns the PR URL, or None if not applicable or not configured.
     """
     if not state.workspace:
         return None
 
-    if not _get_github_token() or not GITHUB_REPO:
-        console.print("  [dim]pr-creator: GITHUB_TOKEN/GITHUB_REPO not set, skipping[/dim]")
+    token = _get_github_token()
+    if not token:
+        console.print("  [dim]pr-creator: no GITHUB_TOKEN configured, skipping[/dim]")
         return None
 
     from talon.workspace import _is_git_repo
 
     if not _is_git_repo(Path(state.workspace)):
         console.print("  [dim]pr-creator: workspace is not a git repo, skipping[/dim]")
+        return None
+
+    repo = GITHUB_REPO or _detect_github_repo(state.workspace)
+    if not repo:
+        console.print(
+            "  [dim]pr-creator: GITHUB_REPO not set and no GitHub remote found, skipping[/dim]"
+        )
         return None
 
     console.print("\n[bold blue]pr-creator[/bold blue] committing and pushing workspace…")
@@ -151,7 +214,7 @@ async def run(state: RunState, working_dir: str | None) -> str | None:
         console.print("  [yellow]pr-creator: could not push branch, skipping PR creation[/yellow]")
         return None
 
-    pr_url = _create_github_pr(branch, state)
+    pr_url = _create_github_pr(branch, state, repo)
     if pr_url:
         console.print(f"  [green]PR opened: {pr_url}[/green]")
     return pr_url

@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from typing import Awaitable, Callable
 
 from rich.console import Console
 
@@ -85,8 +86,15 @@ async def _decompose_goal(goal: str, refinement: str | None) -> list[Subtask]:
     return [Subtask(**s) for s in data["subtasks"]]
 
 
-async def _run_subagent(subtask: Subtask, goal: str, working_dir: str) -> SubtaskResult:
-    console.print(f"  [cyan]-> Sub-agent[/cyan] [{subtask.id}] {subtask.description[:70]}")
+async def _run_subagent(
+    subtask: Subtask,
+    goal: str,
+    working_dir: str,
+    on_log: Callable[[str], Awaitable[None]] | None = None,
+) -> SubtaskResult:
+    console.print(f"  [cyan]-> Sub-agent[/cyan] [{subtask.id}] {subtask.description}")
+    if on_log:
+        await on_log(f"-> Sub-agent [{subtask.id}] {subtask.description}")
     provider = get_provider("subagent")
 
     messages: list[dict] = [
@@ -144,6 +152,8 @@ async def _run_subagent(subtask: Subtask, goal: str, working_dir: str) -> Subtas
         final_output = summary_response.text or ""
 
     did_work = bool(files_modified or commands_run)
+    if on_log and files_modified:
+        await on_log(f"[{subtask.id}] modified: {', '.join(files_modified)}")
     return SubtaskResult(
         subtask=subtask,
         output=final_output or "(no output — no files written or commands run)",
@@ -158,6 +168,7 @@ async def run(
     working_dir: str,
     iteration: int = 1,
     refinement: RefinementResult | None = None,
+    on_log: Callable[[str], Awaitable[None]] | None = None,
 ) -> ExecutorResult:
     refinement_text = refinement.refined_instructions if refinement else None
 
@@ -166,14 +177,20 @@ async def run(
 
     subtasks = await _decompose_goal(goal, refinement_text)
     console.print(f"  Decomposed into {len(subtasks)} subtask(s)")
+    if on_log:
+        await on_log(f"Decomposed into {len(subtasks)} subtask(s)")
 
-    results = await asyncio.gather(*[_run_subagent(st, goal, working_dir) for st in subtasks])
+    results = await asyncio.gather(*[
+        _run_subagent(st, goal, working_dir, on_log) for st in subtasks
+    ])
 
     aggregated = "\n\n".join(
         f"[{r.subtask.id}] {r.subtask.description}\n{r.output}" for r in results
     )
     all_files = sorted({f for r in results for f in r.files_modified})
     console.print(f"  Files modified: {all_files or '(none)'}")
+    if on_log:
+        await on_log(f"Files modified: {list(all_files) if all_files else '(none)'}")
 
     return ExecutorResult(
         goal=goal,

@@ -193,6 +193,16 @@ async def _run_loop(
                         }
                     )
 
+            async def on_log(message: str):
+                if issue_id:
+                    await manager.broadcast(
+                        {
+                            "type": "run_log",
+                            "issue_id": issue_id,
+                            "message": message,
+                        }
+                    )
+
             # Resolve workspace settings: project-level first, fall back to global
             github_token = await db.get_setting("github_token")
             if project_id:
@@ -212,12 +222,23 @@ async def _run_loop(
             elif workspace_mode == "local" and local_path:
                 base_dir = local_path
 
+            edit_local_directly = (
+                workspace_mode == "local"
+                and bool(local_path)
+                and await db.get_setting("edit_local_directly") == "true"
+            )
+            push_on_pass_setting = await db.get_setting("push_on_pass")
+            create_pr = push_on_pass_setting != "false"  # default True
+
             state = await run(
                 goal=goal,
                 working_dir=base_dir,
                 repo_url=repo_url,
                 skip_board=False,
+                direct_workspace=edit_local_directly,
+                create_pr=create_pr,
                 on_step=on_step,
+                on_log=on_log,
             )
 
             if issue_id:
@@ -302,6 +323,12 @@ async def update_settings(updates: db.SettingsUpdate):
         await db.set_setting("local_path", updates.local_path)
     if updates.workspace_mode is not None:
         await db.set_setting("workspace_mode", updates.workspace_mode)
+
+    # --- Local workspace behaviour ---
+    if updates.edit_local_directly is not None:
+        await db.set_setting("edit_local_directly", updates.edit_local_directly)
+    if updates.push_on_pass is not None:
+        await db.set_setting("push_on_pass", updates.push_on_pass)
 
     # --- AI keys, model routing, run limits (all share the same DB key as field name) ---
     for db_key, env_key in _DB_TO_ENV.items():
