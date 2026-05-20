@@ -13,6 +13,7 @@ import json
 import os
 import re
 
+from pydantic import BaseModel, ValidationError
 from rich.console import Console
 
 from talon.providers import get_provider
@@ -23,6 +24,16 @@ from talon.types import ExecutorResult, ReviewCriterion, ReviewFeedback, ReviewV
 console = Console()
 
 MAX_TOKENS = int(os.getenv("AGENT_MAX_TOKENS", "8096"))
+
+
+class _VerdictPayload(BaseModel):
+    """Schema for the LLM's JSON verdict — validated before building ReviewFeedback."""
+    verdict: ReviewVerdict
+    score: float
+    summary: str
+    criteria: list[ReviewCriterion] = []
+    blocking_issues: list[str] = []
+    suggestions: list[str] = []
 
 _REVIEWER_SYSTEM = """\
 You are a rigorous code reviewer acting as quality gate for an autonomous coding agent.
@@ -124,6 +135,56 @@ def _extract_json(text: str) -> dict | None:
     return None
 
 
+_CORRECTION_PROMPT = (
+    "Your previous response was not valid JSON or did not match the required schema. "
+    "Output ONLY a JSON object — no prose, no markdown fences — matching this schema exactly:\n\n"
+    '{"verdict":"pass"|"fail"|"needs_work","score":<0.0–1.0>,"summary":"...","criteria":[],'
+    '"blocking_issues":[],"suggestions":[]}'
+)
+
+
+def _validate_verdict(raw: str) -> _VerdictPayload | None:
+    """Parse raw text and validate against _VerdictPayload. Returns None on any failure."""
+    data = _extract_json(raw)
+    if data is None:
+        return None
+    try:
+        return _VerdictPayload.model_validate(data)
+    except ValidationError:
+        return None
+
+
+async def _parse_verdict(raw: str, messages: list[dict], provider) -> _VerdictPayload:
+    """Return a validated _VerdictPayload, retrying once with a correction prompt if needed."""
+    payload = _validate_verdict(raw)
+    if payload is not None:
+        return payload
+
+    console.print("  [red]Warning: invalid reviewer JSON, sending correction prompt[/red]")
+    console.print(f"  [dim]Raw output (first 500 chars): {raw[:500]!r}[/dim]")
+
+    messages.append({"role": "user", "content": _CORRECTION_PROMPT})
+    response = await provider.chat(
+        system=_REVIEWER_SYSTEM,
+        messages=messages,
+        tools=[],
+        max_tokens=MAX_TOKENS,
+    )
+    provider.append_assistant(messages, response)
+    payload = _validate_verdict(response.text or "")
+
+    if payload is not None:
+        return payload
+
+    console.print("  [red]Correction failed, defaulting to fail verdict[/red]")
+    return _VerdictPayload(
+        verdict=ReviewVerdict.FAIL,
+        score=0.0,
+        summary="Reviewer output was not valid JSON.",
+        blocking_issues=["Reviewer could not parse agent output."],
+    )
+
+
 async def run(goal: str, executor_result: ExecutorResult, working_dir: str) -> ReviewFeedback:
     provider = get_provider("reviewer")
     iteration = executor_result.iteration
@@ -154,26 +215,15 @@ async def run(goal: str, executor_result: ExecutorResult, working_dir: str) -> R
             tool_results.append(ToolResult(id=tc.id, content=result_str))
         provider.append_tool_results(messages, tool_results)
 
-    data = _extract_json(raw_verdict)
-    if data is None:
-        console.print("  [red]Warning: could not parse reviewer JSON, defaulting to fail[/red]")
-        console.print(f"  [dim]Raw reviewer output (first 500 chars): {raw_verdict[:500]!r}[/dim]")
-        data = {
-            "verdict": "fail",
-            "score": 0.0,
-            "summary": "Reviewer output was not valid JSON.",
-            "criteria": [],
-            "blocking_issues": ["Reviewer could not parse agent output."],
-            "suggestions": [],
-        }
+    payload = await _parse_verdict(raw_verdict, messages, provider)
 
     feedback = ReviewFeedback(
-        verdict=ReviewVerdict(data["verdict"]),
-        score=float(data.get("score", 0.0)),
-        summary=data.get("summary", ""),
-        criteria=[ReviewCriterion(**c) for c in data.get("criteria", [])],
-        blocking_issues=data.get("blocking_issues", []),
-        suggestions=data.get("suggestions", []),
+        verdict=payload.verdict,
+        score=payload.score,
+        summary=payload.summary,
+        criteria=payload.criteria,
+        blocking_issues=payload.blocking_issues,
+        suggestions=payload.suggestions,
         iteration=iteration,
     )
 

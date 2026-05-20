@@ -134,11 +134,11 @@ async def init_db():
         await db.commit()
 
         # Migration: add project_id column to issues if missing (pre-v1 schema)
-        async with db.execute("PRAGMA table_info(issues)") as cursor:
-            cols = [row[1] for row in await cursor.fetchall()]
-        if "project_id" not in cols:
+        try:
             await db.execute("ALTER TABLE issues ADD COLUMN project_id INTEGER REFERENCES projects(id)")
             await db.commit()
+        except sqlite3.OperationalError:
+            pass  # column already exists
 
         # Migration: seed default project from global settings when none exist
         async with db.execute("SELECT COUNT(*) FROM projects") as cursor:
