@@ -1,5 +1,5 @@
 """
-FastAPI Server ?" API, Webhooks, WebSockets, and UI serving.
+FastAPI Server → API, Webhooks, WebSockets, and UI serving.
 
 Start:
   talon serve [--port 8080]
@@ -14,6 +14,7 @@ import json
 import os
 import traceback
 from datetime import datetime
+from typing import Optional
 
 import httpx
 from fastapi import (
@@ -21,6 +22,7 @@ from fastapi import (
     FastAPI,
     Header,
     HTTPException,
+    Query,
     Request,
     WebSocket,
     WebSocketDisconnect,
@@ -41,6 +43,27 @@ GITHUB_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET", "")
 MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT_RUNS", "3"))
 GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "")
 GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "")
+
+# Maps DB settings keys → environment variable names for AI/model config
+_DB_TO_ENV: dict[str, str] = {
+    "anthropic_api_key":  "ANTHROPIC_API_KEY",
+    "openai_api_key":     "OPENAI_API_KEY",
+    "gemini_api_key":     "GEMINI_API_KEY",
+    "groq_api_key":       "GROQ_API_KEY",
+    "mistral_api_key":    "MISTRAL_API_KEY",
+    "agent_model":        "AGENT_MODEL",
+    "orchestrator_model": "ORCHESTRATOR_MODEL",
+    "subagent_model":     "SUBAGENT_MODEL",
+    "reviewer_model":     "REVIEWER_MODEL",
+    "refiner_model":      "REFINER_MODEL",
+    "max_iterations":     "MAX_ITERATIONS",
+    "agent_max_tokens":   "AGENT_MAX_TOKENS",
+}
+
+_API_KEY_SETTINGS = {
+    "anthropic_api_key", "openai_api_key", "gemini_api_key",
+    "groq_api_key", "mistral_api_key",
+}
 
 app = FastAPI(title="Talon Server", version="1.0.0")
 
@@ -75,6 +98,25 @@ def _extract_labels(items: list[dict]) -> list[str]:
     return [item.get("name", "") for item in items]
 
 
+def _has_llm_configured() -> bool:
+    """Return True if at least one AI provider API key is available."""
+    keys = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY"]
+    return any(os.getenv(k) for k in keys)
+
+
+async def _apply_db_settings_to_env() -> None:
+    """Load AI/model settings from DB into os.environ.
+
+    DB-stored values fill in missing env vars only — system env (set in .env
+    or the process environment) always takes precedence.
+    """
+    settings = await db.get_all_settings()
+    for db_key, env_key in _DB_TO_ENV.items():
+        value = settings.get(db_key)
+        if value and not os.environ.get(env_key):
+            os.environ[env_key] = value
+
+
 class ConnectionManager:
     def __init__(self):
         self.active_connections: list[WebSocket] = []
@@ -105,7 +147,11 @@ async def broadcast_issue_update(issue_id: int):
 
 
 async def _run_loop(
-    goal: str, source: str, issue_id: int | None = None, working_dir: str | None = None
+    goal: str,
+    source: str,
+    issue_id: int | None = None,
+    working_dir: str | None = None,
+    project_id: int | None = None,
 ) -> None:
     sem = _get_semaphore()
     if sem.locked():
@@ -115,6 +161,19 @@ async def _run_loop(
         await db.update_issue(issue_id, db.IssueUpdate(status="In Progress"))
         await broadcast_issue_update(issue_id)
 
+    # Guard: refuse to run if no LLM provider is configured
+    if not _has_llm_configured():
+        console.print("[red]No AI provider configured — set an API key in Settings.[/red]")
+        if issue_id:
+            await manager.broadcast({
+                "type": "run_error",
+                "issue_id": issue_id,
+                "error": "No AI provider configured. Add an API key in Settings.",
+            })
+            await db.update_issue(issue_id, db.IssueUpdate(status="Failed"))
+            await broadcast_issue_update(issue_id)
+        return
+
     async with sem:
         console.print(f"\n[bold green]-  Triggered[/bold green] [{source}] {goal[:80]}")
         try:
@@ -122,14 +181,10 @@ async def _run_loop(
 
             async def on_step(state):
                 if issue_id:
-                    # Update run_id in DB on first step and notify frontend
-                    if state.iteration == 0 and not getattr(state, "_db_updated", False):
+                    if state.iteration == 0:
                         await db.update_issue(issue_id, db.IssueUpdate(run_id=state.run_id))
-                        state._db_updated = True
-                        # Notify frontend so issue detail modal picks up the run_id
                         await broadcast_issue_update(issue_id)
 
-                    # Broadcast full run state to UI for live log display
                     await manager.broadcast(
                         {
                             "type": "run_state_updated",
@@ -138,10 +193,17 @@ async def _run_loop(
                         }
                     )
 
+            # Resolve workspace settings: project-level first, fall back to global
             github_token = await db.get_setting("github_token")
-            selected_repo = await db.get_setting("selected_repo")
-            workspace_mode = await db.get_setting("workspace_mode")
-            local_path = await db.get_setting("local_path")
+            if project_id:
+                project = await db.get_project(project_id)
+                workspace_mode = project.workspace_mode if project else await db.get_setting("workspace_mode")
+                selected_repo = project.selected_repo if project else await db.get_setting("selected_repo")
+                local_path = project.local_path if project else await db.get_setting("local_path")
+            else:
+                workspace_mode = await db.get_setting("workspace_mode")
+                selected_repo = await db.get_setting("selected_repo")
+                local_path = await db.get_setting("local_path")
 
             repo_url = None
             base_dir = working_dir
@@ -189,6 +251,7 @@ async def _run_loop(
 @app.on_event("startup")
 async def startup_event():
     await db.init_db()
+    await _apply_db_settings_to_env()
     stalled = await db.reset_stalled_issues()
     for issue_id in stalled:
         await broadcast_issue_update(issue_id)
@@ -199,29 +262,101 @@ async def health() -> dict:
     return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
 
 
-# --- REST APIs for Kanban ---
+# --- Settings ---
 
 
 @app.get("/api/settings")
 async def get_settings():
     settings = await db.get_all_settings()
-    # Mask token for security when sending to frontend
-    if "github_token" in settings and settings["github_token"]:
-        settings["github_token"] = "***" + settings["github_token"][-4:]
+    # Mask all sensitive key values
+    for key in _API_KEY_SETTINGS | {"github_token"}:
+        if settings.get(key):
+            settings[key] = "***" + settings[key][-4:]
+    # Computed fields for the frontend
+    settings["has_llm_configured"] = _has_llm_configured()
+    for provider_env, provider_name in [
+        ("ANTHROPIC_API_KEY", "anthropic"),
+        ("OPENAI_API_KEY", "openai"),
+        ("GEMINI_API_KEY", "google"),
+        ("GROQ_API_KEY", "groq"),
+        ("MISTRAL_API_KEY", "mistral"),
+    ]:
+        if os.getenv(provider_env):
+            settings["active_provider"] = provider_name
+            break
+    else:
+        settings["active_provider"] = None
     return settings
 
 
 @app.post("/api/settings")
 async def update_settings(updates: db.SettingsUpdate):
+    # --- GitHub token (existing) ---
     if updates.github_token and not updates.github_token.startswith("***"):
         await db.set_setting("github_token", updates.github_token)
-    if updates.selected_repo:
+
+    # --- Legacy global workspace (kept for webhook-triggered runs and migration) ---
+    if updates.selected_repo is not None:
         await db.set_setting("selected_repo", updates.selected_repo)
     if updates.local_path is not None:
         await db.set_setting("local_path", updates.local_path)
     if updates.workspace_mode is not None:
         await db.set_setting("workspace_mode", updates.workspace_mode)
+
+    # --- AI keys, model routing, run limits (all share the same DB key as field name) ---
+    for db_key, env_key in _DB_TO_ENV.items():
+        val = getattr(updates, db_key, None)
+        if val is None:
+            continue
+        if val == "":
+            await db.delete_setting(db_key)
+            os.environ.pop(env_key, None)
+        elif db_key in _API_KEY_SETTINGS and val.startswith("***"):
+            pass  # masked display value from frontend — don't overwrite with the mask
+        else:
+            await db.set_setting(db_key, val)
+            os.environ[env_key] = val
+
     return {"ok": True}
+
+
+# --- Project CRUD ---
+
+
+@app.get("/api/projects")
+async def list_projects():
+    return await db.list_projects()
+
+
+@app.post("/api/projects")
+async def create_project(p: db.ProjectCreate):
+    project = await db.create_project(p)
+    await manager.broadcast({"type": "project_created", "project": project.model_dump()})
+    return project
+
+
+@app.patch("/api/projects/{project_id}")
+async def update_project(project_id: int, updates: db.ProjectUpdate):
+    project = await db.update_project(project_id, updates)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    await manager.broadcast({"type": "project_updated", "project": project.model_dump()})
+    return project
+
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project(project_id: int):
+    all_projects = await db.list_projects()
+    if len(all_projects) <= 1:
+        raise HTTPException(status_code=400, detail="Cannot delete the last project")
+    deleted = await db.delete_project(project_id)
+    if deleted:
+        await manager.broadcast({"type": "project_deleted", "project_id": project_id})
+        return {"ok": True}
+    raise HTTPException(status_code=404, detail="Project not found")
+
+
+# --- GitHub OAuth ---
 
 
 class _GitHubPollRequest(BaseModel):
@@ -233,8 +368,6 @@ class _GitHubExchangeRequest(BaseModel):
     state: str
 
 
-# --- Deep-link OAuth (desktop app) ---
-
 @app.get("/api/auth/github/authorize")
 async def github_auth_authorize():
     """Return a GitHub OAuth authorize URL. Electron opens this in the system browser.
@@ -245,7 +378,10 @@ async def github_auth_authorize():
     if not GITHUB_CLIENT_ID:
         raise HTTPException(
             status_code=400,
-            detail="GITHUB_CLIENT_ID not configured. Register an OAuth App at github.com/settings/developers.",
+            detail=(
+                "GITHUB_CLIENT_ID not configured. "
+                "Register an OAuth App at github.com/settings/developers."
+            ),
         )
     state = secrets.token_urlsafe(16)
     url = (
@@ -280,9 +416,11 @@ async def github_auth_exchange(body: _GitHubExchangeRequest):
         )
     data = res.json()
     if "access_token" not in data:
-        raise HTTPException(status_code=400, detail=data.get("error_description", "Token exchange failed"))
+        raise HTTPException(
+            status_code=400,
+            detail=data.get("error_description", "Token exchange failed"),
+        )
     await db.set_setting("github_token", data["access_token"])
-    # Notify any open UI windows that auth is complete
     await manager.broadcast({"type": "github_auth_complete"})
     return {"status": "complete"}
 
@@ -311,7 +449,10 @@ async def github_auth_start():
     if not GITHUB_CLIENT_ID:
         raise HTTPException(
             status_code=400,
-            detail="GITHUB_CLIENT_ID not configured. Register an OAuth App at github.com/settings/developers.",
+            detail=(
+                "GITHUB_CLIENT_ID not configured. "
+                "Register an OAuth App at github.com/settings/developers."
+            ),
         )
     async with httpx.AsyncClient() as client:
         res = await client.post(
@@ -365,7 +506,6 @@ async def list_github_repos():
         raise HTTPException(status_code=401, detail="GitHub token not configured")
 
     async with httpx.AsyncClient() as client:
-        # Fetch repos the user has access to
         res = await client.get(
             "https://api.github.com/user/repos?per_page=100&sort=updated",
             headers={
@@ -382,9 +522,15 @@ async def list_github_repos():
 
 
 @app.post("/api/github/sync")
-async def sync_github_issues():
+async def sync_github_issues(project_id: Optional[int] = Query(default=None)):
     token = await db.get_setting("github_token")
-    repo = await db.get_setting("selected_repo")
+    # Resolve repo from project or global settings
+    if project_id:
+        project = await db.get_project(project_id)
+        repo = project.selected_repo if project else await db.get_setting("selected_repo")
+    else:
+        repo = await db.get_setting("selected_repo")
+
     if not token or not repo:
         raise HTTPException(status_code=400, detail="GitHub token or repo not configured")
 
@@ -403,17 +549,17 @@ async def sync_github_issues():
 
         issues = res.json()
         synced = 0
-        existing = await db.list_issues()
+        existing = await db.list_issues(project_id=project_id)
         existing_titles = {i.title for i in existing}
 
         for issue in issues:
             if "pull_request" in issue:
-                continue  # Skip PRs
+                continue
             title = issue["title"]
             if title not in existing_titles:
                 body = issue.get("body") or ""
                 new_issue = await db.create_issue(
-                    db.IssueCreate(title=title, description=body, status="Backlog")
+                    db.IssueCreate(title=title, description=body, status="Backlog", project_id=project_id)
                 )
                 await broadcast_issue_update(new_issue.id)
                 synced += 1
@@ -421,21 +567,22 @@ async def sync_github_issues():
         return {"ok": True, "synced": synced}
 
 
+# --- Issues ---
+
+
 @app.get("/api/issues")
-async def get_issues():
-    return await db.list_issues()
+async def get_issues(project_id: Optional[int] = Query(default=None)):
+    return await db.list_issues(project_id=project_id)
 
 
 @app.get("/api/runs/{run_id}")
 async def get_run_state(run_id: str):
     run_dir = os.path.join(os.getenv("RUNS_DIR", "./runs"), run_id)
     state_file = os.path.join(run_dir, "state.json")
-    # For Windows, handle path properly if needed
     if os.path.exists(state_file):
         with open(state_file, "r", encoding="utf-8") as f:
             return json.load(f)
 
-    # Try finding it in case of partial match or issues with id storage
     runs_dir_path = os.getenv("RUNS_DIR", "./runs")
     if os.path.exists(runs_dir_path):
         for item in os.listdir(runs_dir_path):
@@ -465,13 +612,14 @@ async def get_run_video(run_id: str):
 async def create_issue(issue: db.IssueCreate, background_tasks: BackgroundTasks):
     new_issue = await db.create_issue(issue)
     await broadcast_issue_update(new_issue.id)
-    if new_issue.status == "Backlog":
-        # Don't run automatically unless placed elsewhere?
-        # Actually, let's just create it. The user can drag to trigger.
-        pass
-    elif new_issue.status == "In Progress":
+    if new_issue.status == "In Progress":
         background_tasks.add_task(
-            _run_loop, f"{issue.title}\n\n{issue.description}", "ui", new_issue.id
+            _run_loop,
+            f"{issue.title}\n\n{issue.description}",
+            "ui",
+            new_issue.id,
+            None,
+            issue.project_id,
         )
     return new_issue
 
@@ -484,7 +632,6 @@ async def update_issue(issue_id: int, updates: db.IssueUpdate, background_tasks:
 
     is_requeue = updates.status == "In Progress" and old_issue.status != "In Progress"
     if is_requeue:
-        # Clear stale run_id so the UI shows a fresh slate for the new run
         updates = updates.model_copy(update={"clear_run_id": True})
 
     updated = await db.update_issue(issue_id, updates)
@@ -492,7 +639,12 @@ async def update_issue(issue_id: int, updates: db.IssueUpdate, background_tasks:
 
     if is_requeue:
         background_tasks.add_task(
-            _run_loop, f"{updated.title}\n\n{updated.description}", "ui", updated.id
+            _run_loop,
+            f"{updated.title}\n\n{updated.description}",
+            "ui",
+            updated.id,
+            None,
+            updated.project_id,
         )
 
     return updated
@@ -545,9 +697,9 @@ async def linear_webhook(
     title = data.get("title", "")
     description = data.get("description", "") or ""
 
-    # Mirror linear issue to local SQLite
+    project_id = await db.get_first_project_id()
     issue = await db.create_issue(
-        db.IssueCreate(title=title, description=description, status="In Progress")
+        db.IssueCreate(title=title, description=description, status="In Progress", project_id=project_id)
     )
     await broadcast_issue_update(issue.id)
 
@@ -579,9 +731,9 @@ async def github_webhook(
     title = issue_data.get("title", "")
     body_text = issue_data.get("body", "") or ""
 
-    # Mirror github issue to local SQLite
+    project_id = await db.get_first_project_id()
     issue = await db.create_issue(
-        db.IssueCreate(title=title, description=body_text, status="In Progress")
+        db.IssueCreate(title=title, description=body_text, status="In Progress", project_id=project_id)
     )
     await broadcast_issue_update(issue.id)
 

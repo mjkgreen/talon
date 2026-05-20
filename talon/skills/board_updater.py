@@ -13,10 +13,9 @@ from __future__ import annotations
 
 import json
 import os
-import urllib.error
-import urllib.request
 from datetime import datetime
 
+import httpx
 from rich.console import Console
 
 from talon.db import sync_get_setting
@@ -76,37 +75,33 @@ async def _post_to_linear(payload: dict) -> str | None:
             f' description: "{body_escaped}"'
             " }) { issue { url } } }"
         )
-        req = urllib.request.Request(
-            "https://api.linear.app/graphql",
-            data=json.dumps({"query": mutation}).encode(),
-            headers={
-                "Authorization": LINEAR_API_KEY,
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read())
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                "https://api.linear.app/graphql",
+                content=json.dumps({"query": mutation}).encode(),
+                headers={"Authorization": LINEAR_API_KEY, "Content-Type": "application/json"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
             return data.get("data", {}).get("issueCreate", {}).get("issue", {}).get("url")
     except Exception as e:
         console.print(f"  [red]Linear post failed: {e}[/red]")
         return None
 
 
-def _graphql(query: str, variables: dict) -> dict:
-    body = json.dumps({"query": query, "variables": variables}).encode()
-    req = urllib.request.Request(
-        "https://api.github.com/graphql",
-        data=body,
-        headers={
-            "Authorization": f"Bearer {_get_github_token()}",
-            "Content-Type": "application/json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        return json.loads(resp.read())
+async def _graphql(query: str, variables: dict) -> dict:
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(
+            "https://api.github.com/graphql",
+            json={"query": query, "variables": variables},
+            headers={
+                "Authorization": f"Bearer {_get_github_token()}",
+                "Content-Type": "application/json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()
 
 
 async def _post_to_github_projects(payload: dict) -> str | None:
@@ -120,7 +115,7 @@ async def _post_to_github_projects(payload: dict) -> str | None:
         return None
 
     try:
-        result = _graphql(
+        result = await _graphql(
             """
             query($owner: String!, $repo: String!, $number: Int!) {
               repository(owner: $owner, name: $repo) {
@@ -135,7 +130,7 @@ async def _post_to_github_projects(payload: dict) -> str | None:
         project_url = project["url"]
 
         title = f"[{payload['status'].upper()}] {payload['goal'][:60]}"
-        _graphql(
+        await _graphql(
             """
             mutation($projectId: ID!, $title: String!, $body: String!) {
               addProjectV2DraftIssue(input: {
@@ -153,10 +148,6 @@ async def _post_to_github_projects(payload: dict) -> str | None:
         )
         return project_url
 
-    except urllib.error.HTTPError as e:
-        err = e.read().decode()
-        console.print(f"  [red]GitHub Projects post failed ({e.code}): {err[:200]}[/red]")
-        return None
     except Exception as e:
         console.print(f"  [red]GitHub Projects post failed: {e}[/red]")
         return None

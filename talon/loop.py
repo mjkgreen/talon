@@ -82,7 +82,7 @@ async def run(
     Args:
         goal:        The high-level coding goal.
         working_dir: Existing project dir to branch from (git worktree or copy).
-                     None ?" fresh isolated workspace per run.
+                     None → fresh isolated workspace per run.
         app_url:     URL to validate with browser-validator (optional).
         repo_url:    URL of a git repository to clone.
         skip_board:  Skip posting to Linear/GitHub.

@@ -91,6 +91,7 @@ class TestLinearWebhook:
             created_at="2024-01-01",
             updated_at="2024-01-01",
         )
+        monkeypatch.setattr(talon.server.db, "get_first_project_id", AsyncMock(return_value=1))
         monkeypatch.setattr(talon.server.db, "create_issue", AsyncMock(return_value=fake_issue))
         monkeypatch.setattr(talon.server, "broadcast_issue_update", AsyncMock())
         monkeypatch.setattr(talon.server, "_run_loop", AsyncMock())
@@ -159,6 +160,7 @@ class TestGithubWebhook:
             created_at="2024-01-01",
             updated_at="2024-01-01",
         )
+        monkeypatch.setattr(talon.server.db, "get_first_project_id", AsyncMock(return_value=1))
         monkeypatch.setattr(talon.server.db, "create_issue", AsyncMock(return_value=fake_issue))
         monkeypatch.setattr(talon.server, "broadcast_issue_update", AsyncMock())
         monkeypatch.setattr(talon.server, "_run_loop", AsyncMock())
