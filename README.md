@@ -4,9 +4,9 @@ Autonomous agentic coding system. Give it a goal; it decomposes the work into su
 
 Available as a **desktop app** (Electron + bundled Python server) or as a standalone CLI/server.
 
-[![GitHub release](https://img.shields.io/github/v/release/mjkgreen/talon-agent)](https://github.com/mjkgreen/talon-agent/releases/latest)
+[![GitHub release](https://img.shields.io/github/v/release/mjkgreen/talon)](https://github.com/mjkgreen/talon/releases/latest)
 
-**[⬇ Download the latest release](https://github.com/mjkgreen/talon-agent/releases/latest)**  
+**[⬇ Download the latest release](https://github.com/mjkgreen/talon/releases/latest)**  
 Windows `.exe` · macOS `.dmg` · Linux `.AppImage`
 
 ---
@@ -89,8 +89,8 @@ Clone the repository and set up a virtual environment:
 
 ```bash
 # Clone the repository
-git clone https://github.com/mjkgreen/talon-agent.git
-cd talon-agent
+git clone https://github.com/mjkgreen/talon.git
+cd talon
 
 # Create and activate a virtual environment
 python -m venv venv

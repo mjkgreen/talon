@@ -106,7 +106,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           files: |
             release/**/*.dmg
-            release/**/*.zip
+            release/**/*-mac.zip
             release/**/*.exe
             release/**/*.AppImage
 
