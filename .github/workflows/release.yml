@@ -1,0 +1,67 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            electron_cmd: build:win
+            artifact_glob: "release/*.exe"
+          - os: macos-latest
+            electron_cmd: build:mac
+            artifact_glob: "release/*.dmg"
+          - os: ubuntu-latest
+            electron_cmd: build:linux
+            artifact_glob: "release/*.AppImage"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: pip install -e "." pyinstaller
+
+      - name: Build Python server binary
+        run: pyinstaller talon-server.spec
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build React UI
+        working-directory: ui
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build Electron app
+        working-directory: electron
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Skip code signing for open-source builds
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: |
+          npm install
+          npm run ${{ matrix.electron_cmd }}
+
+      - name: Upload release artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.artifact_glob }}
+          draft: false
+          generate_release_notes: true
