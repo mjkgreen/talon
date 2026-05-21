@@ -768,6 +768,18 @@ async def get_run_video(run_id: str):
     raise HTTPException(status_code=404, detail="Video not found")
 
 
+@app.get("/api/runs/{run_id}/screenshots/{filename}")
+async def get_run_screenshot(run_id: str, filename: str):
+    """Serve individual screenshot PNGs from the run's video directory."""
+    run_dir = os.path.join(os.getenv("RUNS_DIR", "./runs"), run_id)
+    screenshot_path = os.path.join(run_dir, filename)
+    if not os.path.realpath(screenshot_path).startswith(os.path.realpath(run_dir)):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if not os.path.exists(screenshot_path) or not filename.endswith(".png"):
+        raise HTTPException(status_code=404, detail="Screenshot not found")
+    return FileResponse(screenshot_path, media_type="image/png")
+
+
 @app.post("/api/issues")
 async def create_issue(issue: db.IssueCreate, background_tasks: BackgroundTasks):
     new_issue = await db.create_issue(issue)
