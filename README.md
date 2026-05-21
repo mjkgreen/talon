@@ -4,9 +4,19 @@ Autonomous agentic coding system. Give it a goal; it decomposes the work into su
 
 Available as a **desktop app** (Electron + bundled Python server) or as a standalone CLI/server.
 
-## How it works
+---
 
-```
+## Description
+
+`talon-agent` is an advanced AI-powered orchestrator and agentic workspace automation system designed to take high-level software development goals and turn them into fully executed, verified code changes. 
+
+Instead of relying on a single context window to write code and perform tasks, `talon-agent` utilizes a multi-role, parallel agent architecture to decompose complex goals, execute subtasks simultaneously in isolated workspaces, strictly review output results against automated test suites, and iteratively refine codebases until all acceptance criteria are met.
+
+### How It Works
+
+The system operates via a continuous loop of goal decomposition, parallel execution, self-review, refinement, and verification. Below is a high-level flowchart of the workflow:
+
+```text
 Goal
  │
  ▼
@@ -28,222 +38,347 @@ reviewer            Reads files, runs tests, returns pass/fail + score (0–1)
                          └──────────────► sub-agents (next iteration, max 3)
 ```
 
-## Quick start
+### Agent Roles
 
-### Desktop app (recommended)
+1. **Orchestrator**: Decomposes the initial user goal into 3–7 subtasks, each assigned its own precise acceptance criteria.
+2. **Sub-agents (xN)**: Executed concurrently (one per subtask). Each sub-agent functions as an independent developer equipped with terminal and filesystem tools (`read_file`, `write_file`, `run_command`, `search_files`) to implement their respective tasks inside the workspace.
+3. **Reviewer**: Inspects the modified workspace files, runs user-defined test suites, and assigns a passing grade or failure along with an evaluation score (ranging from 0.0 to 1.0).
+4. **Refiner**: Active only on task failures. It analyzes the reviewer's feedback, aggregates test failures and compiler warnings, and produces a revised action plan for the next iteration of sub-agents.
+5. **Browser Validator**: (Opt-in) Uses Playwright to navigate the application, performs basic UI sanity checks, and records a high-definition walkthrough video to serve as visual proof-of-work.
+6. **Board Updater**: Automatically posts run summaries, code changes, and visual walkthrough links to project management boards (e.g., Linear or GitHub Projects).
 
-Download the installer for your platform from [Releases](../../releases). The app bundles the Python server — no Python install needed.
+---
 
-### CLI / server (developer mode)
+## Prerequisites
+
+Before running or developing `talon-agent`, ensure your local system meets the following requirements:
+
+### System Environment
+* **Python**: `python >= 3.11` (specifically tested on Python `3.11` and `3.12`).
+* **Operating System**: macOS, Linux, or Windows.
+  * *Note for Windows users:* Set `PYTHONUTF8=1` in your environment to prevent character encoding issues.
+* **Git**: Git must be installed and globally accessible on your system's `PATH`. This is required for workspace isolation (creating worktrees).
+
+### LLM Credentials
+At least one API key from a supported provider is required. Model routing is powered by **LiteLLM**. Available providers include:
+* **Anthropic** (`ANTHROPIC_API_KEY`): Used for Claude models (e.g., `claude-3-5-sonnet`, `claude-3-opus`).
+* **OpenAI** (`OPENAI_API_KEY`): Used for GPT models (e.g., `gpt-4o`, `o3-mini`).
+* **Google Gemini** (`GEMINI_API_KEY`): Used for Gemini models (e.g., `gemini-1.5-pro`, `gemini-2.0-flash`).
+* **Groq** (`GROQ_API_KEY`): Used for Llama and Mixtral models.
+* **Mistral** (`MISTRAL_API_KEY`): Used for Mistral Large and Codestral models.
+* **Cohere** (`COHERE_API_KEY`): Used for Command R+ models.
+
+### Optional Requirements
+* **Node.js & npm**: `node >= 18` and `npm >= 9`. Required only if you intend to run the React frontend or compile the Electron desktop app from source.
+* **Playwright**: Required only if you plan to enable the `browser-validator` for recording visual walkthrough videos.
+
+---
+
+## Installation
+
+You can run `talon-agent` in standalone developer mode (CLI / Server) or build/install the desktop app.
+
+### 1. Developer CLI / Server Installation
+
+Clone the repository and set up a virtual environment:
 
 ```bash
-cp .env.example .env      # add at least one API key
-python -m venv venv 
-.\venv\Scripts\activate  # or .venv/bin/activate on macOS/Linux
+# Clone the repository
+git clone https://github.com/mjkgreen/talon-agent.git
+cd talon-agent
+
+# Create and activate a virtual environment
+python -m venv venv
+
+# On macOS / Linux:
+source venv/bin/activate
+
+# On Windows (Command Prompt):
+.\venv\Scripts\activate
+
+# On Windows (PowerShell):
+.\venv\Scripts\Activate.ps1
+```
+
+Install the package and its dependencies:
+
+```bash
+# Basic installation (CLI and Core Agent only)
 pip install -e .
-talon run "Add a /health endpoint to the Flask app" --working-dir ./workspace
+
+# Full installation (including testing packages and browser validator)
+pip install -e ".[dev,browser]"
 ```
 
-## Model configuration
-
-Powered by [LiteLLM](https://docs.litellm.ai/docs/providers) — swap providers by changing one env var. Three modes:
-
-### Auto (recommended)
-Set whichever API keys you have. The system picks the best available model for each role.
+Configure your environment file:
 
 ```bash
-# .env
-GEMINI_API_KEY=...
-ANTHROPIC_API_KEY=sk-ant-...
-# No model vars needed — auto-selects based on what's available
+# Copy template and edit with your API keys and configuration
+cp .env.example .env
 ```
 
-Auto-selection priority per role:
+### 2. Browser Validator Setup
 
-| Role | Task | Prefers |
-|------|------|---------|
-| `orchestrator` | Goal decomposition | Opus → o3 → Gemini Pro → Sonnet |
-| `subagent` | Code writing | Sonnet → GPT-4o → Gemini Pro → Flash |
-| `reviewer` | Quality gate | Opus → o3 → Gemini Pro → Sonnet |
-| `refiner` | Fix planning | Sonnet → Flash → GPT-4o → Haiku |
-
-### Global override
-One model for everything:
-```bash
-AGENT_MODEL=gemini/gemini-2.0-flash
-GEMINI_API_KEY=...
-```
-
-### Per-role assignment
-Full control:
-```bash
-ORCHESTRATOR_MODEL=gemini/gemini-3-pro    # reasoning-heavy
-SUBAGENT_MODEL=anthropic/claude-sonnet-4-6  # coding
-REVIEWER_MODEL=gemini/gemini-3-pro        # reasoning-heavy
-REFINER_MODEL=gemini/gemini-3.1-flash       # speed-optimised
-```
-
-Per-role vars override `AGENT_MODEL` which overrides auto. The run header always shows which model was picked for each role and why.
-
-## CLI
-
-```bash
-talon run "goal"                          # full loop
-talon run "goal" --working-dir ./my-app  # branch from existing project
-talon run "goal" --url http://localhost:3000  # + browser recording
-talon run "goal" --skip-board             # skip Linear/GitHub post
-talon list                                # show all runs + workspaces
-talon review <run-id>                     # dump run state JSON
-talon cleanup <run-id>                    # remove kept workspace
-talon serve [--port 8080]                 # start webhook listener
-```
-
-## Workspace isolation
-
-Every run gets its own isolated directory so concurrent runs never conflict.
-
-| `--working-dir` | Behaviour |
-|-----------------|-----------|
-| Not set | Fresh empty `workspace/<run-id>/` |
-| Plain directory | Copied into `workspace/<run-id>/` |
-| Git repository | `git worktree add` on branch `agent/run-<id>` |
-
-On **pass**: workspace is kept at `workspace/<run-id>/` — inspect the code or create a PR.  
-On **fail**: workspace is removed automatically.  
-Use `talon cleanup <run-id>` to remove a kept workspace when done.
-
-## Desktop app
-
-The `electron/` directory contains an Electron wrapper that ships the Python FastAPI server as a self-contained binary.
-
-**How it works:**
-1. Electron spawns the bundled `talon-server` binary (built with PyInstaller from `talon/server_entry.py`).
-2. The binary finds a free port, prints `PORT:<n>` to stdout, then starts uvicorn.
-3. Electron reads that line, stores the port, and opens the UI pointed at `http://127.0.0.1:<port>`.
-4. GitHub OAuth uses a `talon://oauth-callback` deep link — the OS routes it back to the single Electron instance, which forwards the code to `/api/auth/github/exchange`.
-
-**Building the desktop app:**
-
-```bash
-# 1. Build the React UI
-cd ui && npm ci && npm run build && cd ..
-
-# 2. Bundle the Python server with PyInstaller
-pyinstaller talon-server.spec   # outputs dist/talon-server[.exe]
-
-# 3. Build the Electron installer
-cd electron
-npm install
-npm run build:mac   # or build:win / build:linux
-```
-
-Installers land in `release/`. CI (`.github/workflows/build.yml`) builds all three platforms automatically on version tags.
-
-**GitHub OAuth (desktop):**
-
-Register an OAuth App at `github.com/settings/developers`:
-- **Homepage URL**: `http://localhost`
-- **Callback URL**: `talon://oauth-callback`
-
-Then set in `.env`:
-```bash
-GITHUB_CLIENT_ID=...
-GITHUB_CLIENT_SECRET=...
-```
-
-The app exposes two endpoints used exclusively by the Electron OAuth flow:
-- `GET /api/auth/github/authorize` — returns the GitHub authorize URL + a CSRF state token
-- `POST /api/auth/github/exchange` — exchanges the code for an access token and saves it
-
-## Webhook listener
-
-Start the server once; it triggers a full loop run whenever a tagged issue arrives.
-
-```bash
-talon serve --port 8080
-```
-
-### Linear setup
-1. Linear → Settings → API → Webhooks → add URL: `https://your-host/webhook/linear`
-2. Set `LINEAR_WEBHOOK_SECRET` in `.env`
-3. Create issues with the label `agent-task` (configurable via `WEBHOOK_LABEL`)
-
-### GitHub setup
-1. Repo → Settings → Webhooks → add URL: `https://your-host/webhook/github`
-2. Content type: `application/json`, event: **Issues**
-3. Set `GITHUB_WEBHOOK_SECRET` in `.env`
-4. Open issues with the label `agent-task`
-
-The server accepts up to `MAX_CONCURRENT_RUNS` (default 3) simultaneous runs; additional triggers are queued. A `/health` endpoint and auto-generated `/docs` (OpenAPI) are available.
-
-On startup the server automatically moves any issues left in **In Progress** to **Failed** (covers crashes and Ctrl-C interruptions). Re-dragging an issue into In Progress clears the stale run association and starts a fresh run.
-
-## Claude Code slash commands
-
-| Command | Description |
-|---------|-------------|
-| `/task-executor` | Decompose goal + run parallel sub-agents |
-| `/self-reviewer` | Evaluate output, return pass/fail + score |
-| `/refiner` | Translate feedback into next-iteration action plan |
-| `/browser-validator` | Playwright video proof-of-work |
-| `/board-updater` | Post results to Linear / GitHub Projects |
-
-## Codebase
-
-| Path | Purpose |
-|------|---------|
-| `talon/config.py` | Model resolution: per-role env vars, global fallback, auto-select |
-| `talon/providers/litellm_p.py` | LiteLLM wrapper — normalises tool calling across all providers |
-| `talon/tools.py` | Tool implementations: `read_file`, `write_file`, `run_command`, `search_files` |
-| `talon/types.py` | Pydantic models: `RunState`, `ExecutorResult`, `ReviewFeedback`, … |
-| `talon/skills/task_executor.py` | Goal decomposition + concurrent sub-agent runner |
-| `talon/skills/self_reviewer.py` | Reviewer tool-use loop + JSON verdict |
-| `talon/skills/refiner.py` | Blocking issues → refined action plan |
-| `talon/skills/browser_validator.py` | Playwright recording (opt-in) |
-| `talon/skills/board_updater.py` | Linear API poster |
-| `talon/loop.py` | Orchestrates the full loop, persists state after every step |
-| `talon/main.py` | CLI entry point |
-| `talon/server_entry.py` | PyInstaller / Electron entry point — finds a free port, prints `PORT:<n>`, starts uvicorn |
-| `talon-server.spec` | PyInstaller spec that bundles the server into a single binary |
-| `electron/` | Electron desktop wrapper (npm project, `main.js` + `preload.js`) |
-| `runs/<id>/state.json` | Full audit trail for every run |
-| `workspace/` | Default directory where sub-agents read/write code |
-
-## Environment variables
-
-See `.env.example` for the full annotated list. Required minimum: one API key.
-
-| Variable | Description |
-|----------|-------------|
-| `ANTHROPIC_API_KEY` | Enables `anthropic/*` models |
-| `OPENAI_API_KEY` | Enables `openai/*` models |
-| `GEMINI_API_KEY` | Enables `gemini/*` models |
-| `GROQ_API_KEY` | Enables `groq/*` models |
-| `AGENT_MODEL` | Global model override (all roles) |
-| `ORCHESTRATOR_MODEL` | Per-role override |
-| `SUBAGENT_MODEL` | Per-role override |
-| `REVIEWER_MODEL` | Per-role override |
-| `REFINER_MODEL` | Per-role override |
-| `MAX_ITERATIONS` | Executor→reviewer loop limit (default: 3) |
-| `LINEAR_API_KEY` | Post results to Linear |
-| `GITHUB_CLIENT_ID` | GitHub OAuth App client ID (desktop app) |
-| `GITHUB_CLIENT_SECRET` | GitHub OAuth App client secret (desktop app) |
-| `BOARD_DB_PATH` | Override the SQLite DB path. Defaults to the platform user-data directory (`platformdirs`) — typically `~/.local/share/Talon/board.db` on Linux, `~/Library/Application Support/Talon/board.db` on macOS, `%APPDATA%\Chasqui\Talon\board.db` on Windows. |
-| `BROWSER_VALIDATOR_ENABLED` | Enable Playwright recording (default: false) |
-
-## Browser validator setup
+If you want to use the automated Playwright visual validation feature, make sure the `browser` optional dependencies are installed, then run:
 
 ```bash
 pip install playwright
 playwright install chromium
-# .env
+```
+
+To enable this feature, configure your `.env` file with:
+
+```bash
 BROWSER_VALIDATOR_ENABLED=true
 ```
 
+### 3. Building the Desktop App from Source
+
+The `electron/` directory contains an Electron wrapper that compiles the React frontend and packages the FastAPI backend into a single, self-contained desktop installation.
+
+To package and build the desktop app locally:
+
+```bash
+# 1. Build the React UI
+cd ui
+npm ci
+npm run build
+cd ..
+
+# 2. Bundle the Python server with PyInstaller
+pyinstaller talon-server.spec   # outputs dist/talon-server (or talon-server.exe)
+
+# 3. Build the Electron installer
+cd electron
+npm install
+npm run build:mac   # For macOS (builds .dmg / .app)
+# or npm run build:win   # For Windows (builds .exe installer)
+# or npm run build:linux # For Linux (builds .AppImage / .deb)
+```
+
+The compiled installers will land in the `electron/release/` directory.
+
+### 4. GitHub OAuth Setup (Desktop)
+
+To use GitHub integrations (OAuth Login and PR Creation) inside the local desktop app, register an OAuth application on GitHub (`github.com/settings/developers`) with:
+* **Homepage URL**: `http://localhost`
+* **Callback URL**: `talon://oauth-callback`
+
+Once registered, add the client credentials to your `.env` file:
+
+```bash
+GITHUB_CLIENT_ID=your_client_id_here
+GITHUB_CLIENT_SECRET=your_client_secret_here
+```
+
+---
+
+## CLI Usage
+
+`talon-agent` provides a versatile CLI with subcommands for triggering loops, checking active workspaces, auditing logs, cleaning up disk space, and hosting webhooks.
+
+### Commands Reference
+
+| Command   | Arguments  | Flags                                                 | Description                                                                    |
+| :-------- | :--------- | :---------------------------------------------------- | :----------------------------------------------------------------------------- |
+| `run`     | `"<goal>"` | `--working-dir <path>`, `--url <url>`, `--skip-board` | Decomposes and executes a development task in an isolated workspace.           |
+| `list`    | None       | None                                                  | Displays a summary table of all previous and active runs with their statuses.  |
+| `review`  | `<run-id>` | None                                                  | Dumps the full detailed `state.json` file of a run in raw JSON to stdout.      |
+| `cleanup` | `<run-id>` | None                                                  | Deletes the isolated workspace directory of a run if it was successfully kept. |
+| `serve`   | None       | `--port <port_number>`                                | Starts the FastAPI webhook listener to process issues from Linear and GitHub.  |
+
+### Flag Details
+* `--working-dir <path>`: Points the sub-agents to an existing local codebase repository. If not specified, the system starts with a fresh, empty workspace.
+* `--url <url>`: Used by the Playwright validator to determine which local/staging site to navigate, test, and record.
+* `--skip-board`: Instructs the agent to bypass updating any board integrations (e.g., Linear, GitHub Projects) upon passing.
+* `--port <port_number>`: Port on which the webhook FastAPI server will listen. Defaults to `8080`.
+
+### Command Examples
+
+#### 1. Executing a Standalone Coding Goal
+```bash
+talon run "Add a /health endpoint to the Flask app"
+```
+
+#### 2. Running an Agent Loop on an Existing Project Workspace with Browser Validation
+```bash
+talon run "Fix CSS button alignment on the homepage" --working-dir ../my-frontend-app --url http://localhost:3000
+```
+
+#### 3. Listing Completed and Active Runs
+```bash
+talon list
+```
+
+#### 4. Auditing a Completed Run
+```bash
+talon review run-20241024-1234
+```
+
+#### 5. Cleaning Up Workspace Files After a Successful Run
+```bash
+talon cleanup run-20241024-1234
+```
+
+#### 6. Launching the Webhook Server
+```bash
+talon serve --port 8080
+```
+
+### Workspace Isolation
+
+To prevent concurrent agent runs from clobbering each other, every execution run receives its own sandboxed workspace.
+
+| `--working-dir`     | Behavior                                                                                                                 |
+| :------------------ | :----------------------------------------------------------------------------------------------------------------------- |
+| **Not set**         | A fresh, empty directory is created at `workspace/<run-id>/`.                                                            |
+| **Plain directory** | The entire directory contents are copied into `workspace/<run-id>/`.                                                     |
+| **Git repository**  | An isolated branch named `agent/run-<id>` is created via `git worktree add` to preserve the parent repository structure. |
+
+* **On Success (Pass)**: The workspace is kept intact at `workspace/<run-id>/` to allow manual verification, inspection, or manual PR creation. Use `talon cleanup <run-id>` to remove it later.
+* **On Failure (Fail)**: The workspace directory is automatically cleaned up and deleted to avoid cluttering your filesystem.
+
+---
+
+## Environment Variables Reference
+
+Below is a complete reference of the configuration variables supported by `talon-agent`. Copy `.env.example` to `.env` and fill in your values.
+
+| Variable                    | Type    | Default / Example             | Description                                                             |
+| :-------------------------- | :------ | :---------------------------- | :---------------------------------------------------------------------- |
+| `ANTHROPIC_API_KEY`         | String  | `sk-ant-...`                  | API key to enable `anthropic/*` models (e.g., Claude 3.5 Sonnet).       |
+| `OPENAI_API_KEY`            | String  | `sk-...`                      | API key to enable `openai/*` models (e.g., GPT-4o, o3-mini).            |
+| `GEMINI_API_KEY`            | String  | `...`                         | API key to enable `gemini/*` models (e.g., Gemini 2.0 Flash).           |
+| `GROQ_API_KEY`              | String  | `...`                         | API key to enable `groq/*` models (e.g., Llama 3).                      |
+| `MISTRAL_API_KEY`           | String  | `...`                         | API key to enable `mistral/*` models (e.g., Mistral Large).             |
+| `COHERE_API_KEY`            | String  | `...`                         | API key to enable `cohere/*` models (e.g., Command R+).                 |
+| `PYTHONUTF8`                | Integer | `1`                           | Forces Windows Python to use UTF-8 encoding. Safe on all platforms.     |
+| `AGENT_MODEL`               | String  | `gemini/gemini-2.0-flash`     | Global model override. If set, all agent roles default to this model.   |
+| `ORCHESTRATOR_MODEL`        | String  | `gemini/gemini-pro-latest`    | Model override for the Orchestrator (goal decomposition).               |
+| `SUBAGENT_MODEL`            | String  | `anthropic/claude-sonnet-4-6` | Model override for the Sub-agent (code writing and tool-use loop).      |
+| `REVIEWER_MODEL`            | String  | `gemini/gemini-pro-latest`    | Model override for the Reviewer (quality gate).                         |
+| `REFINER_MODEL`             | String  | `gemini/gemini-flash-latest`  | Model override for the Refiner (fix synthesis and next-loop planning).  |
+| `MAX_ITERATIONS`            | Integer | `3`                           | Maximum number of try-review-refine iterations before failing a run.    |
+| `AGENT_MAX_TOKENS`          | Integer | `8096`                        | Maximum token ceiling for single LLM generation calls.                  |
+| `WORKSPACE_DIR`             | String  | `./workspace`                 | Base directory under which individual run workspaces are generated.     |
+| `RUNS_DIR`                  | String  | `./runs`                      | Directory where full execution histories and state files are saved.     |
+| `LINEAR_API_KEY`            | String  | `lin_api_...`                 | API key used to query and update cards on Linear.                       |
+| `LINEAR_TEAM_ID`            | String  | `...`                         | Linear team ID where issues are monitored and processed.                |
+| `GITHUB_TOKEN`              | String  | `ghp_...`                     | Personal Access Token to create branches, open PRs, and update boards.  |
+| `GITHUB_REPO`               | String  | `owner/repo`                  | GitHub target repository in `owner/repo` format.                        |
+| `GITHUB_BASE_BRANCH`        | String  | `main`                        | Base branch to target when creating Pull Requests.                      |
+| `GITHUB_PROJECT_NUMBER`     | Integer | `1`                           | GitHub Projects v2 board number from the workspace project URL.         |
+| `BROWSER_VALIDATOR_ENABLED` | Boolean | `false`                       | Set to `true` to enable Playwright-based UI testing and recording.      |
+| `WEBHOOK_LABEL`             | String  | `agent-task`                  | Issue label required to trigger a run (set to `""` to accept all).      |
+| `LINEAR_WEBHOOK_SECRET`     | String  | `...`                         | Secret key to verify incoming HMAC signature webhooks from Linear.      |
+| `GITHUB_WEBHOOK_SECRET`     | String  | `...`                         | Secret key to verify incoming HMAC signature webhooks from GitHub.      |
+| `MAX_CONCURRENT_RUNS`       | Integer | `3`                           | Maximum simultaneous agent execution tasks on the webhook server.       |
+| `GITHUB_CLIENT_ID`          | String  | `...`                         | Client ID for the registered GitHub OAuth application.                  |
+| `GITHUB_CLIENT_SECRET`      | String  | `...`                         | Client Secret for the registered GitHub OAuth application.              |
+| `BOARD_DB_PATH`             | String  | `~/.local/share/...`          | Path to local SQLite database tracking runs. Defaults to platform dirs. |
+
+### Model Configuration Modes
+
+`talon-agent` provides three flexible modes to configure which LLMs power which parts of the agentic pipeline:
+
+#### 1. Auto Selection Mode (Recommended)
+Leave all model environment variables (`AGENT_MODEL`, `ORCHESTRATOR_MODEL`, etc.) unset. The system will automatically detect which API keys are available in your `.env` file and route the highest quality model to each role.
+
+Auto-selection priority per role:
+
+| Role           | Task               | Prefers                              |
+| :------------- | :----------------- | :----------------------------------- |
+| `orchestrator` | Goal decomposition | Opus → o3 → Gemini Pro → Sonnet      |
+| `subagent`     | Code writing       | Sonnet → GPT-4o → Gemini Pro → Flash |
+| `reviewer`     | Quality gate       | Opus → o3 → Gemini Pro → Sonnet      |
+| `refiner`      | Fix planning       | Sonnet → Flash → GPT-4o → Haiku      |
+
+#### 2. Global Override Mode
+Force all agent roles to use a single model:
+```bash
+# .env
+AGENT_MODEL=gemini/gemini-2.0-flash
+```
+
+#### 3. Per-Role Overrides Mode
+Assign specific models to specific roles for fine-grained cost, speed, and capability tuning:
+```bash
+# .env
+ORCHESTRATOR_MODEL=openai/o3              # Heavy reasoning
+SUBAGENT_MODEL=anthropic/claude-sonnet-4-6  # High-quality coding
+REVIEWER_MODEL=openai/o3                  # Strict review analysis
+REFINER_MODEL=gemini/gemini-2.0-flash     # Fast planning synthesis
+```
+
+Per-role overrides take precedence over the global `AGENT_MODEL`, which in turn takes precedence over the `Auto` selection mode.
+
+---
+
+## Webhook Listener
+
+Run `talon serve` on your server once to listen for incoming tasks and trigger automated agent runs whenever specified labels are applied to issues.
+
+The webhook server manages a run queue up to `MAX_CONCURRENT_RUNS` (default 3) to execute simultaneous agent processes. A health check is available at `/health` and OpenAPI documentation can be inspected at `/docs`.
+
+### Linear Setup
+
+1. Go to **Linear** → **Settings** → **API** → **Webhooks**.
+2. Click **Add Webhook** and configure the endpoint: `https://your-domain.com/webhook/linear`.
+3. Set `LINEAR_WEBHOOK_SECRET` in your `.env` to verify incoming payload signatures.
+4. Ensure target issues carry the label `agent-task` (or whatever label is defined under `WEBHOOK_LABEL`).
+
+### GitHub Setup
+
+1. In your target repository, go to **Settings** → **Webhooks** → **Add Webhook**.
+2. Specify Payload URL: `https://your-domain.com/webhook/github`.
+3. Set Content type to `application/json`.
+4. Select individual events: **Issues**.
+5. Set `GITHUB_WEBHOOK_SECRET` in your `.env` to verify signatures.
+6. Issues carrying the label `agent-task` (or matching `WEBHOOK_LABEL`) will automatically spawn agent runs when opened or updated.
+
+---
+
+## Claude Code Slash Commands
+
+If you interact with `talon-agent` workflows from within interactive terminal assistants, the following internal sub-modules and functions correspond to specific slash commands:
+
+| Command              | Description                                                                            |
+| :------------------- | :------------------------------------------------------------------------------------- |
+| `/task-executor`     | Decomposes the goal and runs concurrent sub-agents in parallel.                        |
+| `/self-reviewer`     | Reviews file changes, runs test suites, and outputs a pass/fail score.                 |
+| `/refiner`           | Analyzes test output/warnings and structures the next iteration's action plan.         |
+| `/browser-validator` | Initiates the Playwright session, performs navigation checks, and saves the recording. |
+| `/board-updater`     | Connects to Linear/GitHub API endpoints and uploads run statuses and files.            |
+
+---
+
+## Codebase Directory Structure
+
+| Path                                | Purpose                                                                                      |
+| :---------------------------------- | :------------------------------------------------------------------------------------------- |
+| `talon/config.py`                   | Model resolution logic: handles overrides, fallback, and key scanning.                       |
+| `talon/providers/litellm_p.py`      | LiteLLM client wrapper providing normalized tool-calling APIs across vendors.                |
+| `talon/tools.py`                    | Implementation of sub-agent tools: `read_file`, `write_file`, `run_command`, `search_files`. |
+| `talon/types.py`                    | Pydantic model schemas representing `RunState`, `ExecutorResult`, `ReviewFeedback`, etc.     |
+| `talon/skills/task_executor.py`     | Contains the parallel orchestrator execution engine.                                         |
+| `talon/skills/self_reviewer.py`     | Implements the file-reading and verification loop.                                           |
+| `talon/skills/refiner.py`           | Logic to distill logs into actionable developer instructions.                                |
+| `talon/skills/browser_validator.py` | Playwright interface logic for visually recording page runs.                                 |
+| `talon/skills/board_updater.py`     | Connector logic to post update summaries to board integrations.                              |
+| `talon/loop.py`                     | Orchestrates the top-level main execution pipeline loop.                                     |
+| `talon/main.py`                     | Defines the local user CLI interface.                                                        |
+| `talon/server_entry.py`             | PyInstaller standalone entry point. Finds ports, spawns fastapi.                             |
+| `talon-server.spec`                 | Spec configuration file for building Python server binaries via PyInstaller.                 |
+| `electron/`                         | Node project containing main/preload scripts for the Electron desktop wrapper.               |
+| `runs/<id>/state.json`              | Stores full execution logs, agent thoughts, and tools history for each run.                  |
+| `workspace/`                        | Local directory containing generated workspace checkouts or copied folders.                  |
+
+---
+
 ## Roadmap
 
-- [ ] Browser validator: goal-specific navigation steps
-- [ ] Board updater: GitHub Projects API
-- [ ] Board updater: auto-create PR from workspace diff
-- [ ] Rate-limit concurrent sub-agent API calls (`asyncio_throttle`)
-- [ ] Test suite
+- [ ] **Browser Validator**: Support customized, goal-specific browser navigation steps via subtask definitions.
+- [ ] **Board Updater**: Add direct integration with GitHub Projects v2 boards.
+- [ ] **Board Updater**: Implement automatic creation of pull requests directly from workspace changes.
+- [ ] **API Optimizations**: Introduce rate-limiting controls (`asyncio_throttle`) for concurrent agent API calls.
+- [ ] **Automated Test Suite**: Expand unit and integration test coverage.
