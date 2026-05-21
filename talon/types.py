@@ -70,11 +70,26 @@ class RunStatus(str, Enum):
     MAX_ITERATIONS = "max_iterations"
 
 
+class PlanPhase(BaseModel):
+    name: str
+    description: str
+    dependencies: list[int] = []
+
+
+class PlanResult(BaseModel):
+    approach: str
+    constraints: list[str] = []
+    phases: list[PlanPhase] = []
+    success_criteria: list[str] = []
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
 class RunState(BaseModel):
     run_id: str = Field(default_factory=lambda: str(uuid.uuid4())[:12])
     goal: str
     iteration: int = 0
     status: RunStatus = RunStatus.RUNNING
+    plan_result: Optional[PlanResult] = None
     executor_results: list[ExecutorResult] = []
     review_results: list[ReviewFeedback] = []
     refinement_results: list[RefinementResult] = []

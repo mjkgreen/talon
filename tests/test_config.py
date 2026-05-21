@@ -42,25 +42,25 @@ class TestGlobalOverride:
 
     def test_agent_model_beats_auto(self, monkeypatch):
         monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-        monkeypatch.setenv("AGENT_MODEL", "gemini/gemini-2.0-flash")
-        assert resolve_model("orchestrator") == "gemini/gemini-2.0-flash"
+        monkeypatch.setenv("AGENT_MODEL", "gemini/gemini-flash-latest ")
+        assert resolve_model("orchestrator") == "gemini/gemini-flash-latest "
 
 
 class TestPerRoleOverride:
     def test_role_var_beats_agent_model(self, monkeypatch):
         monkeypatch.setenv("GEMINI_API_KEY", "test-key")
         monkeypatch.setenv("ORCHESTRATOR_MODEL", "openai/o3")
-        monkeypatch.setenv("AGENT_MODEL", "gemini/gemini-2.0-flash")
+        monkeypatch.setenv("AGENT_MODEL", "gemini/gemini-flash-latest")
         assert resolve_model("orchestrator") == "openai/o3"
-        assert resolve_model("subagent") == "gemini/gemini-2.0-flash"
+        assert resolve_model("subagent") == "gemini/gemini-flash-latest"
 
     def test_each_role_independently_overridable(self, monkeypatch):
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
         monkeypatch.setenv("ORCHESTRATOR_MODEL", "openai/o3")
-        monkeypatch.setenv("REFINER_MODEL", "gemini/gemini-2.0-flash")
+        monkeypatch.setenv("REFINER_MODEL", "gemini/gemini-flash-latest")
         assert resolve_model("orchestrator") == "openai/o3"
         assert resolve_model("subagent") == "anthropic/claude-sonnet-4-6"
-        assert resolve_model("refiner") == "gemini/gemini-2.0-flash"
+        assert resolve_model("refiner") == "gemini/gemini-flash-latest"
 
 
 class TestResolutionSource:
@@ -69,7 +69,7 @@ class TestResolutionSource:
         assert _resolution_source("orchestrator") == "ORCHESTRATOR_MODEL"
 
     def test_source_agent_model(self, monkeypatch):
-        monkeypatch.setenv("AGENT_MODEL", "gemini/gemini-2.0-flash")
+        monkeypatch.setenv("AGENT_MODEL", "gemini/gemini-flash-latest")
         assert _resolution_source("subagent") == "AGENT_MODEL"
 
     def test_source_auto(self, monkeypatch):

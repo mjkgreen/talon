@@ -139,6 +139,30 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+_planning_issues: set[int] = set()
+
+
+async def _run_planner_bg(issue_id: int, goal: str) -> None:
+    """Generate a plan for a backlog issue and store it. Runs as a background task."""
+    _planning_issues.add(issue_id)
+    await manager.broadcast({"type": "plan_started", "issue_id": issue_id})
+    try:
+        from talon.skills.planner import run as planner_run
+        plan = await planner_run(goal=goal)
+        plan_json = plan.model_dump_json()
+        await db.update_issue(issue_id, db.IssueUpdate(plan_json=plan_json))
+        issue = await db.get_issue(issue_id)
+        await manager.broadcast({
+            "type": "plan_ready",
+            "issue_id": issue_id,
+            "issue": issue.model_dump() if issue else None,
+        })
+    except Exception as e:
+        console.print(f"[yellow]Planner failed for issue {issue_id}: {e}[/yellow]")
+        await manager.broadcast({"type": "plan_error", "issue_id": issue_id, "error": str(e)})
+    finally:
+        _planning_issues.discard(issue_id)
+
 
 async def broadcast_issue_update(issue_id: int):
     issue = await db.get_issue(issue_id)
@@ -230,6 +254,17 @@ async def _run_loop(
             push_on_pass_setting = await db.get_setting("push_on_pass")
             create_pr = push_on_pass_setting != "false"  # default True
 
+            # Load pre-computed plan from backlog phase (if any)
+            precomputed_plan = None
+            if issue_id:
+                stored_issue = await db.get_issue(issue_id)
+                if stored_issue and stored_issue.plan_json:
+                    from talon.types import PlanResult
+                    try:
+                        precomputed_plan = PlanResult.model_validate_json(stored_issue.plan_json)
+                    except Exception:
+                        pass
+
             state = await run(
                 goal=goal,
                 working_dir=base_dir,
@@ -237,6 +272,7 @@ async def _run_loop(
                 skip_board=False,
                 direct_workspace=edit_local_directly,
                 create_pr=create_pr,
+                plan=precomputed_plan,
                 on_step=on_step,
                 on_log=on_log,
             )
@@ -648,7 +684,26 @@ async def create_issue(issue: db.IssueCreate, background_tasks: BackgroundTasks)
             None,
             issue.project_id,
         )
+    elif new_issue.status == "Backlog" and _has_llm_configured():
+        background_tasks.add_task(
+            _run_planner_bg,
+            new_issue.id,
+            f"{issue.title}\n\n{issue.description}".strip(),
+        )
     return new_issue
+
+
+class _PlanUpdate(BaseModel):
+    plan_json: str
+
+
+@app.patch("/api/issues/{issue_id}/plan")
+async def update_issue_plan(issue_id: int, body: _PlanUpdate):
+    issue = await db.update_issue(issue_id, db.IssueUpdate(plan_json=body.plan_json))
+    if not issue:
+        raise HTTPException(status_code=404, detail="Issue not found")
+    await broadcast_issue_update(issue_id)
+    return issue
 
 
 @app.patch("/api/issues/{issue_id}")

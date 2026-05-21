@@ -1,8 +1,8 @@
 """
 Core orchestration loop
 -----------------------
-executor → reviewer → [pass] → browser-validator → board-updater → done
-                    → [fail/needs_work] → refiner → executor (next iteration)
+planner → executor → reviewer → [pass] → browser-validator → board-updater → done
+                              → [fail/needs_work] → refiner → executor (next iteration)
 """
 
 from __future__ import annotations
@@ -22,12 +22,13 @@ from talon.config import model_config_summary
 from talon.skills import (
     board_updater,
     browser_validator,
+    planner,
     pr_creator,
     refiner,
     self_reviewer,
     task_executor,
 )
-from talon.types import ReviewVerdict, RunState, RunStatus
+from talon.types import PlanResult, ReviewVerdict, RunState, RunStatus
 
 console = Console()
 
@@ -76,6 +77,7 @@ async def run(
     skip_board: bool = False,
     direct_workspace: bool = False,
     create_pr: bool = True,
+    plan: PlanResult | None = None,
     on_step: Callable[[RunState], Awaitable[None]] | None = None,
     on_log: Callable[[str], Awaitable[None]] | None = None,
 ) -> RunState:
@@ -126,6 +128,16 @@ async def run(
     refinement = None
 
     try:
+        # --- Step 0: Plan ---
+        if plan is None:
+            plan = await planner.run(goal=goal)
+        else:
+            console.print("\n[bold blue]planner[/bold blue] (using pre-computed backlog plan)")
+        state.plan_result = plan
+        _save_state(state)
+        if on_step:
+            await on_step(state)
+
         for i in range(1, MAX_ITERATIONS + 1):
             state.iteration = i
             console.print(Rule(f"Iteration {i}/{MAX_ITERATIONS}", style="blue"))
@@ -138,6 +150,7 @@ async def run(
                 working_dir=run_workspace,
                 iteration=i,
                 refinement=refinement,
+                plan=plan,
                 on_log=on_log,
             )
             state.executor_results.append(exec_result)

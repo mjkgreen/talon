@@ -52,7 +52,7 @@ AGENT_MODEL=openai/gpt-4o   OPENAI_API_KEY=sk-...
 ORCHESTRATOR_MODEL=openai/o3                  # reasoning
 SUBAGENT_MODEL=openai/gpt-4o                  # coding
 REVIEWER_MODEL=openai/o3                      # strict review
-REFINER_MODEL=gemini/gemini-2.0-flash         # fast synthesis
+REFINER_MODEL=gemini/gemini-flash-latest          # fast synthesis
 ```
 
 Full provider list: https://docs.litellm.ai/docs/providers

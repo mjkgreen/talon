@@ -4,7 +4,7 @@ LiteLLM provider — unified interface for any model via litellm.acompletion().
 Switch models by setting AGENT_MODEL in .env:
   anthropic/claude-sonnet-4-6    → Anthropic (needs ANTHROPIC_API_KEY)
   openai/gpt-4o                  → OpenAI    (needs OPENAI_API_KEY)
-  gemini/gemini-2.0-flash        → Gemini    (needs GEMINI_API_KEY)
+  gemini/gemini-flash-latest     → Gemini    (needs GEMINI_API_KEY)
   groq/llama3-70b-8192           → Groq      (needs GROQ_API_KEY)
   mistral/mistral-large-latest   → Mistral   (needs MISTRAL_API_KEY)
 

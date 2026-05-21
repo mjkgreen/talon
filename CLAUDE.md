@@ -77,7 +77,7 @@ See `.env.example` for the full list. Model routing uses LiteLLM.
 
 **Global override**: one model for all roles:
 ```
-AGENT_MODEL=gemini/gemini-2.0-flash   GEMINI_API_KEY=...
+AGENT_MODEL=gemini/gemini-flash-latest     GEMINI_API_KEY=...
 ```
 
 **Per-role assignment** (full control):
@@ -85,7 +85,7 @@ AGENT_MODEL=gemini/gemini-2.0-flash   GEMINI_API_KEY=...
 ORCHESTRATOR_MODEL=gemini/gemini-3-pro    # goal decomposition (reasoning-heavy)
 SUBAGENT_MODEL=anthropic/claude-sonnet-4-6  # code writing
 REVIEWER_MODEL=gemini/gemini-3-pro        # quality gate (reasoning-heavy)
-REFINER_MODEL=gemini/gemini-2.0-flash       # fix planning (speed-optimised)
+REFINER_MODEL=gemini/ggemini-flash-latest        # fix planning (speed-optimised)
 ```
 
 Resolution order per role: `{ROLE}_MODEL` → `AGENT_MODEL` → auto.  

@@ -19,31 +19,35 @@ from rich.console import Console
 from talon.providers import get_provider
 from talon.providers.base import ToolResult
 from talon.tools import TOOL_DEFINITIONS, dispatch_tool
-from talon.types import ExecutorResult, RefinementResult, Subtask, SubtaskResult
+from talon.types import ExecutorResult, PlanResult, RefinementResult, Subtask, SubtaskResult
 
 console = Console()
 
 MAX_TOKENS = int(os.getenv("AGENT_MAX_TOKENS", "8096"))
+MAX_SUBAGENTS = int(os.getenv("MAX_SUBAGENTS", "7"))
 
-_EXECUTOR_SYSTEM = """\
+
+def _executor_system(max_subagents: int) -> str:
+    return f"""\
 You are a senior software engineer acting as a task orchestrator.
 Your job is to decompose a high-level goal into concrete, independently-executable subtasks.
 
 Rules:
 - Output ONLY valid JSON matching the schema below. No prose, no markdown fences.
 - Each subtask must be self-contained and independently executable.
-- Produce 3–7 subtasks. Prefer fewer, larger tasks over many tiny ones.
+- Choose the number of subtasks that best fits the goal's complexity: 1–{max_subagents}.
+  Prefer fewer, larger tasks over many tiny ones.
 - acceptance_criteria must be specific and verifiable (e.g. "src/auth.py contains class UserAuth").
 
 Schema:
-{
+{{
   "subtasks": [
-    {
+    {{
       "description": "<imperative sentence describing the task>",
       "acceptance_criteria": ["<verifiable criterion 1>", ...]
-    }
+    }}
   ]
-}
+}}
 """
 
 _SUBAGENT_SYSTEM = """\
@@ -59,14 +63,37 @@ Rules:
 """
 
 
-async def _decompose_goal(goal: str, refinement: str | None) -> list[Subtask]:
+def _plan_context(plan: PlanResult) -> str:
+    lines = [f"Approach: {plan.approach}"]
+    if plan.constraints:
+        lines.append("Constraints:\n" + "\n".join(f"- {c}" for c in plan.constraints))
+    if plan.phases:
+        phase_text = "\n".join(
+            f"  {i}. {p.name}: {p.description}" for i, p in enumerate(plan.phases)
+        )
+        lines.append(f"Planned phases (use as subtask guidance):\n{phase_text}")
+    if plan.success_criteria:
+        lines.append(
+            "Success criteria:\n" + "\n".join(f"- {c}" for c in plan.success_criteria)
+        )
+    return "\n\n".join(lines)
+
+
+async def _decompose_goal(
+    goal: str,
+    refinement: str | None,
+    max_subagents: int,
+    plan: PlanResult | None = None,
+) -> list[Subtask]:
     provider = get_provider("orchestrator")
     user_content = f"Goal: {goal}"
+    if plan:
+        user_content += f"\n\nImplementation plan:\n{_plan_context(plan)}"
     if refinement:
         user_content += f"\n\nRefinement instructions from previous review:\n{refinement}"
 
     response = await provider.chat(
-        system=_EXECUTOR_SYSTEM,
+        system=_executor_system(max_subagents),
         messages=[{"role": "user", "content": user_content}],
         tools=[],
         max_tokens=2048,
@@ -83,7 +110,8 @@ async def _decompose_goal(goal: str, refinement: str | None) -> list[Subtask]:
         raise RuntimeError(
             f"Orchestrator returned invalid JSON: {e}\nRaw: {raw[:300]!r}"
         ) from e
-    return [Subtask(**s) for s in data["subtasks"]]
+    subtasks = [Subtask(**s) for s in data["subtasks"]]
+    return subtasks[:max_subagents]
 
 
 async def _run_subagent(
@@ -152,8 +180,11 @@ async def _run_subagent(
         final_output = summary_response.text or ""
 
     did_work = bool(files_modified or commands_run)
-    if on_log and files_modified:
-        await on_log(f"[{subtask.id}] modified: {', '.join(files_modified)}")
+    if on_log:
+        if files_modified:
+            await on_log(f"[{subtask.id}] modified: {', '.join(files_modified)}")
+        else:
+            await on_log(f"[{subtask.id}] done")
     return SubtaskResult(
         subtask=subtask,
         output=final_output or "(no output — no files written or commands run)",
@@ -168,6 +199,7 @@ async def run(
     working_dir: str,
     iteration: int = 1,
     refinement: RefinementResult | None = None,
+    plan: PlanResult | None = None,
     on_log: Callable[[str], Awaitable[None]] | None = None,
 ) -> ExecutorResult:
     refinement_text = refinement.refined_instructions if refinement else None
@@ -175,7 +207,7 @@ async def run(
     console.print(f"\n[bold blue]task-executor[/bold blue] iteration={iteration}")
     console.print(f"  Goal: {goal[:100]}")
 
-    subtasks = await _decompose_goal(goal, refinement_text)
+    subtasks = await _decompose_goal(goal, refinement_text, MAX_SUBAGENTS, plan=plan)
     console.print(f"  Decomposed into {len(subtasks)} subtask(s)")
     if on_log:
         await on_log(f"Decomposed into {len(subtasks)} subtask(s)")

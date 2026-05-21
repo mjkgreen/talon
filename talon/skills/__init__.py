@@ -1,6 +1,7 @@
 from talon.skills import (
     board_updater,
     browser_validator,
+    planner,
     pr_creator,
     refiner,
     self_reviewer,
@@ -8,6 +9,7 @@ from talon.skills import (
 )
 
 __all__ = [
+    "planner",
     "task_executor",
     "self_reviewer",
     "refiner",

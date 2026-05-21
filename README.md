@@ -61,9 +61,9 @@ Before running or developing `talon-agent`, ensure your local system meets the f
 
 ### LLM Credentials
 At least one API key from a supported provider is required. Model routing is powered by **LiteLLM**. Available providers include:
-* **Anthropic** (`ANTHROPIC_API_KEY`): Used for Claude models (e.g., `claude-3-5-sonnet`, `claude-3-opus`).
+* **Anthropic** (`ANTHROPIC_API_KEY`): Used for Claude models (e.g., `claude-4.6-sonnet`, `claude-4.7-opus`).
 * **OpenAI** (`OPENAI_API_KEY`): Used for GPT models (e.g., `gpt-4o`, `o3-mini`).
-* **Google Gemini** (`GEMINI_API_KEY`): Used for Gemini models (e.g., `gemini-1.5-pro`, `gemini-2.0-flash`).
+* **Google Gemini** (`GEMINI_API_KEY`): Used for Gemini models (e.g., `gemini-3.1-pro`, `gemini-flash-latest`).
 * **Groq** (`GROQ_API_KEY`): Used for Llama and Mixtral models.
 * **Mistral** (`MISTRAL_API_KEY`): Used for Mistral Large and Codestral models.
 * **Cohere** (`COHERE_API_KEY`): Used for Command R+ models.
@@ -253,7 +253,7 @@ Below is a complete reference of the configuration variables supported by `talon
 | `MISTRAL_API_KEY`           | String  | `...`                         | API key to enable `mistral/*` models (e.g., Mistral Large).             |
 | `COHERE_API_KEY`            | String  | `...`                         | API key to enable `cohere/*` models (e.g., Command R+).                 |
 | `PYTHONUTF8`                | Integer | `1`                           | Forces Windows Python to use UTF-8 encoding. Safe on all platforms.     |
-| `AGENT_MODEL`               | String  | `gemini/gemini-2.0-flash`     | Global model override. If set, all agent roles default to this model.   |
+| `AGENT_MODEL`               | String  | `gemini/gemini-flash-latest`     | Global model override. If set, all agent roles default to this model.   |
 | `ORCHESTRATOR_MODEL`        | String  | `gemini/gemini-pro-latest`    | Model override for the Orchestrator (goal decomposition).               |
 | `SUBAGENT_MODEL`            | String  | `anthropic/claude-sonnet-4-6` | Model override for the Sub-agent (code writing and tool-use loop).      |
 | `REVIEWER_MODEL`            | String  | `gemini/gemini-pro-latest`    | Model override for the Reviewer (quality gate).                         |
@@ -297,8 +297,7 @@ Auto-selection priority per role:
 Force all agent roles to use a single model:
 ```bash
 # .env
-AGENT_MODEL=gemini/gemini-2.0-flash
-```
+AGENT_MODEL=gemini/gemini-flash-latest```
 
 #### 3. Per-Role Overrides Mode
 Assign specific models to specific roles for fine-grained cost, speed, and capability tuning:
@@ -307,7 +306,7 @@ Assign specific models to specific roles for fine-grained cost, speed, and capab
 ORCHESTRATOR_MODEL=openai/o3              # Heavy reasoning
 SUBAGENT_MODEL=anthropic/claude-sonnet-4-6  # High-quality coding
 REVIEWER_MODEL=openai/o3                  # Strict review analysis
-REFINER_MODEL=gemini/gemini-2.0-flash     # Fast planning synthesis
+REFINER_MODEL=gemini/gemini-flash-latest     # Fast planning synthesis
 ```
 
 Per-role overrides take precedence over the global `AGENT_MODEL`, which in turn takes precedence over the `Auto` selection mode.
