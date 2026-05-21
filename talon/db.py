@@ -60,6 +60,7 @@ class Issue(BaseModel):
     run_id: Optional[str] = None
     project_id: Optional[int] = None
     plan_json: Optional[str] = None
+    plan_comments: Optional[str] = None
     created_at: str
     updated_at: str
 
@@ -76,6 +77,7 @@ class IssueUpdate(BaseModel):
     run_id: Optional[str] = None
     clear_run_id: bool = False  # explicitly NULL-out run_id (separate from setting one)
     plan_json: Optional[str] = None
+    plan_comments: Optional[str] = None
 
 
 class SettingsUpdate(BaseModel):
@@ -148,6 +150,13 @@ async def init_db():
         # Migration: add plan_json column to issues if missing
         try:
             await db.execute("ALTER TABLE issues ADD COLUMN plan_json TEXT")
+            await db.commit()
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
+        # Migration: add plan_comments column to issues if missing
+        try:
+            await db.execute("ALTER TABLE issues ADD COLUMN plan_comments TEXT")
             await db.commit()
         except sqlite3.OperationalError:
             pass  # column already exists
@@ -348,6 +357,9 @@ async def update_issue(issue_id: int, updates: IssueUpdate) -> Optional[Issue]:
         if updates.plan_json is not None:
             fields.append("plan_json = ?")
             values.append(updates.plan_json)
+        if updates.plan_comments is not None:
+            fields.append("plan_comments = ?")
+            values.append(updates.plan_comments)
 
         if not fields:
             return await get_issue(issue_id)

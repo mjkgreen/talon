@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Activity,
   AlertCircle,
@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   FileText,
   Lightbulb,
+  MessageSquare,
   Pencil,
   Play,
   RefreshCw,
@@ -40,7 +41,7 @@ function logLineClass(line: string) {
   return "text-neutral-400";
 }
 
-function LogLines({ lines, scrollRef }: { lines: string[]; scrollRef?: React.RefObject<HTMLDivElement> }) {
+function LogLines({ lines, scrollRef }: { lines: string[]; scrollRef?: React.RefObject<HTMLDivElement | null> }) {
   return (
     <div
       ref={scrollRef}
@@ -96,6 +97,8 @@ function PlanSection({
   planDraft: PlanResult | null;
   setPlanDraft: React.Dispatch<React.SetStateAction<PlanResult | null>>;
 }) {
+  const [commentDraft, setCommentDraft] = useState("");
+
   const isPlanning = planningIssues.has(issue.id);
   const storedPlan: PlanResult | null = issue.plan_json
     ? (() => {
@@ -107,6 +110,15 @@ function PlanSection({
       })()
     : null;
   const displayPlan = editingPlan ? planDraft : storedPlan;
+  const comments: string[] = issue.plan_comments
+    ? (() => {
+        try {
+          return JSON.parse(issue.plan_comments);
+        } catch {
+          return [];
+        }
+      })()
+    : [];
 
   const savePlan = async () => {
     if (!planDraft) return;
@@ -117,6 +129,21 @@ function PlanSection({
     });
     setEditingPlan(false);
     setPlanDraft(null);
+  };
+
+  const addComment = async () => {
+    const text = commentDraft.trim();
+    if (!text) return;
+    setCommentDraft("");
+    await fetch(apiUrl(`/api/issues/${issue.id}/plan/comments`), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ comment: text }),
+    });
+  };
+
+  const refinePlan = async () => {
+    await fetch(apiUrl(`/api/issues/${issue.id}/plan/refine`), { method: "POST" });
   };
 
   return (
@@ -246,6 +273,56 @@ function PlanSection({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Feedback section — shown when plan exists and not in edit mode */}
+      {storedPlan && !editingPlan && (
+        <div className="border-t border-neutral-800/50 px-5 py-4 space-y-3">
+          <div className="text-xs font-semibold text-neutral-500 uppercase tracking-wider flex items-center gap-2">
+            <MessageSquare size={12} /> Feedback
+          </div>
+          {comments.length > 0 && (
+            <div className="space-y-1.5">
+              {comments.map((c, ci) => (
+                <div key={ci} className="flex items-start gap-2 text-xs">
+                  <span className="text-neutral-600 shrink-0 mt-0.5">—</span>
+                  <span className="text-neutral-400">{c}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <textarea
+            className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-xs text-neutral-200 focus:outline-none focus:border-violet-500 resize-none"
+            rows={2}
+            placeholder="Add feedback for the plan refiner... (Ctrl+Enter to submit)"
+            value={commentDraft}
+            onChange={(e) => setCommentDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) addComment();
+            }}
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={addComment}
+              disabled={!commentDraft.trim() || isPlanning}
+              className="text-xs text-neutral-300 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 px-3 py-1.5 rounded transition-colors disabled:opacity-40"
+            >
+              Add Comment
+            </button>
+            <button
+              onClick={refinePlan}
+              disabled={comments.length === 0 || isPlanning}
+              className="text-xs text-violet-300 bg-violet-500/10 hover:bg-violet-500/20 border border-violet-500/30 px-3 py-1.5 rounded transition-colors disabled:opacity-40 flex items-center gap-1.5"
+              title={comments.length === 0 ? "Add a comment first" : "Refine plan based on feedback"}
+            >
+              {isPlanning
+                ? <RefreshCw size={11} className="animate-spin" />
+                : <Lightbulb size={11} />
+              }
+              Refine Plan
+            </button>
+          </div>
         </div>
       )}
     </div>

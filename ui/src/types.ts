@@ -19,6 +19,7 @@ export interface Issue {
   run_id?: string;
   project_id?: number;
   plan_json?: string;
+  plan_comments?: string;
   created_at: string;
   updated_at: string;
 }

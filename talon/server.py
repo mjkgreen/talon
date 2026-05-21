@@ -164,6 +164,35 @@ async def _run_planner_bg(issue_id: int, goal: str) -> None:
         _planning_issues.discard(issue_id)
 
 
+async def _run_plan_refiner_bg(issue_id: int, goal: str) -> None:
+    """Refine an existing plan using user feedback comments. Runs as a background task."""
+    _planning_issues.add(issue_id)
+    await manager.broadcast({"type": "plan_started", "issue_id": issue_id})
+    try:
+        issue = await db.get_issue(issue_id)
+        if not issue or not issue.plan_json:
+            raise ValueError("No existing plan to refine")
+        from talon.types import PlanResult
+        current_plan = PlanResult.model_validate_json(issue.plan_json)
+        comments: list[str] = json.loads(issue.plan_comments or "[]")
+
+        from talon.skills.plan_refiner import run as plan_refiner_run
+        new_plan = await plan_refiner_run(goal=goal, current_plan=current_plan, comments=comments)
+
+        await db.update_issue(issue_id, db.IssueUpdate(plan_json=new_plan.model_dump_json(), plan_comments="[]"))
+        updated = await db.get_issue(issue_id)
+        await manager.broadcast({
+            "type": "plan_ready",
+            "issue_id": issue_id,
+            "issue": updated.model_dump() if updated else None,
+        })
+    except Exception as e:
+        console.print(f"[yellow]Plan refiner failed for issue {issue_id}: {e}[/yellow]")
+        await manager.broadcast({"type": "plan_error", "issue_id": issue_id, "error": str(e)})
+    finally:
+        _planning_issues.discard(issue_id)
+
+
 async def broadcast_issue_update(issue_id: int):
     issue = await db.get_issue(issue_id)
     if issue:
@@ -704,6 +733,39 @@ async def update_issue_plan(issue_id: int, body: _PlanUpdate):
         raise HTTPException(status_code=404, detail="Issue not found")
     await broadcast_issue_update(issue_id)
     return issue
+
+
+class _CommentAdd(BaseModel):
+    comment: str
+
+
+@app.post("/api/issues/{issue_id}/plan/comments")
+async def add_plan_comment(issue_id: int, body: _CommentAdd):
+    issue = await db.get_issue(issue_id)
+    if not issue:
+        raise HTTPException(status_code=404, detail="Issue not found")
+    comments: list[str] = json.loads(issue.plan_comments or "[]")
+    text = body.comment.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Comment cannot be empty")
+    comments.append(text)
+    await db.update_issue(issue_id, db.IssueUpdate(plan_comments=json.dumps(comments)))
+    await broadcast_issue_update(issue_id)
+    return {"ok": True}
+
+
+@app.post("/api/issues/{issue_id}/plan/refine")
+async def refine_issue_plan(issue_id: int, background_tasks: BackgroundTasks):
+    issue = await db.get_issue(issue_id)
+    if not issue:
+        raise HTTPException(status_code=404, detail="Issue not found")
+    if not issue.plan_json:
+        raise HTTPException(status_code=400, detail="No plan to refine")
+    if not _has_llm_configured():
+        raise HTTPException(status_code=400, detail="No LLM configured")
+    goal = f"{issue.title}\n\n{issue.description}".strip()
+    background_tasks.add_task(_run_plan_refiner_bg, issue_id, goal)
+    return {"ok": True}
 
 
 @app.patch("/api/issues/{issue_id}")
