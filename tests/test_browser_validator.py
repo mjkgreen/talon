@@ -275,16 +275,6 @@ class TestBrowserValidatorRun:
         mock_provider.append_assistant = MagicMock()
         mock_provider.append_tool_results = MagicMock()
 
-        page_exists = _make_page(locator_count=1)
-        page_missing = _make_page(locator_count=0)
-
-        call_count = [0]
-
-        async def page_locator_side_effect(selector):
-            if selector == "#missing":
-                return page_missing.locator(selector)
-            return page_exists.locator(selector)
-
         mock_page = _make_page()
         # For first assert: count=1, for second: count=0
         counts = [1, 0]

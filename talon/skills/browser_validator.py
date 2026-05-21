@@ -285,7 +285,7 @@ async def _dispatch_browser_tool(
         elif tool_name == "take_screenshot":
             n = counter[0]
             counter[0] += 1
-            name = tool_input["name"].replace(" ", "_")[:40]
+            name = re.sub(r"[^\w\-]", "_", tool_input["name"])[:40]
             path = str(video_dir / f"screenshot-{n:02d}-{name}.png")
             await page.screenshot(path=path, full_page=True)
             screenshots.append(path)
@@ -361,51 +361,55 @@ async def run(
         )
         page = await context.new_page()
 
-        for _turn in range(MAX_STEPS):
-            response = await provider.chat(
-                system=system,
-                messages=messages,
-                tools=BROWSER_TOOL_DEFINITIONS,
-                max_tokens=MAX_TOKENS,
-            )
-            provider.append_assistant(messages, response)
-            steps += 1
-
-            if response.stop_reason == "end_turn":
-                break
-
-            if not response.tool_calls:
-                break
-
-            tool_results = []
-            done = False
-            for tc in response.tool_calls:
-                result_str, is_done = await _dispatch_browser_tool(
-                    tc.name,
-                    tc.input,
-                    page,
-                    video_dir,
-                    assertions,
-                    screenshots,
-                    counter,
+        try:
+            for _turn in range(MAX_STEPS):
+                response = await provider.chat(
+                    system=system,
+                    messages=messages,
+                    tools=BROWSER_TOOL_DEFINITIONS,
+                    max_tokens=MAX_TOKENS,
                 )
-                tool_results.append(ToolResult(id=tc.id, content=result_str))
-                if is_done:
-                    final_passed = tc.input.get("passed", False)
-                    final_summary = tc.input.get("summary", "")
-                    done = True
-                    provider.append_tool_results(messages, tool_results)
+                provider.append_assistant(messages, response)
+                steps += 1
+
+                if response.stop_reason == "end_turn":
                     break
 
-            if not done:
-                provider.append_tool_results(messages, tool_results)
-            if done:
-                break
+                if not response.tool_calls:
+                    break
 
-        await context.close()
-        await browser.close()
+                tool_results = []
+                done = False
+                for tc in response.tool_calls:
+                    result_str, is_done = await _dispatch_browser_tool(
+                        tc.name,
+                        tc.input,
+                        page,
+                        video_dir,
+                        assertions,
+                        screenshots,
+                        counter,
+                    )
+                    tool_results.append(ToolResult(id=tc.id, content=result_str))
+                    if is_done:
+                        final_passed = tc.input.get("passed", False)
+                        final_summary = tc.input.get("summary", "")
+                        done = True
+                        provider.append_tool_results(messages, tool_results)
+                        break
 
-    score = sum(1 for a in assertions if a.passed) / max(len(assertions), 1)
+                if not done:
+                    provider.append_tool_results(messages, tool_results)
+                if done:
+                    break
+        finally:
+            await context.close()
+            await browser.close()
+
+    if not assertions:
+        score = 1.0 if final_passed else 0.0
+    else:
+        score = sum(1 for a in assertions if a.passed) / len(assertions)
 
     console.print(
         f"  [{'green' if final_passed else 'red'}]"
@@ -413,6 +417,7 @@ async def run(
         f"score={score:.0%} steps={steps} assertions={len(assertions)}"
     )
 
+    incomplete = final_summary == "Test did not complete"
     return BrowserTestResult(
         passed=final_passed,
         score=score,
@@ -421,4 +426,5 @@ async def run(
         screenshots=screenshots,
         video_path=video_path,
         steps=steps,
+        error="Agent did not call mark_done" if incomplete else None,
     )
