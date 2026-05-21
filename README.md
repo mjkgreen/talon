@@ -4,7 +4,7 @@ Autonomous agentic coding system. Give it a goal; it decomposes the work into su
 
 Available as a **desktop app** (Electron + bundled Python server) or as a standalone CLI/server.
 
-[![GitHub release](https://img.shields.io/github/v/release/mjkgreen/talon)](https://github.com/mjkgreen/talon/releases/latest)
+[![GitHub release](https://img.shields.io/github/v/release/mjkgreen/talon?cacheSeconds=300)](https://github.com/mjkgreen/talon/releases/latest)
 
 **[⬇ Download the latest release](https://github.com/mjkgreen/talon/releases/latest)**  
 Windows `.exe` · macOS `.dmg` · Linux `.AppImage`
