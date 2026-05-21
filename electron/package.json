@@ -5,12 +5,16 @@
   "author": "Chasqui AI <matthew@chasqui.ai>",
   "license": "MIT",
   "main": "main.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mjkgreen/talon.git"
+  },
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder",
-    "build:mac": "electron-builder --mac",
-    "build:win": "electron-builder --win",
-    "build:linux": "electron-builder --linux"
+    "build": "electron-builder --publish never",
+    "build:mac": "electron-builder --mac --publish never",
+    "build:win": "electron-builder --win --publish never",
+    "build:linux": "electron-builder --linux --publish never"
   },
   "build": {
     "appId": "ai.chasqui.talon",
