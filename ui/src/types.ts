@@ -11,6 +11,25 @@ export interface PlanResult {
   success_criteria: string[];
 }
 
+export interface BrowserAssertion {
+  description: string;
+  selector: string | null;
+  expected: string | null;
+  actual: string | null;
+  passed: boolean;
+}
+
+export interface BrowserTestResult {
+  passed: boolean;
+  score: number;
+  summary: string;
+  assertions: BrowserAssertion[];
+  screenshots: string[];
+  video_path: string | null;
+  steps: number;
+  error: string | null;
+}
+
 export interface Issue {
   id: number;
   title: string;

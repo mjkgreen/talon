@@ -16,7 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { apiUrl } from "../utils";
-import type { Issue, PlanResult, RunState, Subtask, SubtaskResult, IterationResult, ReviewResult, RefinementResult } from "../types";
+import type { Issue, PlanResult, RunState, Subtask, SubtaskResult, IterationResult, ReviewResult, RefinementResult, BrowserAssertion } from "../types";
 
 interface IssueDetailModalProps {
   issue: Issue;
@@ -654,7 +654,7 @@ export function IssueDetailModal({
           >
             Execution Trace
           </button>
-          {(activeRunState?.video_path) && (
+          {(activeRunState?.video_path || activeRunState?.browser_result) && (
             <button
               onClick={() => setMacroTab("video")}
               className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
@@ -792,22 +792,115 @@ export function IssueDetailModal({
             </>
           )}
 
-          {macroTab === "video" && activeRunState?.video_path && (
-            <div className="bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden">
-              <div className="bg-neutral-900 border-b border-neutral-800 p-4">
-                <h3 className="text-sm font-medium text-neutral-300 flex items-center gap-2">
-                  <Play size={16} className="text-blue-400" /> Video Verification
-                </h3>
-              </div>
-              <div className="p-4 flex justify-center bg-black">
-                <video
-                  controls
-                  className="max-w-full max-h-[400px] rounded border border-neutral-800"
-                  src={apiUrl(`/api/runs/${activeRunState.run_id}/video`)}
-                >
-                  Your browser does not support the video tag.
-                </video>
-              </div>
+          {macroTab === "video" &&
+            (activeRunState?.video_path || activeRunState?.browser_result) && (
+            <div className="space-y-4">
+
+              {/* Summary header */}
+              {activeRunState?.browser_result && (
+                <div className="bg-neutral-950 border border-neutral-800 rounded-xl p-4 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-neutral-400 mb-1">Browser Test</p>
+                    <p className="text-sm text-neutral-200">{activeRunState.browser_result.summary}</p>
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0 ml-4">
+                    <span className="text-xs text-neutral-500">
+                      {Math.round(activeRunState.browser_result.score * 100)}%
+                    </span>
+                    {activeRunState.browser_result.passed ? (
+                      <span className="flex items-center gap-1 text-xs text-green-400 bg-green-400/10 border border-green-400/20 px-2 py-1 rounded-full">
+                        <CheckCircle2 size={12} /> Passed
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1 text-xs text-red-400 bg-red-400/10 border border-red-400/20 px-2 py-1 rounded-full">
+                        <AlertCircle size={12} /> Failed
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Assertions list */}
+              {activeRunState?.browser_result?.assertions?.length > 0 && (
+                <div className="bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden">
+                  <div className="bg-neutral-900 border-b border-neutral-800 p-4">
+                    <h3 className="text-sm font-medium text-neutral-300">
+                      Assertions ({activeRunState.browser_result.assertions.filter((a: BrowserAssertion) => a.passed).length}/
+                      {activeRunState.browser_result.assertions.length} passed)
+                    </h3>
+                  </div>
+                  <div className="divide-y divide-neutral-800">
+                    {activeRunState.browser_result.assertions.map((assertion: BrowserAssertion, i: number) => (
+                      <div key={i} className="flex items-start gap-3 p-3">
+                        {assertion.passed ? (
+                          <CheckCircle2 size={14} className="text-green-400 mt-0.5 shrink-0" />
+                        ) : (
+                          <AlertCircle size={14} className="text-red-400 mt-0.5 shrink-0" />
+                        )}
+                        <div className="min-w-0">
+                          <p className="text-sm text-neutral-200">{assertion.description}</p>
+                          {assertion.selector && (
+                            <p className="text-xs text-neutral-500 font-mono mt-0.5">{assertion.selector}</p>
+                          )}
+                          {!assertion.passed && assertion.actual && (
+                            <p className="text-xs text-red-400 mt-0.5">actual: {assertion.actual}</p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Video player */}
+              {activeRunState?.video_path && (
+                <div className="bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden">
+                  <div className="bg-neutral-900 border-b border-neutral-800 p-4">
+                    <h3 className="text-sm font-medium text-neutral-300 flex items-center gap-2">
+                      <Play size={16} className="text-blue-400" /> Video Recording
+                    </h3>
+                  </div>
+                  <div className="p-4 flex justify-center bg-black">
+                    <video
+                      controls
+                      className="max-w-full max-h-[400px] rounded border border-neutral-800"
+                      src={apiUrl(`/api/runs/${activeRunState.run_id}/video`)}
+                    >
+                      Your browser does not support the video tag.
+                    </video>
+                  </div>
+                </div>
+              )}
+
+              {/* Screenshots strip */}
+              {activeRunState?.browser_result?.screenshots?.length > 0 && (
+                <div className="bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden">
+                  <div className="bg-neutral-900 border-b border-neutral-800 p-4">
+                    <h3 className="text-sm font-medium text-neutral-300">
+                      Screenshots ({activeRunState.browser_result.screenshots.length})
+                    </h3>
+                  </div>
+                  <div className="p-4 flex gap-3 overflow-x-auto">
+                    {activeRunState.browser_result.screenshots.map((absPath: string, i: number) => {
+                      const filename = absPath.split(/[\\/]/).pop() ?? absPath;
+                      return (
+                        <img
+                          key={i}
+                          src={apiUrl(`/api/runs/${activeRunState.run_id}/screenshots/${filename}`)}
+                          alt={filename}
+                          className="h-32 w-auto rounded border border-neutral-700 shrink-0 object-cover cursor-pointer hover:border-neutral-500 transition-colors"
+                          title={filename}
+                          onClick={() => window.open(
+                            apiUrl(`/api/runs/${activeRunState.run_id}/screenshots/${filename}`),
+                            "_blank"
+                          )}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
             </div>
           )}
 

@@ -211,8 +211,10 @@ async def run(
 
     # --- Step 4: Browser validate (optional) ---
     if app_url and state.status == RunStatus.PASSED:
-        video_path = await browser_validator.run(state, app_url, RUNS_DIR)
-        state.video_path = video_path
+        browser_result = await browser_validator.run(state, app_url, RUNS_DIR)
+        if browser_result is not None:
+            state.browser_result = browser_result
+            state.video_path = browser_result.video_path
         _save_state(state)
     if on_step:
         await on_step(state)
