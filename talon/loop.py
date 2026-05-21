@@ -140,6 +140,9 @@ async def run(
 
         for i in range(1, MAX_ITERATIONS + 1):
             state.iteration = i
+            _save_state(state)
+            if on_step:
+                await on_step(state)
             console.print(Rule(f"Iteration {i}/{MAX_ITERATIONS}", style="blue"))
             if on_log:
                 await on_log(f"=== Iteration {i}/{MAX_ITERATIONS} ===")

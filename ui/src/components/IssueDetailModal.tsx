@@ -497,7 +497,11 @@ function SubtaskList({
   isLatest: boolean;
   logs: string[];
 }) {
-  const doneCount = subtaskResults?.length ?? 0;
+  const doneCount = subtasks.filter(st => {
+    const stResult = subtaskResults?.find((r: SubtaskResult) => r.subtask?.id === st.id);
+    const liveDone = !stResult && isLive && logs.some((line) => line.startsWith(`[${st.id}]`));
+    return (stResult && stResult.success) || liveDone;
+  }).length;
   const totalCount = subtasks.length;
   const allDone = doneCount >= totalCount;
 
@@ -513,7 +517,7 @@ function SubtaskList({
       </div>
       <div className="space-y-2">
         {subtasks.map((st: Subtask, si: number) => {
-          const stResult = subtaskResults?.find((r: SubtaskResult) => r.subtask?.id === st.id) || subtaskResults?.[si];
+          const stResult = subtaskResults?.find((r: SubtaskResult) => r.subtask?.id === st.id);
           const liveStarted =
             !stResult && isLive && logs.some((line) => line.startsWith("->") && line.includes(`[${st.id}]`));
           const liveDone =
@@ -595,7 +599,17 @@ export function IssueDetailModal({
   const runError = runErrors[issue.id];
   const isLive = issue.status === "In Progress" && !!liveRunStates[issue.id];
   const iterations: IterationResult[] = activeRunState?.executor_results ?? [];
-  const tabCount = Math.max(iterations.length, activeRunState?.iteration || 0);
+  let maxLogIteration = 0;
+  for (const line of logs) {
+    const match = line.match(/^=== Iteration (\d+)\/\d+ ===/);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      if (num > maxLogIteration) {
+        maxLogIteration = num;
+      }
+    }
+  }
+  const tabCount = Math.max(iterations.length, activeRunState?.iteration || 0, maxLogIteration);
   const tabIndices = Array.from({ length: tabCount }, (_, i) => i);
 
   return (
