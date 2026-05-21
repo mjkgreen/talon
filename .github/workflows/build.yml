@@ -6,6 +6,9 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -90,7 +93,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          sudo apt-get install -y libgtk-3-0 libnotify-dev libnss3 libxss1 libasound2
+          sudo apt-get install -y libgtk-3-0 libnotify-dev libnss3 libxss1 libasound2t64
           npm run build:linux
 
       # -----------------------------------------------------------------------
