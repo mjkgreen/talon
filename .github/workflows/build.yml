@@ -50,9 +50,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: ui/package-lock.json
+          node-version: '22'
 
       - name: Build React UI
         working-directory: ui
@@ -69,7 +67,7 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Install Electron deps
         working-directory: electron
-        run: npm ci
+        run: npm install
 
       - name: Build Electron app (macOS)
         if: matrix.os == 'macos-latest'
