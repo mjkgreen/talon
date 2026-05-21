@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 export const COLUMNS = ["Backlog", "In Progress", "Done", "Failed"];
 
 export const API_KEY_PROVIDERS = [

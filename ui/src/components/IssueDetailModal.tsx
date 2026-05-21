@@ -4,6 +4,9 @@ import {
   AlertCircle,
   Check,
   CheckCircle2,
+  Circle,
+  XCircle,
+  Video,
   FileText,
   Lightbulb,
   MessageSquare,
@@ -13,12 +16,12 @@ import {
   X,
 } from "lucide-react";
 import { apiUrl } from "../utils";
-import type { Issue, PlanPhase, PlanResult } from "../types";
+import type { Issue, PlanResult, RunState, Subtask, SubtaskResult, IterationResult, ReviewResult, RefinementResult } from "../types";
 
 interface IssueDetailModalProps {
   issue: Issue;
-  liveRunStates: Record<number, any>;
-  runState: any;
+  liveRunStates: Record<number, RunState>;
+  runState: RunState | null;
   runErrors: Record<number, string>;
   runLogs: Record<number, string[]>;
   loadingRunState: boolean;
@@ -157,7 +160,7 @@ function PlanSection({
             <RefreshCw size={11} className="animate-spin" /> Generating...
           </span>
         )}
-        {!isPlanning && storedPlan && !editingPlan && (
+        {!isPlanning && storedPlan && !editingPlan && issue.status === "Backlog" && (
           <button
             onClick={() => {
               setEditingPlan(true);
@@ -250,7 +253,7 @@ function PlanSection({
               <div className="space-y-1.5">
                 {displayPlan.success_criteria.map((sc, si) => (
                   <div key={si} className="flex items-start gap-2 text-xs">
-                    <span className="text-neutral-600 shrink-0 mt-0.5">○</span>
+                    <span className="text-neutral-600 shrink-0 mt-0.5"><Circle size={12} className="text-neutral-500" /></span>
                     {editingPlan ? (
                       <input
                         className="flex-1 bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-xs text-neutral-300 focus:outline-none focus:border-violet-500"
@@ -285,9 +288,9 @@ function PlanSection({
           {comments.length > 0 && (
             <div className="space-y-1.5">
               {comments.map((c, ci) => (
-                <div key={ci} className="flex items-start gap-2 text-xs">
-                  <span className="text-neutral-600 shrink-0 mt-0.5">—</span>
-                  <span className="text-neutral-400">{c}</span>
+                  <div key={ci} className="flex items-start gap-2 text-xs">
+                    <span className="text-neutral-600 shrink-0 mt-0.5"><MessageSquare size={12} className="text-neutral-500" /></span>
+                    <span className="text-neutral-400">{c}</span>
                 </div>
               ))}
             </div>
@@ -305,14 +308,14 @@ function PlanSection({
           <div className="flex gap-2">
             <button
               onClick={addComment}
-              disabled={!commentDraft.trim() || isPlanning}
+              disabled={!commentDraft.trim() || isPlanning || issue.status !== "Backlog"}
               className="text-xs text-neutral-300 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 px-3 py-1.5 rounded transition-colors disabled:opacity-40"
             >
               Add Comment
             </button>
             <button
               onClick={refinePlan}
-              disabled={comments.length === 0 || isPlanning}
+              disabled={comments.length === 0 || isPlanning || issue.status !== "Backlog"}
               className="text-xs text-violet-300 bg-violet-500/10 hover:bg-violet-500/20 border border-violet-500/30 px-3 py-1.5 rounded transition-colors disabled:opacity-40 flex items-center gap-1.5"
               title={comments.length === 0 ? "Add a comment first" : "Refine plan based on feedback"}
             >
@@ -329,111 +332,98 @@ function PlanSection({
   );
 }
 
-function PlanTabContent({
-  plan,
-  totalIterations,
-  isLive,
-  reviewResults,
-}: {
-  plan: PlanResult;
-  totalIterations: number;
-  isLive: boolean;
-  reviewResults: any[];
-}) {
-  const anyPassed = !!(reviewResults?.some((r: any) => r.verdict === "pass"));
-  return (
-    <div className="p-4 space-y-4">
-      <div>
-        <div className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-2">Approach</div>
-        <p className="text-sm text-neutral-300 leading-relaxed">{plan.approach}</p>
-      </div>
-      {plan.constraints?.length > 0 && (
-        <div>
-          <div className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-2">Constraints</div>
-          <ul className="space-y-1">
-            {plan.constraints.map((c: string, ci: number) => (
-              <li key={ci} className="text-xs text-neutral-400 flex items-start gap-2">
-                <span className="text-neutral-600 shrink-0 mt-0.5">—</span>
-                {c}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {plan.phases?.length > 0 && (
-        <div>
-          <div className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-2">Phases</div>
-          <div className="space-y-2">
-            {plan.phases.map((ph: PlanPhase, pi: number) => {
-              const done = pi < totalIterations;
-              const active = pi === totalIterations - 1 && isLive;
-              return (
-                <div key={pi} className="flex items-start gap-2 text-xs">
-                  <span
-                    className={`mt-0.5 shrink-0 font-mono ${done ? "text-green-400" : active ? "text-blue-400" : "text-neutral-600"}`}
-                  >
-                    {done ? "✓" : active ? "→" : "○"}
-                  </span>
-                  <div>
-                    <span
-                      className={
-                        done ? "text-neutral-400 line-through" : active ? "text-white font-medium" : "text-neutral-500"
-                      }
-                    >
-                      {ph.name}
-                    </span>
-                    <span className="text-neutral-600 ml-2">{ph.description}</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-      {plan.success_criteria?.length > 0 && (
-        <div>
-          <div className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-2">Success Criteria</div>
-          <div className="space-y-1.5">
-            {plan.success_criteria.map((sc: string, si: number) => (
-              <div key={si} className="flex items-start gap-2 text-xs">
-                <span className={`shrink-0 mt-0.5 ${anyPassed ? "text-green-400" : "text-neutral-600"}`}>
-                  {anyPassed ? "✓" : "○"}
-                </span>
-                <span className={anyPassed ? "text-neutral-400" : "text-neutral-500"}>{sc}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
+
+function parseLiveSubtasks(iterLogs: string[]): { subtasks: Subtask[]; subtask_results: SubtaskResult[] } {
+  const subtasks: Subtask[] = [];
+  const subtask_results: SubtaskResult[] = [];
+
+  for (const line of iterLogs) {
+    const launchMatch = line.match(/^->\s+Sub-agent\s+\[([a-f0-9]+)\]\s+(.*)$/i);
+    if (launchMatch) {
+      const id = launchMatch[1];
+      const description = launchMatch[2];
+      if (!subtasks.some(st => st.id === id)) {
+        subtasks.push({ id, description, acceptance_criteria: [] });
+      }
+    }
+
+    const doneMatch = line.match(/^\[([a-f0-9]+)\]\s+(done|modified:.*)$/i);
+    if (doneMatch) {
+      const id = doneMatch[1];
+      const outcome = doneMatch[2];
+      const files_modified = outcome.startsWith("modified:") 
+        ? outcome.substring("modified:".length).split(",").map(f => f.trim()) 
+        : [];
+      
+      if (!subtask_results.some(r => r.subtask?.id === id)) {
+        const subtask = subtasks.find(st => st.id === id) || { id, description: "" };
+        subtask_results.push({
+          subtask,
+          success: true,
+          files_modified,
+          commands_run: [],
+          output: "Success"
+        });
+      }
+    }
+  }
+
+  return { subtasks, subtask_results };
 }
+
 
 function IterationContent({
   iteration,
+  iterationIndex,
   review,
   refinement,
   isLive,
   isLatest,
   logs,
+  scrollRef,
 }: {
-  iteration: any;
-  review: any;
-  refinement: any;
+  iteration: IterationResult;
+  iterationIndex: number;
+  review: ReviewResult;
+  refinement: RefinementResult;
   isLive: boolean;
   isLatest: boolean;
   logs: string[];
+  scrollRef: React.RefObject<HTMLDivElement | null>;
 }) {
+  const startStr = `=== Iteration ${iterationIndex + 1}/`;
+  const endStr = `=== Iteration ${iterationIndex + 2}/`;
+  const startIndex = logs.findIndex(l => l.startsWith(startStr));
+  const endIndex = logs.findIndex(l => l.startsWith(endStr));
+
+  let iterLogs: string[];
+  if (startIndex !== -1) {
+      iterLogs = endIndex !== -1 ? logs.slice(startIndex, endIndex) : logs.slice(startIndex);
+  } else if (iterationIndex === 0) {
+      iterLogs = endIndex !== -1 ? logs.slice(0, endIndex) : logs;
+  } else {
+      iterLogs = [];
+  }
+  const { subtasks: liveSubtasks, subtask_results: liveResults } = parseLiveSubtasks(iterLogs);
+  const displaySubtasks = iteration.subtasks && iteration.subtasks.length > 0 ? iteration.subtasks : liveSubtasks;
+  const displayResults = iteration.subtask_results && iteration.subtask_results.length > 0 ? iteration.subtask_results : liveResults;
+
   return (
     <div>
-      {iteration.subtasks?.length > 0 && (
+      {displaySubtasks?.length > 0 && (
         <SubtaskList
-          subtasks={iteration.subtasks}
-          subtaskResults={iteration.subtask_results}
+          subtasks={displaySubtasks}
+          subtaskResults={displayResults}
           isLive={isLive}
           isLatest={isLatest}
           logs={logs}
         />
+      )}
+
+            {iterLogs.length > 0 && (
+        <div className="hidden">
+          <LogLines lines={iterLogs} scrollRef={isLatest ? scrollRef : undefined} />
+        </div>
       )}
 
       <div className="p-4 border-b border-neutral-800/50">
@@ -470,7 +460,7 @@ function IterationContent({
             <div className="text-xs text-red-400 space-y-1">
               {review.blocking_issues.map((issue: string, bi: number) => (
                 <div key={bi} className="flex items-start gap-1">
-                  <span className="shrink-0">✗</span> {issue}
+                  <span className="shrink-0"><XCircle size={12} /></span> {issue}
                 </div>
               ))}
             </div>
@@ -484,7 +474,7 @@ function IterationContent({
           <div className="text-xs text-neutral-400 space-y-1.5">
             {refinement.changes_planned?.map((c: string, ci: number) => (
               <div key={ci} className="flex items-start gap-1.5">
-                <span className="shrink-0 text-amber-500">→</span> {c}
+                <span className="shrink-0 text-amber-500"><Check size={12} /></span> {c}
               </div>
             ))}
           </div>
@@ -501,8 +491,8 @@ function SubtaskList({
   isLatest,
   logs,
 }: {
-  subtasks: any[];
-  subtaskResults: any[];
+  subtasks: Subtask[];
+  subtaskResults: SubtaskResult[];
   isLive: boolean;
   isLatest: boolean;
   logs: string[];
@@ -522,8 +512,8 @@ function SubtaskList({
         )}
       </div>
       <div className="space-y-2">
-        {subtasks.map((st: any, si: number) => {
-          const stResult = subtaskResults?.[si];
+        {subtasks.map((st: Subtask, si: number) => {
+          const stResult = subtaskResults?.find((r: SubtaskResult) => r.subtask?.id === st.id) || subtaskResults?.[si];
           const liveStarted =
             !stResult && isLive && logs.some((line) => line.startsWith("->") && line.includes(`[${st.id}]`));
           const liveDone =
@@ -549,13 +539,13 @@ function SubtaskList({
             <div key={si} className="flex items-start gap-2 text-xs">
               <span className={`mt-0.5 shrink-0 ${iconColor}`}>
                 {isRunning ? (
-                  <RefreshCw size={10} className="animate-spin" />
+                  <RefreshCw size={12} className="animate-spin" />
                 ) : stResult?.success || liveDone ? (
-                  "✓"
+                  <CheckCircle2 size={12} />
                 ) : stResult ? (
-                  "✗"
+                  <XCircle size={12} />
                 ) : (
-                  "○"
+                  <Circle size={12} />
                 )}
               </span>
               <div className="flex-1 min-w-0">
@@ -593,7 +583,8 @@ export function IssueDetailModal({
   onClose,
 }: IssueDetailModalProps) {
   const activityLogRef = useRef<HTMLDivElement>(null);
-  const logs = runLogs[issue.id] ?? [];
+  const logs = React.useMemo(() => runLogs[issue.id] ?? [], [runLogs, issue.id]);
+  const [macroTab, setMacroTab] = useState<"plan" | "trace" | "video">("trace");
 
   useEffect(() => {
     const el = activityLogRef.current;
@@ -603,9 +594,9 @@ export function IssueDetailModal({
   const activeRunState = liveRunStates[issue.id] || runState;
   const runError = runErrors[issue.id];
   const isLive = issue.status === "In Progress" && !!liveRunStates[issue.id];
-  const iterations: any[] = activeRunState?.executor_results ?? [];
-  const totalIterations = iterations.length;
-  const plan: PlanResult | null = activeRunState?.plan_result ?? null;
+  const iterations: IterationResult[] = activeRunState?.executor_results ?? [];
+  const tabCount = Math.max(iterations.length, activeRunState?.iteration || 0);
+  const tabIndices = Array.from({ length: tabCount }, (_, i) => i);
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
@@ -632,6 +623,35 @@ export function IssueDetailModal({
           </div>
         </div>
 
+        <div className="flex border-b border-neutral-800 mb-6 shrink-0 gap-6">
+          <button
+            onClick={() => setMacroTab("plan")}
+            className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
+              macroTab === "plan" ? "border-violet-500 text-white" : "border-transparent text-neutral-500 hover:text-neutral-300"
+            }`}
+          >
+            Plan
+          </button>
+          <button
+            onClick={() => setMacroTab("trace")}
+            className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
+              macroTab === "trace" ? "border-blue-500 text-white" : "border-transparent text-neutral-500 hover:text-neutral-300"
+            }`}
+          >
+            Execution Trace
+          </button>
+          {(activeRunState?.video_path) && (
+            <button
+              onClick={() => setMacroTab("video")}
+              className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
+                macroTab === "video" ? "border-green-500 text-white" : "border-transparent text-neutral-500 hover:text-neutral-300"
+              }`}
+            >
+              <Video size={14} /> Verification
+            </button>
+          )}
+        </div>
+
         <div className="flex-1 overflow-y-auto pr-2 space-y-6">
           {issue.description && (
             <div className="bg-neutral-950/50 border border-neutral-800/50 rounded-xl p-5">
@@ -640,7 +660,7 @@ export function IssueDetailModal({
             </div>
           )}
 
-          {issue.status === "Backlog" && (
+          {macroTab === "plan" && (
             <PlanSection
               issue={issue}
               planningIssues={planningIssues}
@@ -651,8 +671,10 @@ export function IssueDetailModal({
             />
           )}
 
-          {(runError || activeRunState?.error) && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 text-sm text-red-400">
+          {macroTab === "trace" && (
+            <>
+              {(runError || activeRunState?.error) && (
+                <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 text-sm text-red-400">
               <div className="font-medium mb-1">Agent error</div>
               <pre className="text-xs font-mono whitespace-pre-wrap text-red-300/80">
                 {runError || activeRunState?.error}
@@ -661,24 +683,10 @@ export function IssueDetailModal({
           )}
 
           {issue.status === "In Progress" && !activeRunState && !runError && (
-            logs.length > 0 ? (
-              <div className="bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden">
-                <div className="bg-neutral-900 border-b border-neutral-800 p-4 flex items-center gap-2">
-                  <Activity size={16} className="text-blue-400" />
-                  <span className="text-sm font-medium text-neutral-300">Execution Trace</span>
-                  <span className="flex items-center gap-1 text-xs text-blue-400 bg-blue-400/10 px-2 py-0.5 rounded-full ml-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-                    Live
-                  </span>
-                </div>
-                <LogLines lines={logs} scrollRef={activityLogRef} />
-              </div>
-            ) : (
-              <div className="flex items-center gap-3 p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl text-blue-400 text-sm">
-                <RefreshCw size={16} className="animate-spin shrink-0" />
-                Agent is starting up — logs will appear here shortly...
-              </div>
-            )
+            <div className="flex items-center gap-3 p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl text-blue-400 text-sm">
+              <RefreshCw size={16} className="animate-spin shrink-0" />
+              Agent is starting up...
+            </div>
           )}
 
           {loadingRunState && !activeRunState && (
@@ -702,40 +710,22 @@ export function IssueDetailModal({
                     )}
                   </h3>
                   <span className="text-xs text-neutral-500 font-mono">Run: {activeRunState.run_id}</span>
-                </div>
-
-                {logs.length > 0 && (
-                  <div className="border-b border-neutral-800/50">
-                    <LogLines lines={logs} scrollRef={activityLogRef} />
                   </div>
-                )}
 
-                {(plan || totalIterations > 0) && (
+                {tabCount > 0 && (
                   <div className="flex border-b border-neutral-800 bg-neutral-900/30 overflow-x-auto">
-                    {plan && (
-                      <button
-                        onClick={() => setActiveTraceTab("plan")}
-                        className={`flex items-center gap-2 px-4 py-3 text-xs font-medium whitespace-nowrap border-b-2 transition-colors ${
-                          activeTraceTab === "plan"
-                            ? "border-blue-500 text-white bg-neutral-800/50"
-                            : "border-transparent text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800/30"
-                        }`}
-                      >
-                        <Lightbulb size={12} /> Plan
-                      </button>
-                    )}
-                    {iterations.map((_: any, idx: number) => {
+                    {tabIndices.map((idx: number) => {
                       const review = activeRunState.review_results?.[idx];
-                      const isActiveTab = activeTraceTab === idx;
+                      const isActiveTab = activeTraceTab === idx || (activeTraceTab === "plan" && idx === 0);
                       const isPassing = review?.verdict === "pass";
                       const isFailing = review && review.verdict !== "pass";
-                      const isRunning = isLive && idx === totalIterations - 1 && !review;
+                      const isRunning = isLive && idx === tabCount - 1 && !review;
                       return (
                         <button
                           key={idx}
                           onClick={() => {
                             setActiveTraceTab(idx);
-                            followLatestRef.current = idx === totalIterations - 1;
+                            followLatestRef.current = idx === tabCount - 1;
                           }}
                           className={`flex items-center gap-2 px-4 py-3 text-xs font-medium whitespace-nowrap border-b-2 transition-colors ${
                             isActiveTab
@@ -754,75 +744,60 @@ export function IssueDetailModal({
                   </div>
                 )}
 
-                {activeTraceTab === "plan" && plan && (
-                  <PlanTabContent
-                    plan={plan}
-                    totalIterations={totalIterations}
-                    isLive={isLive}
-                    reviewResults={activeRunState.review_results ?? []}
-                  />
-                )}
-
-                {activeTraceTab !== "plan" && totalIterations === 0 && (
-                  <div className="p-8 text-center text-neutral-500 text-sm flex flex-col items-center gap-3">
-                    {logs.length === 0 ? (
-                      <>
-                        <RefreshCw size={20} className="animate-spin text-blue-500" />
-                        Agent initializing — decomposing goal into subtasks...
-                      </>
-                    ) : (
-                      <span className="text-neutral-600 text-xs">Waiting for subtasks to complete…</span>
-                    )}
-                  </div>
-                )}
-
-                {!plan && totalIterations === 0 && (
+                {tabCount === 0 && (
                   <div className="p-8 text-center text-neutral-500 text-sm flex flex-col items-center gap-3">
                     <RefreshCw size={20} className="animate-spin text-blue-500" />
-                    Agent initializing...
+                    Agent initializing... decomposing goal into subtasks...
                   </div>
                 )}
 
-                {activeTraceTab !== "plan" && totalIterations > 0 && (() => {
+                {tabCount > 0 && (() => {
                   const iterIdx = typeof activeTraceTab === "number" ? activeTraceTab : 0;
-                  const clampedTab = Math.min(iterIdx, totalIterations - 1);
-                  const currentIteration = iterations[clampedTab];
-                  if (!currentIteration) return null;
+                  const clampedTab = Math.min(iterIdx, tabCount - 1);
+                  const currentIteration = iterations[clampedTab] || {
+                    subtasks: [],
+                    subtask_results: [],
+                    aggregated_output: ""
+                  };
                   return (
                     <IterationContent
                       iteration={currentIteration}
+                      iterationIndex={clampedTab}
                       review={activeRunState.review_results?.[clampedTab]}
                       refinement={activeRunState.refinement_results?.[clampedTab]}
                       isLive={isLive}
-                      isLatest={clampedTab === totalIterations - 1}
+                      isLatest={clampedTab === tabCount - 1}
                       logs={logs}
+                      scrollRef={activityLogRef}
                     />
                   );
                 })()}
               </div>
+            </div>
+          )}
+            </>
+          )}
 
-              {activeRunState.video_path && (
-                <div className="bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden">
-                  <div className="bg-neutral-900 border-b border-neutral-800 p-4">
-                    <h3 className="text-sm font-medium text-neutral-300 flex items-center gap-2">
-                      <Play size={16} className="text-blue-400" /> Video Verification
-                    </h3>
-                  </div>
-                  <div className="p-4 flex justify-center bg-black">
-                    <video
-                      controls
-                      className="max-w-full max-h-[400px] rounded border border-neutral-800"
-                      src={apiUrl(`/api/runs/${activeRunState.run_id}/video`)}
-                    >
-                      Your browser does not support the video tag.
-                    </video>
-                  </div>
-                </div>
-              )}
+          {macroTab === "video" && activeRunState?.video_path && (
+            <div className="bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden">
+              <div className="bg-neutral-900 border-b border-neutral-800 p-4">
+                <h3 className="text-sm font-medium text-neutral-300 flex items-center gap-2">
+                  <Play size={16} className="text-blue-400" /> Video Verification
+                </h3>
+              </div>
+              <div className="p-4 flex justify-center bg-black">
+                <video
+                  controls
+                  className="max-w-full max-h-[400px] rounded border border-neutral-800"
+                  src={apiUrl(`/api/runs/${activeRunState.run_id}/video`)}
+                >
+                  Your browser does not support the video tag.
+                </video>
+              </div>
             </div>
           )}
 
-          {!activeRunState && !runError && !loadingRunState && issue.run_id && (
+          {macroTab === "trace" && !activeRunState && !runError && !loadingRunState && issue.run_id && (
             <div className="p-8 text-center text-neutral-500 border border-neutral-800/50 border-dashed rounded-xl">
               <div className="mb-2">
                 No logs found for run{" "}
@@ -832,7 +807,7 @@ export function IssueDetailModal({
             </div>
           )}
 
-          {!activeRunState && !runError && !loadingRunState && !issue.run_id && issue.status !== "In Progress" && (
+          {macroTab === "trace" && !activeRunState && !runError && !loadingRunState && !issue.run_id && issue.status !== "In Progress" && (
             <div className="p-8 text-center text-neutral-500 border border-neutral-800/50 border-dashed rounded-xl">
               Agent has not started yet. Drag to "In Progress" to begin execution.
             </div>

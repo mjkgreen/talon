@@ -98,7 +98,15 @@ TOOL_DEFINITIONS = [
 def read_file(path: str, working_dir: str) -> dict:
     full = Path(working_dir) / path
     try:
-        return {"content": full.read_text(), "path": str(full)}
+        content = full.read_text()
+        max_chars = 100000
+        if len(content) > max_chars:
+            content = (
+                content[: max_chars // 2]
+                + f"\n\n... [TRUNCATED {len(content) - max_chars} CHARACTERS] ...\n\n"
+                + content[-max_chars // 2 :]
+            )
+        return {"content": content, "path": str(full)}
     except FileNotFoundError:
         return {"error": f"File not found: {path}"}
     except Exception as e:
@@ -122,6 +130,10 @@ def list_files(path: str, working_dir: str, pattern: str | None = None) -> dict:
             matches = [str(p.relative_to(working_dir)) for p in base.glob(pattern)]
         else:
             matches = [str(p.relative_to(working_dir)) for p in sorted(base.iterdir())]
+        count = len(matches)
+        max_files = 1000
+        if count > max_files:
+            matches = matches[:max_files] + [f"... [TRUNCATED {count - max_files} FILES] ..."]
         return {"files": matches}
     except Exception as e:
         return {"error": str(e)}
@@ -138,9 +150,24 @@ def run_command(command: str, working_dir: str, sub_dir: str | None = None) -> d
             text=True,
             timeout=60,
         )
+        stdout = result.stdout
+        stderr = result.stderr
+        max_chars = 50000
+        if len(stdout) > max_chars:
+            stdout = (
+                stdout[: max_chars // 2]
+                + f"\n\n... [TRUNCATED {len(stdout) - max_chars} CHARACTERS] ...\n\n"
+                + stdout[-max_chars // 2 :]
+            )
+        if len(stderr) > max_chars:
+            stderr = (
+                stderr[: max_chars // 2]
+                + f"\n\n... [TRUNCATED {len(stderr) - max_chars} CHARACTERS] ...\n\n"
+                + stderr[-max_chars // 2 :]
+            )
         return {
-            "stdout": result.stdout,
-            "stderr": result.stderr,
+            "stdout": stdout,
+            "stderr": stderr,
             "exit_code": result.returncode,
         }
     except subprocess.TimeoutExpired:
@@ -157,7 +184,11 @@ def search_files(
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         lines = result.stdout.strip().splitlines()
-        return {"matches": lines, "count": len(lines)}
+        count = len(lines)
+        max_lines = 500
+        if count > max_lines:
+            lines = lines[:max_lines] + [f"... [TRUNCATED {count - max_lines} MATCHES] ..."]
+        return {"matches": lines, "count": count}
     except Exception as e:
         return {"error": str(e)}
 

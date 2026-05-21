@@ -18,11 +18,19 @@ from __future__ import annotations
 import json
 import os
 
+# Optimize LiteLLM import/startup performance (disables slow AWS/Boto3 stream shape checks and telemetry)
+os.environ["DISABLE_BOTO3_CHECK"] = "True"
+os.environ["LITELLM_TELEMETRY"] = "False"
+os.environ["DISABLE_LITELLM_TELEMETRY"] = "True"
+os.environ["LITELLM_MODE"] = "production"
+
 import litellm
 
 from talon.providers.base import ProviderResponse, ToolCall, ToolResult
 
 litellm.drop_params = True  # silently drop unsupported params per-provider
+litellm.telemetry = False
+litellm.turn_off_message_logging = True
 
 _DEFAULT_MODEL = "anthropic/claude-sonnet-4-6"
 _DEFAULT_MAX_TOKENS = 8096
@@ -67,7 +75,33 @@ class LiteLLMProvider:
             kwargs["tools"] = _to_litellm_tools(tools)
             kwargs["tool_choice"] = "auto"
 
-        raw = await litellm.acompletion(**kwargs, timeout=timeout)
+        try:
+            raw = await litellm.acompletion(**kwargs, timeout=timeout)
+        except Exception as e:
+            err_str = str(e).lower()
+            is_context_error = (
+                "context_window" in err_str
+                or "contextwindow" in err_str
+                or "context window" in err_str
+                or "token count exceeds" in err_str
+                or "maximum number of tokens" in err_str
+                or "context_window_exceeded" in err_str
+            )
+            if is_context_error and len(messages) > 6:
+                # Prune older tool result messages in-place to recover.
+                cutoff = len(messages) - 6
+                for i in range(1, cutoff):
+                    if messages[i].get("role") == "tool":
+                        messages[i] = {
+                            "role": "tool",
+                            "tool_call_id": messages[i].get("tool_call_id"),
+                            "content": "[Tool result truncated to save context window space]"
+                        }
+                full_messages = [{"role": "system", "content": system}, *messages]
+                kwargs["messages"] = full_messages
+                raw = await litellm.acompletion(**kwargs, timeout=timeout)
+            else:
+                raise e
         msg = raw.choices[0].message
 
         text: str | None = msg.content or None

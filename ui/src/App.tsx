@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useRef } from "react";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
+import type { DropResult } from "@hello-pangea/dnd";
 import {
   AlertCircle,
   CheckCircle2,
   Clock,
+  Folder,
+  Globe,
   Lightbulb,
   Play,
   Plus,
@@ -16,7 +19,7 @@ import {
 
 import { COLUMNS } from "./constants";
 import { apiUrl } from "./utils";
-import type { Issue, Project, PlanResult, Repo } from "./types";
+import type { Issue, Project, PlanResult, Repo, RunState } from "./types";
 import { AddTaskModal } from "./components/AddTaskModal";
 import { NewProjectModal } from "./components/NewProjectModal";
 import { NoLlmGuardModal } from "./components/NoLlmGuardModal";
@@ -37,9 +40,9 @@ export default function KanbanBoard() {
 
   // --- Issue detail modal ---
   const [selectedIssue, setSelectedIssue] = useState<Issue | null>(null);
-  const [runState, setRunState] = useState<any>(null);
+  const [runState, setRunState] = useState<RunState | null>(null);
   const [loadingRunState, setLoadingRunState] = useState(false);
-  const [liveRunStates, setLiveRunStates] = useState<Record<number, any>>({});
+  const [liveRunStates, setLiveRunStates] = useState<Record<number, RunState>>({});
   const [runErrors, setRunErrors] = useState<Record<number, string>>({});
   const [runLogs, setRunLogs] = useState<Record<number, string[]>>({});
   const [activeTraceTab, setActiveTraceTab] = useState<"plan" | number>("plan");
@@ -288,7 +291,9 @@ export default function KanbanBoard() {
   useEffect(() => {
     const runId = selectedIssue?.run_id;
     if (runId) {
-      setLoadingRunState(true);
+      Promise.resolve().then(() => {
+        setLoadingRunState(true);
+      });
       fetch(apiUrl(`/api/runs/${runId}`))
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
@@ -297,23 +302,30 @@ export default function KanbanBoard() {
         })
         .catch(() => setLoadingRunState(false));
     } else {
-      setRunState(null);
+      Promise.resolve().then(() => {
+        setRunState(null);
+      });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIssue?.id, selectedIssue?.run_id]);
 
   useEffect(() => {
-    setActiveTraceTab("plan");
+    Promise.resolve().then(() => {
+      setActiveTraceTab("plan");
+      setEditingPlan(false);
+      setPlanDraft(null);
+    });
     followLatestRef.current = true;
-    setEditingPlan(false);
-    setPlanDraft(null);
   }, [selectedIssue?.id]);
 
   useEffect(() => {
     if (!selectedIssue || !followLatestRef.current) return;
     const state = liveRunStates[selectedIssue.id];
     const count = state?.executor_results?.length ?? 0;
-    if (count > 0) setActiveTraceTab(count - 1);
+    if (count > 0) {
+      Promise.resolve().then(() => {
+        setActiveTraceTab(count - 1);
+      });
+    }
   }, [selectedIssue?.id, liveRunStates]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -360,8 +372,8 @@ export default function KanbanBoard() {
     }
     const data: { url: string } = await res.json();
     setGithubAuthStatus("waiting");
-    if (typeof window !== "undefined" && (window as any).talon?.openExternal) {
-      (window as any).talon.openExternal(data.url);
+    if (typeof window !== "undefined" && (window as unknown as { talon?: { openExternal: (url: string) => void } }).talon?.openExternal) {
+      (window as unknown as { talon?: { openExternal: (url: string) => void } }).talon?.openExternal(data.url);
     } else {
       window.open(data.url, "_blank", "noopener,noreferrer");
     }
@@ -454,7 +466,7 @@ export default function KanbanBoard() {
     await fetch(apiUrl(`/api/issues/${id}`), { method: "DELETE" });
   };
 
-  const onDragEnd = async (result: any) => {
+  const onDragEnd = async (result: DropResult) => {
     if (!result.destination) return;
     const sourceStatus = result.source.droppableId;
     const destStatus = result.destination.droppableId;
@@ -567,6 +579,9 @@ export default function KanbanBoard() {
   const activeProject = projects.find((p) => p.id === activeProjectId);
   const showGithubSync = activeProject?.workspace_mode === "github" && !!activeProject?.selected_repo;
   const modelBadge = activeProvider ? `${activeProvider} · ${modelDrafts.agent_model || "auto"}` : null;
+  const workspaceBadgeText = activeProject?.workspace_mode === "github" 
+    ? activeProject.selected_repo 
+    : (activeProject?.workspace_mode === "local" ? activeProject.local_path : null);
 
   // ===================== render =====================
 
@@ -582,6 +597,19 @@ export default function KanbanBoard() {
             </h1>
             <div className="flex items-center gap-2 mt-2">
               <div className="text-neutral-400 text-sm">Autonomous Agent Tracker</div>
+              {workspaceBadgeText && (
+                <div
+                  className="flex items-center gap-1.5 text-xs bg-neutral-800 border border-neutral-700 text-neutral-300 px-2 py-0.5 rounded-full cursor-default"
+                  title="Active Workspace"
+                >
+                  {activeProject?.workspace_mode === "github" ? (
+                    <Globe size={10} className="text-neutral-400" />
+                  ) : (
+                    <Folder size={10} className="text-neutral-400" />
+                  )}
+                  <span className="max-w-[200px] truncate">{workspaceBadgeText}</span>
+                </div>
+              )}
               {modelBadge && (
                 <button
                   onClick={() => { setSettingsOpen(true); setSettingsTab("ai"); }}

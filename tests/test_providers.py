@@ -1,4 +1,7 @@
-from talon.providers.litellm_p import _to_litellm_tools
+import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from talon.providers.litellm_p import LiteLLMProvider, _to_litellm_tools
 from talon.tools import TOOL_DEFINITIONS
 
 
@@ -28,3 +31,63 @@ class TestToolSchemaConversion:
 
     def test_empty_list(self):
         assert _to_litellm_tools([]) == []
+
+
+class TestLiteLLMProviderPruning:
+    @pytest.mark.asyncio
+    async def test_context_window_exceeded_retry_and_pruning(self):
+        import pytest
+
+        provider = LiteLLMProvider("test-model")
+        messages = [
+            {"role": "user", "content": "Initial prompt"},
+            {"role": "assistant", "content": "Let me read a file"},
+            {"role": "tool", "tool_call_id": "1", "content": "A" * 5000},
+            {"role": "assistant", "content": "Let me run a command"},
+            {"role": "tool", "tool_call_id": "2", "content": "B" * 5000},
+            {"role": "assistant", "content": "Another step"},
+            {"role": "tool", "tool_call_id": "3", "content": "C" * 5000},
+            {"role": "assistant", "content": "Final step"},
+        ]
+
+        # We have 8 messages.
+        # len(messages) = 8.
+        # cutoff = len(messages) - 6 = 2.
+        # Any 'tool' message between index 1 and 2 will be pruned.
+        # messages[2] is a tool message, but wait! Index 2 is not < 2.
+        # Let's make the list longer to trigger pruning of at least one tool message:
+        messages = [
+            {"role": "user", "content": "Initial prompt"},
+            {"role": "assistant", "content": "Let me read a file"},
+            {"role": "tool", "tool_call_id": "1", "content": "A" * 5000},
+            {"role": "assistant", "content": "Let me run a command"},
+            {"role": "tool", "tool_call_id": "2", "content": "B" * 5000},
+            {"role": "assistant", "content": "Another step"},
+            {"role": "tool", "tool_call_id": "3", "content": "C" * 5000},
+            {"role": "assistant", "content": "Yet another step"},
+            {"role": "tool", "tool_call_id": "4", "content": "D" * 5000},
+            {"role": "assistant", "content": "Final step"},
+        ]
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "Success response after pruning"
+        mock_response.choices[0].message.tool_calls = None
+
+        # Mock acompletion to raise error first, then succeed
+        side_effects = [
+            Exception("ContextWindowExceeded: The input token count exceeds limit"),
+            mock_response
+        ]
+
+        with patch("litellm.acompletion", new_callable=AsyncMock, side_effect=side_effects) as mock_acompletion:
+            resp = await provider.chat("System instructions", messages, tools=[])
+            assert resp.text == "Success response after pruning"
+            assert mock_acompletion.call_count == 2
+
+            # Assert that the messages are pruned in-place
+            # The tool message at index 2 (tool_call_id="1") should be truncated because index 2 < cutoff (len(messages) - 6 = 10 - 6 = 4)
+            # The tool message at index 4 (tool_call_id="2") should NOT be truncated because index 4 is not < 4
+            assert "truncated to save context window space" in messages[2]["content"]
+            assert messages[4]["content"] == "B" * 5000
+

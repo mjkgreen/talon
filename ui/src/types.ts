@@ -38,3 +38,21 @@ export interface Repo {
   full_name: string;
   name: string;
 }
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type RunState = any;
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type Subtask = any;
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type SubtaskResult = any;
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type IterationResult = any;
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type ReviewResult = any;
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type RefinementResult = any;

@@ -129,7 +129,7 @@ class TestCreateGithubPr:
         pr_url = "https://github.com/owner/repo/pull/42"
 
         with patch("urllib.request.urlopen", return_value=self._mock_response(pr_url)):
-            result = _create_github_pr("agent/run-abc", state)
+            result = _create_github_pr("agent/run-abc", state, "owner/repo")
 
         assert result == pr_url
 
@@ -157,7 +157,7 @@ class TestCreateGithubPr:
             return self._mock_response("https://github.com/owner/repo/pull/1")
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-            _create_github_pr("agent/run-abc", state)
+            _create_github_pr("agent/run-abc", state, "owner/repo")
 
         assert "95%" in captured["body"]["body"]
 
@@ -177,7 +177,7 @@ class TestCreateGithubPr:
                 fp=MagicMock(read=lambda: b"err"),
             ),
         ):
-            result = _create_github_pr("agent/run-abc", _make_state())
+            result = _create_github_pr("agent/run-abc", _make_state(), "owner/repo")
 
         assert result is None
 
