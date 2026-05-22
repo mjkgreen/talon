@@ -70,8 +70,8 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Inject OAuth credentials into Electron
         env:
-          GH_CLIENT_ID: ${{ secrets.GITHUB_CLIENT_ID }}
-          GH_CLIENT_SECRET: ${{ secrets.GITHUB_CLIENT_SECRET }}
+          GH_CLIENT_ID: ${{ secrets.TALON_GH_CLIENT_ID }}
+          GH_CLIENT_SECRET: ${{ secrets.TALON_GH_CLIENT_SECRET }}
         run: |
           node -e "
           const fs = require('fs');
