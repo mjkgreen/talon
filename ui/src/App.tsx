@@ -6,7 +6,6 @@ import {
   CheckCircle2,
   Clock,
   Folder,
-  Globe,
   Lightbulb,
   Play,
   Plus,
@@ -17,7 +16,7 @@ import {
   Zap,
 } from "lucide-react";
 
-import { COLUMNS } from "./constants";
+import { COLUMNS, GithubLogo } from "./constants";
 import { apiUrl } from "./utils";
 import type { Issue, Project, PlanResult, Repo, RunState } from "./types";
 import { AddTaskModal } from "./components/AddTaskModal";
@@ -67,6 +66,7 @@ export default function KanbanBoard() {
   const [syncing, setSyncing] = useState(false);
   const [githubAuthStatus, setGithubAuthStatus] = useState<"idle" | "waiting" | "error">("idle");
   const [githubAuthError, setGithubAuthError] = useState("");
+  const githubPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // --- AI / LLM ---
   const [hasLlm, setHasLlm] = useState(false);
@@ -255,6 +255,7 @@ export default function KanbanBoard() {
           return next;
         });
       } else if (data.type === "github_auth_complete") {
+        stopGithubPoll();
         setGithubAuthStatus("idle");
         setHasGithubToken(true);
         fetchRepos().then(() => setWizardStep(4));
@@ -362,21 +363,64 @@ export default function KanbanBoard() {
     }
   };
 
+  const stopGithubPoll = () => {
+    if (githubPollRef.current) {
+      clearInterval(githubPollRef.current);
+      githubPollRef.current = null;
+    }
+  };
+
+  const cancelGithubAuth = () => {
+    stopGithubPoll();
+    setGithubAuthStatus("idle");
+  };
+
   const startGithubOAuth = async () => {
     setGithubAuthError("");
+    // Use the web flow (OAuth redirect via talon:// deep link). Device flow is
+    // unreliable because GitHub requires "Device Flow" to be explicitly enabled
+    // in the OAuth App settings; the web flow works with any OAuth App.
     const res = await fetch(apiUrl("/api/auth/github/authorize"));
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
+      const err = (await res.json().catch(() => ({}))) as { detail?: string };
       setGithubAuthError(err.detail || "Failed to start GitHub auth. Is GITHUB_CLIENT_ID set?");
       return;
     }
-    const data: { url: string } = await res.json();
+    const data = (await res.json()) as { url: string; state: string };
     setGithubAuthStatus("waiting");
-    if (typeof window !== "undefined" && (window as unknown as { talon?: { openExternal: (url: string) => void } }).talon?.openExternal) {
-      (window as unknown as { talon?: { openExternal: (url: string) => void } }).talon?.openExternal(data.url);
+
+    const talonWindow = (window as unknown as { talon?: { openExternal: (url: string) => void } }).talon;
+    if (talonWindow?.openExternal) {
+      talonWindow.openExternal(data.url);
     } else {
       window.open(data.url, "_blank", "noopener,noreferrer");
     }
+
+    // Poll /api/settings as a fallback in case the deep-link fires before the
+    // WebSocket message, or the WS reconnects after the exchange completes.
+    // Snapshot the token *before* auth so we only advance on a newly-saved token.
+    const tokenBefore =
+      (
+        (await fetch(apiUrl("/api/settings"))
+          .then((r) => r.json())
+          .catch(() => ({}))) as { github_token?: string }
+      ).github_token ?? "";
+    stopGithubPoll();
+    githubPollRef.current = setInterval(async () => {
+      try {
+        const settingsRes = await fetch(apiUrl("/api/settings"));
+        if (!settingsRes.ok) return;
+        const settings = (await settingsRes.json()) as { github_token?: string };
+        if (settings.github_token && settings.github_token !== tokenBefore) {
+          stopGithubPoll();
+          setGithubAuthStatus("idle");
+          setHasGithubToken(true);
+          fetchRepos().then(() => setWizardStep(4));
+        }
+      } catch (e) {
+        console.error("GitHub auth poll error", e);
+      }
+    }, 3000);
   };
 
   const saveLocalPathAndFinish = async () => {
@@ -430,9 +474,7 @@ export default function KanbanBoard() {
 
   const syncGithubIssues = async () => {
     setSyncing(true);
-    const url = activeProjectId
-      ? apiUrl(`/api/github/sync?project_id=${activeProjectId}`)
-      : apiUrl("/api/github/sync");
+    const url = activeProjectId ? apiUrl(`/api/github/sync?project_id=${activeProjectId}`) : apiUrl("/api/github/sync");
     const res = await fetch(url, { method: "POST" });
     if (res.ok) {
       const data = await res.json();
@@ -450,7 +492,12 @@ export default function KanbanBoard() {
     const res = await fetch(apiUrl("/api/issues"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: newTitle, description: newDescription, status: "Backlog", project_id: activeProjectId }),
+      body: JSON.stringify({
+        title: newTitle,
+        description: newDescription,
+        status: "Backlog",
+        project_id: activeProjectId,
+      }),
     });
     if (res.ok) {
       const created: Issue = await res.json();
@@ -489,7 +536,12 @@ export default function KanbanBoard() {
     await fetch(apiUrl("/api/settings"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...keyDrafts, ...modelDrafts, max_iterations: maxIterations, agent_max_tokens: maxTokens }),
+      body: JSON.stringify({
+        ...keyDrafts,
+        ...modelDrafts,
+        max_iterations: maxIterations,
+        agent_max_tokens: maxTokens,
+      }),
     });
     await fetchSettings();
     setSavingSettings(false);
@@ -565,23 +617,23 @@ export default function KanbanBoard() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: renamingName.trim() }),
     });
-    setProjects((prev) =>
-      prev.map((p) => (p.id === renamingProjectId ? { ...p, name: renamingName.trim() } : p)),
-    );
+    setProjects((prev) => prev.map((p) => (p.id === renamingProjectId ? { ...p, name: renamingName.trim() } : p)));
     setRenamingProjectId(null);
   };
 
   // ===================== derived =====================
 
-  const getIssuesByStatus = (status: string) =>
-    issues.filter((i) => i.status === status).sort((a, b) => b.id - a.id);
+  const getIssuesByStatus = (status: string) => issues.filter((i) => i.status === status).sort((a, b) => b.id - a.id);
 
   const activeProject = projects.find((p) => p.id === activeProjectId);
   const showGithubSync = activeProject?.workspace_mode === "github" && !!activeProject?.selected_repo;
   const modelBadge = activeProvider ? `${activeProvider} · ${modelDrafts.agent_model || "auto"}` : null;
-  const workspaceBadgeText = activeProject?.workspace_mode === "github" 
-    ? activeProject.selected_repo 
-    : (activeProject?.workspace_mode === "local" ? activeProject.local_path : null);
+  const workspaceBadgeText =
+    activeProject?.workspace_mode === "github"
+      ? activeProject.selected_repo
+      : activeProject?.workspace_mode === "local"
+        ? activeProject.local_path
+        : null;
 
   // ===================== render =====================
 
@@ -603,7 +655,7 @@ export default function KanbanBoard() {
                   title="Active Workspace"
                 >
                   {activeProject?.workspace_mode === "github" ? (
-                    <Globe size={10} className="text-neutral-400" />
+                    <GithubLogo size={10} />
                   ) : (
                     <Folder size={10} className="text-neutral-400" />
                   )}
@@ -612,7 +664,10 @@ export default function KanbanBoard() {
               )}
               {modelBadge && (
                 <button
-                  onClick={() => { setSettingsOpen(true); setSettingsTab("ai"); }}
+                  onClick={() => {
+                    setSettingsOpen(true);
+                    setSettingsTab("ai");
+                  }}
                   className="flex items-center gap-1.5 text-xs bg-neutral-800 border border-neutral-700 text-neutral-300 px-2 py-0.5 rounded-full hover:border-blue-500/60 transition-colors"
                   title="Click to configure AI provider"
                 >
@@ -640,7 +695,10 @@ export default function KanbanBoard() {
               <Plus size={16} /> Add Task
             </button>
             <button
-              onClick={() => { setSettingsOpen(true); setSettingsTab("ai"); }}
+              onClick={() => {
+                setSettingsOpen(true);
+                setSettingsTab("ai");
+              }}
               className="p-2 bg-neutral-800 hover:bg-neutral-700 rounded text-neutral-400 hover:text-white transition-colors"
               title="Settings"
             >
@@ -679,13 +737,21 @@ export default function KanbanBoard() {
                     onClick={(e) => e.stopPropagation()}
                   />
                 ) : (
-                  <span onDoubleClick={(e) => { e.stopPropagation(); startRename(project.id, project.name); }}>
+                  <span
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      startRename(project.id, project.name);
+                    }}
+                  >
                     {project.name}
                   </span>
                 )}
                 {isActive && projects.length > 1 && (
                   <button
-                    onClick={(e) => { e.stopPropagation(); deleteProject(project.id); }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteProject(project.id);
+                    }}
                     className="opacity-0 group-hover:opacity-100 text-neutral-500 hover:text-red-400 transition-opacity ml-1"
                   >
                     <X size={12} />
@@ -746,7 +812,10 @@ export default function KanbanBoard() {
                                 <div className="flex justify-between items-start mb-2">
                                   <span className="text-xs text-neutral-500 font-mono">T-{issue.id}</span>
                                   <button
-                                    onClick={(e) => { e.stopPropagation(); deleteIssue(issue.id); }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      deleteIssue(issue.id);
+                                    }}
                                     className="text-neutral-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
                                   >
                                     <Trash2 size={14} />
@@ -817,7 +886,10 @@ export default function KanbanBoard() {
           newProjectName={newProjectName}
           setNewProjectName={setNewProjectName}
           creatingProject={creatingProject}
-          onClose={() => { setNewProjectModalOpen(false); setNewProjectName(""); }}
+          onClose={() => {
+            setNewProjectModalOpen(false);
+            setNewProjectName("");
+          }}
           onSubmit={createProject}
         />
       )}
@@ -825,7 +897,11 @@ export default function KanbanBoard() {
       {noLlmGuardOpen && (
         <NoLlmGuardModal
           onDismiss={() => setNoLlmGuardOpen(false)}
-          onOpenSettings={() => { setNoLlmGuardOpen(false); setSettingsOpen(true); setSettingsTab("ai"); }}
+          onOpenSettings={() => {
+            setNoLlmGuardOpen(false);
+            setSettingsOpen(true);
+            setSettingsTab("ai");
+          }}
         />
       )}
 
@@ -846,10 +922,10 @@ export default function KanbanBoard() {
         repos={repos}
         loadingRepos={loadingRepos}
         githubAuthStatus={githubAuthStatus}
-        setGithubAuthStatus={setGithubAuthStatus}
         githubAuthError={githubAuthError}
         onSelectMode={selectMode}
         onStartGithubOAuth={startGithubOAuth}
+        onCancelGithubAuth={cancelGithubAuth}
         onSaveLocalPath={saveLocalPathAndFinish}
         onSaveRepo={saveRepoAndFinish}
         onSaveWizardKeys={saveWizardKeysAndContinue}
@@ -877,7 +953,10 @@ export default function KanbanBoard() {
           pushOnPass={pushOnPass}
           onSave={saveSettings}
           onClose={() => setSettingsOpen(false)}
-          onConfigureWorkspace={() => { setSettingsOpen(false); setWizardStep(2); }}
+          onConfigureWorkspace={() => {
+            setSettingsOpen(false);
+            setWizardStep(2);
+          }}
           onToggleEditLocal={toggleEditLocalDirectly}
           onTogglePushOnPass={togglePushOnPass}
         />

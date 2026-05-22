@@ -68,6 +68,19 @@ jobs:
       # -----------------------------------------------------------------------
       # Electron + electron-builder
       # -----------------------------------------------------------------------
+      - name: Inject OAuth credentials into Electron
+        env:
+          GH_CLIENT_ID: ${{ secrets.GITHUB_CLIENT_ID }}
+          GH_CLIENT_SECRET: ${{ secrets.GITHUB_CLIENT_SECRET }}
+        run: |
+          node -e "
+          const fs = require('fs');
+          let src = fs.readFileSync('electron/main.js', 'utf8');
+          src = src.replace('__GITHUB_CLIENT_ID__', process.env.GH_CLIENT_ID || '');
+          src = src.replace('__GITHUB_CLIENT_SECRET__', process.env.GH_CLIENT_SECRET || '');
+          fs.writeFileSync('electron/main.js', src);
+          "
+
       - name: Install Electron deps
         working-directory: electron
         run: npm install
@@ -104,11 +117,21 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          body: |
+            ## Download
+
+            | Platform | File |
+            |----------|------|
+            | Windows | `Talon Setup *.exe` |
+            | macOS (Apple Silicon) | `Talon-*-arm64.dmg` |
+            | macOS (Intel) | `Talon-*.dmg` (non-arm64) |
+            | Linux | `Talon-*.AppImage` |
+
+            > **Note:** Builds are unsigned. On macOS right-click → Open to bypass Gatekeeper. On Windows click "More info → Run anyway" if SmartScreen appears.
           files: |
-            release/**/*.dmg
-            release/**/*-mac.zip
-            release/**/*.exe
-            release/**/*.AppImage
+            release/Talon Setup *.exe
+            release/*.dmg
+            release/*.AppImage
 
       # Also upload as workflow artifacts for non-tag builds (testing)
       - name: Upload build artifacts

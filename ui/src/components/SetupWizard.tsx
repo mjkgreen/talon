@@ -21,10 +21,10 @@ interface SetupWizardProps {
   repos: Repo[];
   loadingRepos: boolean;
   githubAuthStatus: "idle" | "waiting" | "error";
-  setGithubAuthStatus: (v: "idle" | "waiting" | "error") => void;
   githubAuthError: string;
   onSelectMode: (mode: "github" | "local" | "none") => void;
   onStartGithubOAuth: () => void;
+  onCancelGithubAuth: () => void;
   onSaveLocalPath: () => void;
   onSaveRepo: () => void;
   onSaveWizardKeys: () => void;
@@ -47,10 +47,10 @@ export function SetupWizard({
   repos,
   loadingRepos,
   githubAuthStatus,
-  setGithubAuthStatus,
   githubAuthError,
   onSelectMode,
   onStartGithubOAuth,
+  onCancelGithubAuth,
   onSaveLocalPath,
   onSaveRepo,
   onSaveWizardKeys,
@@ -189,17 +189,15 @@ export function SetupWizard({
             )}
             {githubAuthStatus === "waiting" && (
               <div className="space-y-4">
-                <div className="bg-neutral-950 border border-neutral-800 rounded-xl p-5 text-center">
-                  <p className="text-sm text-neutral-400">A browser window has opened for GitHub authorization.</p>
-                  <p className="text-xs text-neutral-500 mt-2">
-                    Once you approve, this window will advance automatically.
-                  </p>
+                <div className="bg-neutral-950 border border-neutral-800 rounded-xl p-5 text-center space-y-2">
+                  <p className="text-sm text-neutral-300">A browser window has opened.</p>
+                  <p className="text-xs text-neutral-500">Authorize Talon on GitHub, then return here — this screen will advance automatically.</p>
                 </div>
                 <div className="flex items-center gap-2 text-sm text-neutral-400">
                   <RefreshCw size={14} className="animate-spin shrink-0" /> Waiting for authorization…
                 </div>
                 <button
-                  onClick={() => setGithubAuthStatus("idle")}
+                  onClick={onCancelGithubAuth}
                   className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
                 >
                   Cancel

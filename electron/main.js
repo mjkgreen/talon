@@ -1,10 +1,17 @@
 'use strict';
 
-const { app, BrowserWindow, shell, dialog, Menu } = require('electron');
+const { app, BrowserWindow, shell, dialog, Menu, ipcMain } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const { spawn } = require('child_process');
 const http = require('http');
+
+// ---------------------------------------------------------------------------
+// OAuth credentials — placeholders replaced at build time by CI.
+// In dev mode these are empty and the server reads from .env instead.
+// ---------------------------------------------------------------------------
+const BUNDLED_CLIENT_ID = '__GITHUB_CLIENT_ID__';
+const BUNDLED_CLIENT_SECRET = '__GITHUB_CLIENT_SECRET__';
 
 // ---------------------------------------------------------------------------
 // Single-instance lock — required for deep-link OAuth on Windows/Linux
@@ -42,10 +49,19 @@ function startPythonServer() {
     const binaryPath = getPythonBinaryPath();
     let proc;
 
+    // Only inject OAuth creds when they've been replaced by CI (i.e. not the
+    // placeholder strings). In dev mode the server reads them from .env instead.
+    const isRealId = BUNDLED_CLIENT_ID && !BUNDLED_CLIENT_ID.startsWith('__');
+    const isRealSecret = BUNDLED_CLIENT_SECRET && !BUNDLED_CLIENT_SECRET.startsWith('__');
+    const oauthEnv = isRealId && isRealSecret ? {
+      GITHUB_CLIENT_ID: BUNDLED_CLIENT_ID,
+      GITHUB_CLIENT_SECRET: BUNDLED_CLIENT_SECRET,
+    } : {};
+
     if (binaryPath) {
       proc = spawn(binaryPath, [], {
         windowsHide: true,
-        env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
+        env: { ...process.env, ...oauthEnv, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
       });
     } else {
       // Development: use the system Python in the venv
@@ -54,7 +70,7 @@ function startPythonServer() {
       proc = spawn(pythonExe, ['-m', 'talon.server_entry'], {
         cwd: repoRoot,
         windowsHide: true,
-        env: { ...process.env, PYTHONPATH: repoRoot, PYTHONUNBUFFERED: '1', PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
+        env: { ...process.env, ...oauthEnv, PYTHONPATH: repoRoot, PYTHONUNBUFFERED: '1', PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
       });
     }
 
@@ -220,8 +236,21 @@ app.on('second-instance', (_event, argv) => {
   }
 });
 
-// Register talon:// as a custom protocol (needed on all platforms)
-app.setAsDefaultProtocolClient('talon');
+// Register talon:// as a custom protocol (needed on all platforms).
+// In dev mode (process.defaultApp === true) Electron is invoked as
+// `electron <app-path>`, so we must pass the app path explicitly;
+// otherwise the OS launches a second instance with the deep-link URL as
+// argv[1], which Electron tries to require() as an entry point.
+if (process.defaultApp && process.argv.length >= 2) {
+  app.setAsDefaultProtocolClient('talon', process.execPath, [path.resolve(process.argv[1])]);
+} else {
+  app.setAsDefaultProtocolClient('talon');
+}
+
+// ---------------------------------------------------------------------------
+// IPC — open a URL in the system browser (shell must run in main process)
+// ---------------------------------------------------------------------------
+ipcMain.handle('open-external', (_event, url) => shell.openExternal(url));
 
 // ---------------------------------------------------------------------------
 // App lifecycle

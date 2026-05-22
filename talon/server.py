@@ -569,17 +569,21 @@ async def github_auth_poll(body: _GitHubPollRequest):
     """Poll GitHub for a device flow token. Saves token to DB on success."""
     if not GITHUB_CLIENT_ID:
         raise HTTPException(status_code=400, detail="GITHUB_CLIENT_ID not configured")
-    async with httpx.AsyncClient() as client:
-        res = await client.post(
-            "https://github.com/login/oauth/access_token",
-            headers={"Accept": "application/json"},
-            json={
-                "client_id": GITHUB_CLIENT_ID,
-                "device_code": body.device_code,
-                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-            },
-        )
-    data = res.json()
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.post(
+                "https://github.com/login/oauth/access_token",
+                headers={"Accept": "application/json"},
+                json={
+                    "client_id": GITHUB_CLIENT_ID,
+                    "device_code": body.device_code,
+                    "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                },
+            )
+        data = res.json()
+    except Exception as exc:
+        console.print_exception()
+        raise HTTPException(status_code=502, detail=f"GitHub token poll failed: {exc}") from exc
     error = data.get("error")
     if error in ("authorization_pending", "slow_down"):
         return {"status": "pending"}
@@ -587,6 +591,7 @@ async def github_auth_poll(body: _GitHubPollRequest):
         return {"status": "expired"}
     if "access_token" in data:
         await db.set_setting("github_token", data["access_token"])
+        await manager.broadcast({"type": "github_auth_complete"})
         return {"status": "complete"}
     return {"status": "error", "detail": error}
 
