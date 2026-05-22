@@ -15,7 +15,7 @@
 import sys
 import os
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, collect_all
 
 ROOT = Path(SPECPATH)  # repo root
 UI_DIST = ROOT / "ui" / "dist"
@@ -25,9 +25,17 @@ block_cipher = None
 # UPX is unsupported on Apple Silicon (arm64) and can corrupt macOS binaries.
 USE_UPX = sys.platform != "darwin"
 
-# Collect data files required at runtime
-LITELLM_DATAS = collect_data_files("litellm")
-CERTIFI_DATAS = collect_data_files("certifi")  # CA bundle for HTTPS calls (litellm/openai/anthropic)
+# collect_all gathers data files + binaries + hidden imports in one call.
+# Use it for packages that load files or extensions relative to __file__ at runtime.
+_lit_d,  _lit_b,  _lit_h  = collect_all("litellm")
+_oai_d,  _oai_b,  _oai_h  = collect_all("openai")
+_ant_d,  _ant_b,  _ant_h  = collect_all("anthropic")
+_tik_d,  _tik_b,  _tik_h  = collect_all("tiktoken")
+CERTIFI_DATAS = collect_data_files("certifi")  # CA bundle for HTTPS calls
+
+EXTRA_DATAS    = _lit_d  + _oai_d  + _ant_d  + _tik_d  + CERTIFI_DATAS
+EXTRA_BINARIES = _lit_b  + _oai_b  + _ant_b  + _tik_b
+EXTRA_HIDDEN   = _lit_h  + _oai_h  + _ant_h  + _tik_h
 
 # ---------------------------------------------------------------------------
 # Hidden imports
@@ -88,11 +96,11 @@ HIDDEN_IMPORTS = [
 a = Analysis(
     [str(ROOT / "talon" / "server_entry.py")],
     pathex=[str(ROOT)],
-    binaries=[],
+    binaries=EXTRA_BINARIES,
     datas=(
         [(str(UI_DIST), "ui/dist")] if UI_DIST.exists() else []
-    ) + LITELLM_DATAS + CERTIFI_DATAS,
-    hiddenimports=HIDDEN_IMPORTS,
+    ) + EXTRA_DATAS,
+    hiddenimports=HIDDEN_IMPORTS + EXTRA_HIDDEN,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
