@@ -15,11 +15,19 @@
 import sys
 import os
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_data_files
 
 ROOT = Path(SPECPATH)  # repo root
 UI_DIST = ROOT / "ui" / "dist"
 
 block_cipher = None
+
+# UPX is unsupported on Apple Silicon (arm64) and can corrupt macOS binaries.
+USE_UPX = sys.platform != "darwin"
+
+# Collect data files required at runtime
+LITELLM_DATAS = collect_data_files("litellm")
+CERTIFI_DATAS = collect_data_files("certifi")  # CA bundle for HTTPS calls (litellm/openai/anthropic)
 
 # ---------------------------------------------------------------------------
 # Hidden imports
@@ -81,10 +89,9 @@ a = Analysis(
     [str(ROOT / "talon" / "server_entry.py")],
     pathex=[str(ROOT)],
     binaries=[],
-    datas=[
-        # Bundle the built React UI into ui/dist inside the binary
-        (str(UI_DIST), "ui/dist"),
-    ] if UI_DIST.exists() else [],
+    datas=(
+        [(str(UI_DIST), "ui/dist")] if UI_DIST.exists() else []
+    ) + LITELLM_DATAS + CERTIFI_DATAS,
     hiddenimports=HIDDEN_IMPORTS,
     hookspath=[],
     hooksconfig={},
@@ -113,7 +120,7 @@ if sys.platform == "win32":
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,
-        upx=True,
+        upx=USE_UPX,
         upx_exclude=[],
         runtime_tmpdir=None,
         console=False,     # No console window — output goes to Electron via pipe
@@ -134,7 +141,7 @@ else:
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,
-        upx=True,
+        upx=USE_UPX,
         console=False,
         disable_windowed_traceback=False,
         argv_emulation=False,
@@ -148,7 +155,7 @@ else:
         a.zipfiles,
         a.datas,
         strip=False,
-        upx=True,
+        upx=USE_UPX,
         upx_exclude=[],
         name="talon-server",
     )
