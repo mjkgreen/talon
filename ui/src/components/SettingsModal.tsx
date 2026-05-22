@@ -14,6 +14,8 @@ interface SettingsModalProps {
   setMaxIterations: (v: string) => void;
   maxTokens: string;
   setMaxTokens: (v: string) => void;
+  reviewerMaxToolTurns: string;
+  setReviewerMaxToolTurns: (v: string) => void;
   advancedModelOpen: boolean;
   setAdvancedModelOpen: React.Dispatch<React.SetStateAction<boolean>>;
   savingSettings: boolean;
@@ -61,6 +63,8 @@ export function SettingsModal({
   setMaxIterations,
   maxTokens,
   setMaxTokens,
+  reviewerMaxToolTurns,
+  setReviewerMaxToolTurns,
   advancedModelOpen,
   setAdvancedModelOpen,
   savingSettings,
@@ -263,13 +267,13 @@ export function SettingsModal({
                 <input
                   type="number"
                   min={1}
-                  max={10}
+                  max={50}
                   value={maxIterations}
                   onChange={(e) => setMaxIterations(e.target.value)}
                   className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
                 />
                 <p className="text-xs text-neutral-600 mt-1">
-                  How many executor→reviewer→refiner cycles before giving up (default: 3)
+                  How many executor→reviewer→refiner cycles before giving up (default: 5)
                 </p>
               </div>
               <div>
@@ -282,6 +286,20 @@ export function SettingsModal({
                   placeholder="Default (model limit)"
                   className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-neutral-300 mb-1">Reviewer max tool turns</label>
+                <input
+                  type="number"
+                  min={10}
+                  max={200}
+                  value={reviewerMaxToolTurns}
+                  onChange={(e) => setReviewerMaxToolTurns(e.target.value)}
+                  className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+                />
+                <p className="text-xs text-neutral-600 mt-1">
+                  How many file reads / commands the reviewer can run before outputting its verdict (default: 50)
+                </p>
               </div>
             </div>
           )}

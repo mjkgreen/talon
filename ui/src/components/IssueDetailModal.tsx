@@ -13,6 +13,7 @@ import {
   Pencil,
   Play,
   RefreshCw,
+  Settings,
   X,
 } from "lucide-react";
 import { apiUrl } from "../utils";
@@ -569,6 +570,38 @@ function SubtaskList({
   );
 }
 
+interface LimitHint {
+  message: string;
+  setting: string;
+}
+
+function detectLimitHint(error: string): LimitHint | null {
+  const e = error.toLowerCase();
+  if (
+    e.includes("context_window") || e.includes("context window") ||
+    e.includes("token count exceeds") || e.includes("maximum number of tokens") ||
+    e.includes("context_window_exceeded") || e.includes("max_tokens")
+  ) {
+    return {
+      message: "The model hit its token limit.",
+      setting: "Increase Max tokens per agent call in Settings → Limits.",
+    };
+  }
+  if (e.includes("rate limit") || e.includes("ratelimit") || e.includes("too many requests") || e.includes("429")) {
+    return {
+      message: "The provider rate-limited the request.",
+      setting: "Try switching to a different model or provider in Settings → Model.",
+    };
+  }
+  if (e.includes("timeout") || e.includes("timed out")) {
+    return {
+      message: "An agent call timed out.",
+      setting: "The model may be overloaded — retry, or switch models in Settings → Model.",
+    };
+  }
+  return null;
+}
+
 export function IssueDetailModal({
   issue,
   liveRunStates,
@@ -687,14 +720,39 @@ export function IssueDetailModal({
 
           {macroTab === "trace" && (
             <>
-              {(runError || activeRunState?.error) && (
-                <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 text-sm text-red-400">
-              <div className="font-medium mb-1">Agent error</div>
-              <pre className="text-xs font-mono whitespace-pre-wrap text-red-300/80">
-                {runError || activeRunState?.error}
-              </pre>
-            </div>
-          )}
+              {activeRunState?.status === "max_iterations" && (
+                <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 text-sm text-yellow-400 flex gap-3">
+                  <AlertCircle size={16} className="shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-medium mb-1">Max iterations reached</div>
+                    <div className="text-yellow-300/80 text-xs">
+                      The agent exhausted all retry cycles without passing review. Increase{" "}
+                      <strong>Max iterations</strong> in{" "}
+                      <span className="inline-flex items-center gap-1"><Settings size={11} /> Settings → Limits</span>{" "}
+                      and re-run.
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {(runError || activeRunState?.error) && (() => {
+                const raw = runError || activeRunState?.error || "";
+                const hint = detectLimitHint(raw);
+                return (
+                  <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 text-sm text-red-400">
+                    <div className="font-medium mb-1">Agent error</div>
+                    <pre className="text-xs font-mono whitespace-pre-wrap text-red-300/80">{raw}</pre>
+                    {hint && (
+                      <div className="mt-3 pt-3 border-t border-red-500/20 text-xs text-yellow-300/90 flex gap-2">
+                        <AlertCircle size={13} className="shrink-0 mt-0.5" />
+                        <span>
+                          <strong>{hint.message}</strong> {hint.setting}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
           {issue.status === "In Progress" && !activeRunState && !runError && (
             <div className="flex items-center gap-3 p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl text-blue-400 text-sm">

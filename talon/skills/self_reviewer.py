@@ -24,6 +24,7 @@ from talon.types import ExecutorResult, ReviewCriterion, ReviewFeedback, ReviewV
 console = Console()
 
 MAX_TOKENS = int(os.getenv("AGENT_MAX_TOKENS", "8096"))
+MAX_TOOL_TURNS = int(os.getenv("REVIEWER_MAX_TOOL_TURNS", "50"))
 
 
 class _VerdictPayload(BaseModel):
@@ -135,12 +136,19 @@ def _extract_json(text: str) -> dict | None:
     return None
 
 
+_FINALIZE_PROMPT = (
+    "You have used all available tool turns. "
+    "Output your final verdict JSON now — no prose, no markdown fences."
+)
+
 _CORRECTION_PROMPT = (
     "Your previous response was not valid JSON or did not match the required schema. "
     "Output ONLY a JSON object — no prose, no markdown fences — matching this schema exactly:\n\n"
     '{"verdict":"pass"|"fail"|"needs_work","score":<0.0–1.0>,"summary":"...","criteria":[],'
     '"blocking_issues":[],"suggestions":[]}'
 )
+
+_JSON_FORMAT = {"type": "json_object"}
 
 
 def _validate_verdict(raw: str) -> _VerdictPayload | None:
@@ -155,28 +163,33 @@ def _validate_verdict(raw: str) -> _VerdictPayload | None:
 
 
 async def _parse_verdict(raw: str, messages: list[dict], provider) -> _VerdictPayload:
-    """Return a validated _VerdictPayload, retrying once with a correction prompt if needed."""
+    """Return a validated _VerdictPayload, retrying up to 3 times with a correction prompt."""
     payload = _validate_verdict(raw)
     if payload is not None:
         return payload
 
-    console.print("  [red]Warning: invalid reviewer JSON, sending correction prompt[/red]")
-    console.print(f"  [dim]Raw output (first 500 chars): {raw[:500]!r}[/dim]")
+    for attempt in range(1, 4):
+        console.print(
+            f"  [red]Warning: invalid reviewer JSON (attempt {attempt}/3), "
+            "sending correction prompt[/red]"
+        )
+        if attempt == 1:
+            console.print(f"  [dim]Raw output (first 500 chars): {raw[:500]!r}[/dim]")
 
-    messages.append({"role": "user", "content": _CORRECTION_PROMPT})
-    response = await provider.chat(
-        system=_REVIEWER_SYSTEM,
-        messages=messages,
-        tools=[],
-        max_tokens=MAX_TOKENS,
-    )
-    provider.append_assistant(messages, response)
-    payload = _validate_verdict(response.text or "")
+        messages.append({"role": "user", "content": _CORRECTION_PROMPT})
+        response = await provider.chat(
+            system=_REVIEWER_SYSTEM,
+            messages=messages,
+            tools=[],
+            max_tokens=MAX_TOKENS,
+            response_format=_JSON_FORMAT,
+        )
+        provider.append_assistant(messages, response)
+        payload = _validate_verdict(response.text or "")
+        if payload is not None:
+            return payload
 
-    if payload is not None:
-        return payload
-
-    console.print("  [red]Correction failed, defaulting to fail verdict[/red]")
+    console.print("  [red]All correction attempts failed, defaulting to fail verdict[/red]")
     return _VerdictPayload(
         verdict=ReviewVerdict.FAIL,
         score=0.0,
@@ -196,7 +209,7 @@ async def run(goal: str, executor_result: ExecutorResult, working_dir: str) -> R
     ]
     raw_verdict = ""
 
-    for _turn in range(10):
+    for _turn in range(MAX_TOOL_TURNS):
         response = await provider.chat(
             system=_REVIEWER_SYSTEM,
             messages=messages,
@@ -214,6 +227,20 @@ async def run(goal: str, executor_result: ExecutorResult, working_dir: str) -> R
             result_str = await asyncio.to_thread(dispatch_tool, tc.name, tc.input, working_dir)
             tool_results.append(ToolResult(id=tc.id, content=result_str))
         provider.append_tool_results(messages, tool_results)
+
+    if not raw_verdict:
+        # Tool loop exhausted all turns without end_turn — force the model to output JSON now.
+        console.print("  [yellow]Tool loop exhausted; requesting verdict JSON directly[/yellow]")
+        messages.append({"role": "user", "content": _FINALIZE_PROMPT})
+        finalize_response = await provider.chat(
+            system=_REVIEWER_SYSTEM,
+            messages=messages,
+            tools=[],
+            max_tokens=MAX_TOKENS,
+            response_format=_JSON_FORMAT,
+        )
+        provider.append_assistant(messages, finalize_response)
+        raw_verdict = finalize_response.text or ""
 
     payload = await _parse_verdict(raw_verdict, messages, provider)
 

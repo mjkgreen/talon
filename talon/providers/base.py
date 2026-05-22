@@ -43,6 +43,7 @@ class BaseProvider(Protocol):
         messages: list[dict],
         tools: list[dict],
         max_tokens: int,
+        response_format: dict | None = None,
     ) -> ProviderResponse:
         """Single API call. Returns a normalized ProviderResponse."""
         ...

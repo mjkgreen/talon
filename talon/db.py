@@ -101,6 +101,7 @@ class SettingsUpdate(BaseModel):
     # Run limits
     max_iterations: Optional[str] = None
     agent_max_tokens: Optional[str] = None
+    reviewer_max_tool_turns: Optional[str] = None
     # Local workspace behaviour
     edit_local_directly: Optional[str] = None  # "true" | "false"
     push_on_pass: Optional[str] = None         # "true" | "false"

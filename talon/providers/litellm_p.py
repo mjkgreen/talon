@@ -61,6 +61,7 @@ class LiteLLMProvider:
         messages: list[dict],
         tools: list[dict],
         max_tokens: int | None = None,
+        response_format: dict | None = None,
     ) -> ProviderResponse:
         # Read env at call time so live changes from the Settings UI take effect
         # without restarting the server.
@@ -74,6 +75,8 @@ class LiteLLMProvider:
         if tools:
             kwargs["tools"] = _to_litellm_tools(tools)
             kwargs["tool_choice"] = "auto"
+        if response_format:
+            kwargs["response_format"] = response_format
 
         try:
             raw = await litellm.acompletion(**kwargs, timeout=timeout)

@@ -56,8 +56,9 @@ _DB_TO_ENV: dict[str, str] = {
     "subagent_model":     "SUBAGENT_MODEL",
     "reviewer_model":     "REVIEWER_MODEL",
     "refiner_model":      "REFINER_MODEL",
-    "max_iterations":     "MAX_ITERATIONS",
-    "agent_max_tokens":   "AGENT_MAX_TOKENS",
+    "max_iterations":          "MAX_ITERATIONS",
+    "agent_max_tokens":        "AGENT_MAX_TOKENS",
+    "reviewer_max_tool_turns": "REVIEWER_MAX_TOOL_TURNS",
 }
 
 _API_KEY_SETTINGS = {
