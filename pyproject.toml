@@ -3,8 +3,8 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "talon-agent"
-version = "0.1.0"
+name = "talon"
+version = "0.4.0"
 description = "Autonomous agentic coding system — decompose, execute, review, iterate."
 readme = "README.md"
 license = { text = "MIT" }
