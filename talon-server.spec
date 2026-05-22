@@ -15,7 +15,7 @@
 import sys
 import os
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_data_files, collect_all
+from PyInstaller.utils.hooks import collect_data_files, collect_all, copy_metadata
 
 ROOT = Path(SPECPATH)  # repo root
 UI_DIST = ROOT / "ui" / "dist"
@@ -31,11 +31,16 @@ _lit_d,  _lit_b,  _lit_h  = collect_all("litellm")
 _oai_d,  _oai_b,  _oai_h  = collect_all("openai")
 _ant_d,  _ant_b,  _ant_h  = collect_all("anthropic")
 _tik_d,  _tik_b,  _tik_h  = collect_all("tiktoken")
+_tikx_d, _tikx_b, _tikx_h = collect_all("tiktoken_ext")  # separate pkg with encoding defs (cl100k_base etc.)
 CERTIFI_DATAS = collect_data_files("certifi")  # CA bundle for HTTPS calls
 
-EXTRA_DATAS    = _lit_d  + _oai_d  + _ant_d  + _tik_d  + CERTIFI_DATAS
-EXTRA_BINARIES = _lit_b  + _oai_b  + _ant_b  + _tik_b
-EXTRA_HIDDEN   = _lit_h  + _oai_h  + _ant_h  + _tik_h
+# tiktoken >=0.13 registers encodings (cl100k_base etc.) via importlib.metadata
+# entry_points — the .dist-info directory must be in the bundle for lookups to work.
+TIKTOKEN_METADATA = copy_metadata("tiktoken")
+
+EXTRA_DATAS    = _lit_d  + _oai_d  + _ant_d  + _tik_d  + _tikx_d + CERTIFI_DATAS + TIKTOKEN_METADATA
+EXTRA_BINARIES = _lit_b  + _oai_b  + _ant_b  + _tik_b  + _tikx_b
+EXTRA_HIDDEN   = _lit_h  + _oai_h  + _ant_h  + _tik_h  + _tikx_h
 
 # ---------------------------------------------------------------------------
 # Hidden imports

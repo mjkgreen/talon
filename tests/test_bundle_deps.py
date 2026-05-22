@@ -50,6 +50,12 @@ class TestTiktoken:
         tokens = enc.encode("hello world")
         assert len(tokens) > 0
 
+    def test_tiktoken_ext_importable(self):
+        """tiktoken_ext is a separate package containing the actual encoding
+        definitions (cl100k_base etc.). Without it bundled, get_encoding() raises
+        'Unknown encoding' even though tiktoken itself imports fine."""
+        import tiktoken_ext.openai_public  # noqa: F401
+
 
 class TestCertifi:
     def test_ca_bundle_exists(self):
