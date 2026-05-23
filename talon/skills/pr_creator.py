@@ -196,7 +196,9 @@ async def run(state: RunState, working_dir: str | None) -> str | None:
 
     token = _get_github_token()
     if not token:
-        console.print("  [dim]pr-creator: not authenticated with GitHub — sign in via Settings[/dim]")
+        console.print(
+            "  [dim]pr-creator: not authenticated with GitHub — sign in via Settings[/dim]"
+        )
         return None
 
     from talon.workspace import _is_git_repo

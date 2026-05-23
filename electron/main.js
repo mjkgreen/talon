@@ -62,7 +62,7 @@ function startPythonServer() {
     if (binaryPath) {
       proc = spawn(binaryPath, [], {
         windowsHide: true,
-        env: { ...process.env, ...oauthEnv, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
+        env: { ...process.env, ...oauthEnv, PYTHONUNBUFFERED: '1', PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
       });
     } else {
       // Development: use the system Python in the venv

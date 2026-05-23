@@ -18,7 +18,8 @@ from __future__ import annotations
 import json
 import os
 
-# Optimize LiteLLM import/startup performance (disables slow AWS/Boto3 stream shape checks and telemetry)
+# Optimize LiteLLM import/startup performance
+# (disables slow AWS/Boto3 stream shape checks and telemetry)
 os.environ["DISABLE_BOTO3_CHECK"] = "True"
 os.environ["LITELLM_TELEMETRY"] = "False"
 os.environ["DISABLE_LITELLM_TELEMETRY"] = "True"
@@ -98,7 +99,7 @@ class LiteLLMProvider:
                         messages[i] = {
                             "role": "tool",
                             "tool_call_id": messages[i].get("tool_call_id"),
-                            "content": "[Tool result truncated to save context window space]"
+                            "content": "[Tool result truncated to save context window space]",
                         }
                 full_messages = [{"role": "system", "content": system}, *messages]
                 kwargs["messages"] = full_messages

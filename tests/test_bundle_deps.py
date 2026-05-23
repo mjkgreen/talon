@@ -28,6 +28,7 @@ class TestLitellm:
 
     def test_model_prices_backup_is_valid_json(self):
         import json
+
         import litellm
 
         backup = Path(litellm.__file__).parent / "model_prices_and_context_window_backup.json"
@@ -78,16 +79,19 @@ class TestProviderImports:
     """Verify provider packages import cleanly — broken __init__ is caught early."""
 
     def test_anthropic_importable(self):
-        anthropic = pytest.importorskip("anthropic")
+        pytest.importorskip("anthropic")
         from importlib.metadata import version
+
         assert version("anthropic")
 
     def test_openai_importable(self):
-        import openai
         from importlib.metadata import version
+
         assert version("openai")
 
     def test_litellm_importable(self):
-        import litellm  # noqa: F401 — verifies the import doesn't crash
         from importlib.metadata import version
+
+        import litellm  # noqa: F401 — verifies the import doesn't crash
+
         assert version("litellm")

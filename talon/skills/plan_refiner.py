@@ -71,9 +71,7 @@ async def run(goal: str, current_plan: PlanResult, comments: list[str]) -> PlanR
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as e:
-        raise RuntimeError(
-            f"Plan refiner returned invalid JSON: {e}\nRaw: {raw[:300]!r}"
-        ) from e
+        raise RuntimeError(f"Plan refiner returned invalid JSON: {e}\nRaw: {raw[:300]!r}") from e
 
     plan = PlanResult(
         approach=data.get("approach", ""),

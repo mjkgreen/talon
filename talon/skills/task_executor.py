@@ -39,7 +39,8 @@ MAX_SUBAGENTS = int(os.getenv("MAX_SUBAGENTS", "7"))
 def _executor_system(max_subagents: int) -> str:
     return f"""\
 You are a senior software engineer acting as a task orchestrator.
-Your job is to decompose a specific implementation phase into concrete, independently-executable subtasks.
+Your job is to decompose a specific implementation phase into concrete,
+independently-executable subtasks.
 
 Rules:
 - Output ONLY valid JSON matching the schema below. No prose, no markdown fences.
@@ -58,6 +59,7 @@ Schema:
   ]
 }}
 """
+
 
 _SUBAGENT_SYSTEM = """\
 You are a senior software engineer executing a specific coding task.
@@ -87,8 +89,7 @@ async def _decompose_phase(
     ]
     if completed_phase_outputs:
         prior = "\n\n".join(
-            f"Phase {i + 1} output:\n{out[:800]}"
-            for i, out in enumerate(completed_phase_outputs)
+            f"Phase {i + 1} output:\n{out[:800]}" for i, out in enumerate(completed_phase_outputs)
         )
         parts.append(f"Completed phases (context only — do not redo this work):\n{prior}")
     if refinement:
@@ -109,9 +110,7 @@ async def _decompose_phase(
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as e:
-        raise RuntimeError(
-            f"Orchestrator returned invalid JSON: {e}\nRaw: {raw[:300]!r}"
-        ) from e
+        raise RuntimeError(f"Orchestrator returned invalid JSON: {e}\nRaw: {raw[:300]!r}") from e
     subtasks = [Subtask(**s) for s in data["subtasks"]]
     return subtasks[:max_subagents]
 
@@ -176,9 +175,8 @@ async def _run_subagent(
     if not final_output:
         summary_response = await provider.chat(
             system=_SUBAGENT_SYSTEM,
-            messages=messages + [
-                {"role": "user", "content": "Summarize what you did and what the outcome was."}
-            ],
+            messages=messages
+            + [{"role": "user", "content": "Summarize what you did and what the outcome was."}],
             tools=[],
             max_tokens=1024,
         )
@@ -217,7 +215,8 @@ async def _execute_phase(
 
     phase_context = (
         "\n\n".join(
-            f"Phase {i + 1} ({completed_phases[i].phase_name}):\n{completed_phases[i].aggregated_output[:600]}"
+            f"Phase {i + 1} ({completed_phases[i].phase_name}):\n"
+            f"{completed_phases[i].aggregated_output[:600]}"
             for i in range(len(completed_phases))
         )
         or "(this is the first phase)"
@@ -227,10 +226,12 @@ async def _execute_phase(
         await on_log(f"=== Phase {phase_index + 1}: {phase.name} ===")
     console.print(f"  Decomposed into {len(subtasks)} subtask(s)")
 
-    results = await asyncio.gather(*[
-        _run_subagent(st, goal, working_dir, phase.name, phase_context, on_log)
-        for st in subtasks
-    ])
+    results = await asyncio.gather(
+        *[
+            _run_subagent(st, goal, working_dir, phase.name, phase_context, on_log)
+            for st in subtasks
+        ]
+    )
 
     aggregated = "\n\n".join(
         f"[{r.subtask.id}] {r.subtask.description}\n{r.output}" for r in results
@@ -291,7 +292,9 @@ async def run(
         f"## Phase {ph.phase_index + 1}: {ph.phase_name}\n{ph.aggregated_output}"
         for ph in completed
     )
-    all_files = sorted({f for ph in completed for sr in ph.subtask_results for f in sr.files_modified})
+    all_files = sorted(
+        {f for ph in completed for sr in ph.subtask_results for f in sr.files_modified}
+    )
     console.print(f"  Files modified: {all_files or '(none)'}")
     if on_log:
         await on_log(f"Files modified: {list(all_files) if all_files else '(none)'}")

@@ -1,5 +1,6 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from talon.providers.litellm_p import LiteLLMProvider, _to_litellm_tools
 from talon.tools import TOOL_DEFINITIONS
@@ -36,7 +37,6 @@ class TestToolSchemaConversion:
 class TestLiteLLMProviderPruning:
     @pytest.mark.asyncio
     async def test_context_window_exceeded_retry_and_pruning(self):
-        import pytest
 
         provider = LiteLLMProvider("test-model")
         messages = [
@@ -77,17 +77,18 @@ class TestLiteLLMProviderPruning:
         # Mock acompletion to raise error first, then succeed
         side_effects = [
             Exception("ContextWindowExceeded: The input token count exceeds limit"),
-            mock_response
+            mock_response,
         ]
 
-        with patch("litellm.acompletion", new_callable=AsyncMock, side_effect=side_effects) as mock_acompletion:
+        with patch(
+            "litellm.acompletion", new_callable=AsyncMock, side_effect=side_effects
+        ) as mock_acompletion:
             resp = await provider.chat("System instructions", messages, tools=[])
             assert resp.text == "Success response after pruning"
             assert mock_acompletion.call_count == 2
 
-            # Assert that the messages are pruned in-place
-            # The tool message at index 2 (tool_call_id="1") should be truncated because index 2 < cutoff (len(messages) - 6 = 10 - 6 = 4)
-            # The tool message at index 4 (tool_call_id="2") should NOT be truncated because index 4 is not < 4
+            # Assert that the messages are pruned in-place.
+            # Index 2 (tool_call_id="1") is truncated: 2 < cutoff (len - 6 = 4).
+            # Index 4 (tool_call_id="2") is NOT truncated: 4 is not < 4.
             assert "truncated to save context window space" in messages[2]["content"]
             assert messages[4]["content"] == "B" * 5000
-

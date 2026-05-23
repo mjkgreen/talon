@@ -1,8 +1,5 @@
 """Tests for talon/db.py — project CRUD, migration, list_issues filtering, helpers."""
 
-import os
-import tempfile
-
 import pytest
 
 import talon.db as db
@@ -44,7 +41,9 @@ async def test_list_projects():
 
 async def test_update_project():
     p = await db.create_project(db.ProjectCreate(name="Beta", workspace_mode="none"))
-    updated = await db.update_project(p.id, db.ProjectUpdate(name="Beta-v2", workspace_mode="local"))
+    updated = await db.update_project(
+        p.id, db.ProjectUpdate(name="Beta-v2", workspace_mode="local")
+    )
     assert updated.name == "Beta-v2"
     assert updated.workspace_mode == "local"
 
@@ -133,7 +132,13 @@ def test_has_llm_configured_with_key(monkeypatch):
 
 
 def test_has_llm_configured_without_keys(monkeypatch):
-    for k in ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY"]:
+    for k in [
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "GEMINI_API_KEY",
+        "GROQ_API_KEY",
+        "MISTRAL_API_KEY",
+    ]:
         monkeypatch.delenv(k, raising=False)
     assert _has_llm_configured() is False
 

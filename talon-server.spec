@@ -32,15 +32,16 @@ _oai_d,  _oai_b,  _oai_h  = collect_all("openai")
 _ant_d,  _ant_b,  _ant_h  = collect_all("anthropic")
 _tik_d,  _tik_b,  _tik_h  = collect_all("tiktoken")
 _tikx_d, _tikx_b, _tikx_h = collect_all("tiktoken_ext")  # separate pkg with encoding defs (cl100k_base etc.)
+_ws_d,   _ws_b,   _ws_h   = collect_all("websockets")    # websockets C extension for uvicorn WebSocket support
 CERTIFI_DATAS = collect_data_files("certifi")  # CA bundle for HTTPS calls
 
 # tiktoken >=0.13 registers encodings (cl100k_base etc.) via importlib.metadata
 # entry_points — the .dist-info directory must be in the bundle for lookups to work.
 TIKTOKEN_METADATA = copy_metadata("tiktoken")
 
-EXTRA_DATAS    = _lit_d  + _oai_d  + _ant_d  + _tik_d  + _tikx_d + CERTIFI_DATAS + TIKTOKEN_METADATA
-EXTRA_BINARIES = _lit_b  + _oai_b  + _ant_b  + _tik_b  + _tikx_b
-EXTRA_HIDDEN   = _lit_h  + _oai_h  + _ant_h  + _tik_h  + _tikx_h
+EXTRA_DATAS    = _lit_d  + _oai_d  + _ant_d  + _tik_d  + _tikx_d + _ws_d  + CERTIFI_DATAS + TIKTOKEN_METADATA
+EXTRA_BINARIES = _lit_b  + _oai_b  + _ant_b  + _tik_b  + _tikx_b + _ws_b
+EXTRA_HIDDEN   = _lit_h  + _oai_h  + _ant_h  + _tik_h  + _tikx_h + _ws_h
 
 # ---------------------------------------------------------------------------
 # Hidden imports
@@ -69,6 +70,14 @@ HIDDEN_IMPORTS = [
     "starlette.staticfiles",
     "starlette.responses",
     "starlette.websockets",
+    # anyio (required by FastAPI/starlette >= 0.20, often missed by PyInstaller)
+    "anyio",
+    "anyio._backends._asyncio",
+    "anyio._backends._trio",
+    # sniffio (anyio dependency)
+    "sniffio",
+    # h11 (uvicorn HTTP/1.1 implementation)
+    "h11",
     # aiosqlite
     "aiosqlite",
     # pydantic
@@ -136,7 +145,11 @@ if sys.platform == "win32":
         upx=USE_UPX,
         upx_exclude=[],
         runtime_tmpdir=None,
-        console=False,     # No console window — output goes to Electron via pipe
+        # console=True keeps sys.stdout/stderr connected to the pipe Electron sets up.
+        # console=False causes PyInstaller's bootloader to set sys.stdout=None on
+        # Windows, preventing the PORT announcement from ever reaching Electron.
+        # The console window is suppressed by windowsHide:true in Electron's spawn().
+        console=True,
         disable_windowed_traceback=False,
         argv_emulation=False,
         target_arch=None,

@@ -107,7 +107,7 @@ class SettingsUpdate(BaseModel):
     reviewer_max_tool_turns: Optional[str] = None
     # Local workspace behaviour
     edit_local_directly: Optional[str] = None  # "true" | "false"
-    push_on_pass: Optional[str] = None         # "true" | "false"
+    push_on_pass: Optional[str] = None  # "true" | "false"
 
 
 async def init_db():
@@ -146,7 +146,9 @@ async def init_db():
 
         # Migration: add project_id column to issues if missing (pre-v1 schema)
         try:
-            await db.execute("ALTER TABLE issues ADD COLUMN project_id INTEGER REFERENCES projects(id)")
+            await db.execute(
+                "ALTER TABLE issues ADD COLUMN project_id INTEGER REFERENCES projects(id)"
+            )
             await db.commit()
         except sqlite3.OperationalError:
             pass  # column already exists
@@ -178,17 +180,28 @@ async def init_db():
         if count == 0:
             now = datetime.utcnow().isoformat()
             async with db.execute(
-                "SELECT key, value FROM settings WHERE key IN ('workspace_mode', 'selected_repo', 'local_path')"
+                "SELECT key, value FROM settings"
+                " WHERE key IN ('workspace_mode', 'selected_repo', 'local_path')"
             ) as cursor:
                 rows = await cursor.fetchall()
             s = {row[0]: row[1] for row in rows}
             cursor = await db.execute(
-                "INSERT INTO projects (name, workspace_mode, selected_repo, local_path, created_at, updated_at)"
+                "INSERT INTO projects"
+                " (name, workspace_mode, selected_repo, local_path, created_at, updated_at)"
                 " VALUES (?, ?, ?, ?, ?, ?)",
-                ("Default", s.get("workspace_mode", "none"), s.get("selected_repo"), s.get("local_path"), now, now),
+                (
+                    "Default",
+                    s.get("workspace_mode", "none"),
+                    s.get("selected_repo"),
+                    s.get("local_path"),
+                    now,
+                    now,
+                ),
             )
             default_id = cursor.lastrowid
-            await db.execute("UPDATE issues SET project_id = ? WHERE project_id IS NULL", (default_id,))
+            await db.execute(
+                "UPDATE issues SET project_id = ? WHERE project_id IS NULL", (default_id,)
+            )
             await db.commit()
 
 
@@ -242,7 +255,9 @@ async def create_project(p: ProjectCreate) -> Project:
     now = datetime.utcnow().isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            "INSERT INTO projects (name, workspace_mode, selected_repo, selected_branch, local_path, created_at, updated_at)"
+            "INSERT INTO projects"
+            " (name, workspace_mode, selected_repo, selected_branch,"
+            "  local_path, created_at, updated_at)"
             " VALUES (?, ?, ?, ?, ?, ?, ?)",
             (p.name, p.workspace_mode, p.selected_repo, p.selected_branch, p.local_path, now, now),
         )
@@ -396,9 +411,7 @@ async def reset_stalled_issues() -> list[int]:
     """
     now = datetime.utcnow().isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute(
-            "SELECT id FROM issues WHERE status = 'In Progress'"
-        ) as cursor:
+        async with db.execute("SELECT id FROM issues WHERE status = 'In Progress'") as cursor:
             rows = await cursor.fetchall()
         stalled_ids = [row[0] for row in rows]
         if stalled_ids:

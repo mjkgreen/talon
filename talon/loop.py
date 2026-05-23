@@ -112,8 +112,12 @@ async def run(
         # Run in a thread so git/copytree never blocks the asyncio event loop.
         # Blocking the loop freezes WebSocket heartbeats and drops connections.
         run_workspace = await asyncio.to_thread(
-            workspace.setup, state.run_id, working_dir,
-            repo_url=repo_url, repo_branch=repo_branch, direct=direct_workspace,
+            workspace.setup,
+            state.run_id,
+            working_dir,
+            repo_url=repo_url,
+            repo_branch=repo_branch,
+            direct=direct_workspace,
             goal=goal,
         )
         state.workspace = run_workspace

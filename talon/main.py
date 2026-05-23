@@ -12,8 +12,8 @@ Usage:
 
 from __future__ import annotations
 
-import io
 import asyncio
+import io
 import json
 import os
 import sys
@@ -24,6 +24,7 @@ from pathlib import Path
 # rewrap stdout/stderr so Python also encodes as UTF-8.
 if sys.platform == "win32":
     import ctypes
+
     ctypes.windll.kernel32.SetConsoleOutputCP(65001)
     if hasattr(sys.stdout, "buffer"):
         sys.stdout = io.TextIOWrapper(
