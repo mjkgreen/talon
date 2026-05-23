@@ -1,6 +1,6 @@
 {
   "name": "talon",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "Autonomous Agent Kanban Board",
   "author": "Chasqui AI <matthew@chasqui.ai>",
   "license": "MIT",
@@ -72,8 +72,11 @@
       "icon": "icons/icon.ico",
       "extraResources": [
         {
-          "from": "../dist/talon-server.exe",
-          "to": "talon-server.exe"
+          "from": "../dist/talon-server",
+          "to": "talon-server",
+          "filter": [
+            "**/*"
+          ]
         }
       ]
     },

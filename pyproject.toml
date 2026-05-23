@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "talon"
-version = "0.6.2"
+version = "0.6.3"
 description = "Autonomous agentic coding system — decompose, execute, review, iterate."
 readme = "README.md"
 license = { text = "MIT" }

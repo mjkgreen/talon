@@ -7,8 +7,7 @@
 #   pyinstaller talon-server.spec
 #
 # Output:
-#   dist/talon-server        (macOS / Linux — one-dir bundle for signing)
-#   dist/talon-server.exe    (Windows — one-file exe)
+#   dist/talon-server/       (all platforms — one-dir bundle, no extraction on launch)
 #
 # The binary is then bundled by electron-builder as an extraResource.
 
@@ -129,26 +128,28 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
+# All platforms use a one-dir bundle so there is nothing to extract at launch.
+# A PyInstaller one-file exe on Windows extracts ~150-200 MB to a temp directory
+# on every startup; with antivirus scanning this routinely exceeds the 30-second
+# Electron timeout before PORT is ever announced.
+#
+# On Windows, console=True keeps sys.stdout/stderr connected to the pipe that
+# Electron sets up. console=False causes the PyInstaller bootloader to set
+# sys.stdout=None, silently breaking the PORT announcement.
+# The console window is suppressed by windowsHide:true in Electron's spawn().
+#
+# On macOS/Linux, console=False avoids the app appearing in the Dock as a terminal.
 if sys.platform == "win32":
-    # One-file exe on Windows — easier distribution, no directory to sign.
     exe = EXE(
         pyz,
         a.scripts,
-        a.binaries,
-        a.zipfiles,
-        a.datas,
         [],
+        exclude_binaries=True,
         name="talon-server",
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,
         upx=USE_UPX,
-        upx_exclude=[],
-        runtime_tmpdir=None,
-        # console=True keeps sys.stdout/stderr connected to the pipe Electron sets up.
-        # console=False causes PyInstaller's bootloader to set sys.stdout=None on
-        # Windows, preventing the PORT announcement from ever reaching Electron.
-        # The console window is suppressed by windowsHide:true in Electron's spawn().
         console=True,
         disable_windowed_traceback=False,
         argv_emulation=False,
@@ -157,7 +158,6 @@ if sys.platform == "win32":
         entitlements_file=None,
     )
 else:
-    # One-dir bundle on macOS / Linux for notarisation / AppImage signing.
     exe = EXE(
         pyz,
         a.scripts,
@@ -175,13 +175,13 @@ else:
         codesign_identity=None,
         entitlements_file=None,
     )
-    coll = COLLECT(
-        exe,
-        a.binaries,
-        a.zipfiles,
-        a.datas,
-        strip=False,
-        upx=USE_UPX,
-        upx_exclude=[],
-        name="talon-server",
-    )
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=USE_UPX,
+    upx_exclude=[],
+    name="talon-server",
+)
