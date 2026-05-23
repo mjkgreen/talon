@@ -48,6 +48,7 @@ function startPythonServer() {
   return new Promise((resolve, reject) => {
     const binaryPath = getPythonBinaryPath();
     let proc;
+    let stderrBuffer = '';
 
     // Only inject OAuth creds when they've been replaced by CI (i.e. not the
     // placeholder strings). In dev mode the server reads them from .env instead.
@@ -92,9 +93,12 @@ function startPythonServer() {
     });
 
     proc.stderr.on('data', (data) => {
-      // Suppress in production; log in dev for debugging.
+      const text = data.toString();
+      // Accumulate stderr so it can be shown in the error dialog on failure.
+      stderrBuffer += text;
+      if (stderrBuffer.length > 4000) stderrBuffer = stderrBuffer.slice(-4000);
       if (!app.isPackaged) {
-        process.stderr.write(`[server] ${data}`);
+        process.stderr.write(`[server] ${text}`);
       }
     });
 
@@ -104,14 +108,16 @@ function startPythonServer() {
 
     proc.on('exit', (code) => {
       if (serverPort === null) {
-        reject(new Error(`Python server exited before announcing port (code ${code})`));
+        const detail = stderrBuffer.trim() ? `\n\nServer output:\n${stderrBuffer.trim()}` : '';
+        reject(new Error(`Python server exited before announcing port (code ${code})${detail}`));
       }
     });
 
     // Timeout if the server never announces a port (e.g. import error)
     setTimeout(() => {
       if (serverPort === null) {
-        reject(new Error('Timed out waiting for Python server to start (30 s)'));
+        const detail = stderrBuffer.trim() ? `\n\nServer output:\n${stderrBuffer.trim()}` : '';
+        reject(new Error(`Timed out waiting for Python server to start (30 s)${detail}`));
       }
     }, 30_000);
   });

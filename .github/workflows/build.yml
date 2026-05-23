@@ -47,7 +47,7 @@ jobs:
           architecture: ${{ matrix.python-arch }}
 
       - name: Install Python deps + PyInstaller
-        run: pip install pyinstaller -e ".[dev]"
+        run: pip install "pyinstaller>=6.0,<7" -e ".[dev]"
 
       # Build the React UI so it can be bundled into the Python binary
       - name: Set up Node

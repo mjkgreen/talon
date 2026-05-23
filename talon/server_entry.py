@@ -15,11 +15,32 @@ import sys
 # On Windows the default stdout encoding for pipes is cp1252 (charmap).
 # Replace it with UTF-8 before any imports so every Console() instance
 # in sub-modules inherits the corrected stream and can write Unicode safely.
-if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
-    sys.stdout = io.TextIOWrapper(
-        sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True
-    )
-    if hasattr(sys.stderr, "buffer"):
+#
+# PyInstaller console=False (windowed) sets sys.stdout/stderr to None even
+# when Electron spawns the process with a pipe. Reconstruct from fd 1/2 so
+# the PORT announcement actually reaches Electron.
+if sys.platform == "win32":
+    if sys.stdout is None:
+        try:
+            sys.stdout = io.TextIOWrapper(
+                io.FileIO(1, closefd=False),
+                encoding="utf-8", errors="replace", line_buffering=True,
+            )
+        except Exception:
+            pass
+    elif hasattr(sys.stdout, "buffer"):
+        sys.stdout = io.TextIOWrapper(
+            sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True
+        )
+    if sys.stderr is None:
+        try:
+            sys.stderr = io.TextIOWrapper(
+                io.FileIO(2, closefd=False),
+                encoding="utf-8", errors="replace", line_buffering=True,
+            )
+        except Exception:
+            pass
+    elif hasattr(sys.stderr, "buffer"):
         sys.stderr = io.TextIOWrapper(
             sys.stderr.buffer, encoding="utf-8", errors="replace", line_buffering=True
         )
