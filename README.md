@@ -15,7 +15,7 @@ Windows `.exe` · macOS `.dmg` · Linux `.AppImage`
 
 `talon-agent` is an advanced AI-powered orchestrator and agentic workspace automation system designed to take high-level software development goals and turn them into fully executed, verified code changes. 
 
-Instead of relying on a single context window to write code and perform tasks, `talon-agent` utilizes a multi-role, parallel agent architecture to decompose complex goals, execute subtasks simultaneously in isolated workspaces, strictly review output results against automated test suites, and iteratively refine codebases until all acceptance criteria are met.
+Instead of relying on a single context window to write code and perform tasks, `talon-agent` utilizes a multi-role, parallel agent architecture to plan, decompose complex goals, execute subtasks simultaneously in isolated workspaces, strictly review output results against automated test suites, and iteratively refine codebases until all acceptance criteria are met.
 
 ### How It Works
 
