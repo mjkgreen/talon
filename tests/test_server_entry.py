@@ -29,6 +29,7 @@ REPO_ROOT = Path(__file__).parent.parent
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _read_line_with_timeout(stream, timeout: float = 10.0) -> str | None:
     """Read one line from *stream* with a wall-clock timeout.
 
@@ -73,25 +74,30 @@ def _spawn_server(tmp_db: str) -> subprocess.Popen:
 # _find_free_port()
 # ---------------------------------------------------------------------------
 
+
 class TestFindFreePort:
     def test_returns_integer(self):
         from talon.server_entry import _find_free_port
+
         assert isinstance(_find_free_port(), int)
 
     def test_port_in_valid_range(self):
         from talon.server_entry import _find_free_port
+
         port = _find_free_port()
         assert 1024 <= port <= 65535
 
     def test_port_is_actually_free(self):
         """The returned port must be bindable immediately."""
         from talon.server_entry import _find_free_port
+
         port = _find_free_port()
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind(("127.0.0.1", port))  # raises if already in use
 
     def test_successive_calls_usually_differ(self):
         from talon.server_entry import _find_free_port
+
         ports = {_find_free_port() for _ in range(5)}
         assert len(ports) > 1
 
@@ -99,6 +105,7 @@ class TestFindFreePort:
 # ---------------------------------------------------------------------------
 # stdout reconstruction (the console=False / sys.stdout=None regression)
 # ---------------------------------------------------------------------------
+
 
 class TestStdoutReconstruction:
     """
@@ -134,7 +141,10 @@ class TestStdoutReconstruction:
         assert fio.writable(), "FileIO(1, mode='w') should be writable"
 
         wrapper = io.TextIOWrapper(
-            fio, encoding="utf-8", errors="replace", line_buffering=True,
+            fio,
+            encoding="utf-8",
+            errors="replace",
+            line_buffering=True,
         )
         assert wrapper.writable()
 
@@ -142,6 +152,7 @@ class TestStdoutReconstruction:
 # ---------------------------------------------------------------------------
 # Full subprocess smoke tests (mirrors what Electron does at launch)
 # ---------------------------------------------------------------------------
+
 
 class TestServerEntrySubprocess:
     """
@@ -156,9 +167,7 @@ class TestServerEntrySubprocess:
             line = _read_line_with_timeout(proc.stdout, timeout=10)
             if line is None:
                 stderr = proc.stderr.read(2000).decode(errors="replace")
-                pytest.fail(
-                    f"No output from server_entry within 10 s.\nstderr: {stderr}"
-                )
+                pytest.fail(f"No output from server_entry within 10 s.\nstderr: {stderr}")
             assert line.startswith("PORT:"), (
                 f"Expected 'PORT:<n>' but got: {line!r}\n"
                 f"stderr: {proc.stderr.read(2000).decode(errors='replace')}"

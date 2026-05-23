@@ -29,12 +29,14 @@ MAX_TOOL_TURNS = int(os.getenv("REVIEWER_MAX_TOOL_TURNS", "500"))
 
 class _VerdictPayload(BaseModel):
     """Schema for the LLM's JSON verdict — validated before building ReviewFeedback."""
+
     verdict: ReviewVerdict
     score: float
     summary: str
     criteria: list[ReviewCriterion] = []
     blocking_issues: list[str] = []
     suggestions: list[str] = []
+
 
 _REVIEWER_SYSTEM = """\
 You are a rigorous code reviewer acting as quality gate for an autonomous coding agent.
@@ -98,10 +100,12 @@ def _build_review_prompt(
     if plan:
         criteria_lines = "\n".join(f"  - {c}" for c in plan.success_criteria) or "  (none)"
         constraints_lines = "\n".join(f"  - {c}" for c in plan.constraints) or "  (none)"
-        phases_lines = "\n".join(
-            f"  Phase {i + 1}: {ph.name} — {ph.description}"
-            for i, ph in enumerate(plan.phases)
-        ) or "  (none)"
+        phases_lines = (
+            "\n".join(
+                f"  Phase {i + 1}: {ph.name} — {ph.description}" for i, ph in enumerate(plan.phases)
+            )
+            or "  (none)"
+        )
         plan_section = (
             f"## Agreed plan\n"
             f"Approach: {plan.approach}\n\n"

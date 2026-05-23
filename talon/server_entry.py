@@ -5,6 +5,7 @@ Finds a free TCP port, announces it on stdout so Electron can connect,
 then starts uvicorn. Handles SIGTERM / Windows CTRL_BREAK_EVENT for
 clean shutdown.
 """
+
 from __future__ import annotations
 
 import io
@@ -26,7 +27,9 @@ if sys.platform == "win32":
             # read-only wrapper and print() would raise UnsupportedOperation.
             sys.stdout = io.TextIOWrapper(
                 io.FileIO(1, mode="w", closefd=False),
-                encoding="utf-8", errors="replace", line_buffering=True,
+                encoding="utf-8",
+                errors="replace",
+                line_buffering=True,
             )
         except Exception:
             pass
@@ -38,7 +41,9 @@ if sys.platform == "win32":
         try:
             sys.stderr = io.TextIOWrapper(
                 io.FileIO(2, mode="w", closefd=False),
-                encoding="utf-8", errors="replace", line_buffering=True,
+                encoding="utf-8",
+                errors="replace",
+                line_buffering=True,
             )
         except Exception:
             pass

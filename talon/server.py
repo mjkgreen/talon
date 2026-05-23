@@ -46,24 +46,27 @@ GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "")
 
 # Maps DB settings keys → environment variable names for AI/model config
 _DB_TO_ENV: dict[str, str] = {
-    "anthropic_api_key":  "ANTHROPIC_API_KEY",
-    "openai_api_key":     "OPENAI_API_KEY",
-    "gemini_api_key":     "GEMINI_API_KEY",
-    "groq_api_key":       "GROQ_API_KEY",
-    "mistral_api_key":    "MISTRAL_API_KEY",
-    "agent_model":        "AGENT_MODEL",
+    "anthropic_api_key": "ANTHROPIC_API_KEY",
+    "openai_api_key": "OPENAI_API_KEY",
+    "gemini_api_key": "GEMINI_API_KEY",
+    "groq_api_key": "GROQ_API_KEY",
+    "mistral_api_key": "MISTRAL_API_KEY",
+    "agent_model": "AGENT_MODEL",
     "orchestrator_model": "ORCHESTRATOR_MODEL",
-    "subagent_model":     "SUBAGENT_MODEL",
-    "reviewer_model":     "REVIEWER_MODEL",
-    "refiner_model":      "REFINER_MODEL",
-    "max_iterations":          "MAX_ITERATIONS",
-    "agent_max_tokens":        "AGENT_MAX_TOKENS",
+    "subagent_model": "SUBAGENT_MODEL",
+    "reviewer_model": "REVIEWER_MODEL",
+    "refiner_model": "REFINER_MODEL",
+    "max_iterations": "MAX_ITERATIONS",
+    "agent_max_tokens": "AGENT_MAX_TOKENS",
     "reviewer_max_tool_turns": "REVIEWER_MAX_TOOL_TURNS",
 }
 
 _API_KEY_SETTINGS = {
-    "anthropic_api_key", "openai_api_key", "gemini_api_key",
-    "groq_api_key", "mistral_api_key",
+    "anthropic_api_key",
+    "openai_api_key",
+    "gemini_api_key",
+    "groq_api_key",
+    "mistral_api_key",
 }
 
 app = FastAPI(title="Talon Server", version="1.0.0")
@@ -101,7 +104,13 @@ def _extract_labels(items: list[dict]) -> list[str]:
 
 def _has_llm_configured() -> bool:
     """Return True if at least one AI provider API key is available."""
-    keys = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY"]
+    keys = [
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "GEMINI_API_KEY",
+        "GROQ_API_KEY",
+        "MISTRAL_API_KEY",
+    ]
     return any(os.getenv(k) for k in keys)
 
 
@@ -149,15 +158,18 @@ async def _run_planner_bg(issue_id: int, goal: str) -> None:
     await manager.broadcast({"type": "plan_started", "issue_id": issue_id})
     try:
         from talon.skills.planner import run as planner_run
+
         plan = await planner_run(goal=goal)
         plan_json = plan.model_dump_json()
         await db.update_issue(issue_id, db.IssueUpdate(plan_json=plan_json))
         issue = await db.get_issue(issue_id)
-        await manager.broadcast({
-            "type": "plan_ready",
-            "issue_id": issue_id,
-            "issue": issue.model_dump() if issue else None,
-        })
+        await manager.broadcast(
+            {
+                "type": "plan_ready",
+                "issue_id": issue_id,
+                "issue": issue.model_dump() if issue else None,
+            }
+        )
     except Exception as e:
         console.print(f"[yellow]Planner failed for issue {issue_id}: {e}[/yellow]")
         await manager.broadcast({"type": "plan_error", "issue_id": issue_id, "error": str(e)})
@@ -174,19 +186,26 @@ async def _run_plan_refiner_bg(issue_id: int, goal: str) -> None:
         if not issue or not issue.plan_json:
             raise ValueError("No existing plan to refine")
         from talon.types import PlanResult
+
         current_plan = PlanResult.model_validate_json(issue.plan_json)
         comments: list[str] = json.loads(issue.plan_comments or "[]")
 
         from talon.skills.plan_refiner import run as plan_refiner_run
+
         new_plan = await plan_refiner_run(goal=goal, current_plan=current_plan, comments=comments)
 
-        await db.update_issue(issue_id, db.IssueUpdate(plan_json=new_plan.model_dump_json(), plan_comments="[]"))
+        await db.update_issue(
+            issue_id,
+            db.IssueUpdate(plan_json=new_plan.model_dump_json(), plan_comments="[]"),
+        )
         updated = await db.get_issue(issue_id)
-        await manager.broadcast({
-            "type": "plan_ready",
-            "issue_id": issue_id,
-            "issue": updated.model_dump() if updated else None,
-        })
+        await manager.broadcast(
+            {
+                "type": "plan_ready",
+                "issue_id": issue_id,
+                "issue": updated.model_dump() if updated else None,
+            }
+        )
     except Exception as e:
         console.print(f"[yellow]Plan refiner failed for issue {issue_id}: {e}[/yellow]")
         await manager.broadcast({"type": "plan_error", "issue_id": issue_id, "error": str(e)})
@@ -219,11 +238,13 @@ async def _run_loop(
     if not _has_llm_configured():
         console.print("[red]No AI provider configured — set an API key in Settings.[/red]")
         if issue_id:
-            await manager.broadcast({
-                "type": "run_error",
-                "issue_id": issue_id,
-                "error": "No AI provider configured. Add an API key in Settings.",
-            })
+            await manager.broadcast(
+                {
+                    "type": "run_error",
+                    "issue_id": issue_id,
+                    "error": "No AI provider configured. Add an API key in Settings.",
+                }
+            )
             await db.update_issue(issue_id, db.IssueUpdate(status="Failed"))
             await broadcast_issue_update(issue_id)
         return
@@ -261,8 +282,12 @@ async def _run_loop(
             github_token = await db.get_setting("github_token")
             if project_id:
                 project = await db.get_project(project_id)
-                workspace_mode = project.workspace_mode if project else await db.get_setting("workspace_mode")
-                selected_repo = project.selected_repo if project else await db.get_setting("selected_repo")
+                workspace_mode = (
+                    project.workspace_mode if project else await db.get_setting("workspace_mode")
+                )
+                selected_repo = (
+                    project.selected_repo if project else await db.get_setting("selected_repo")
+                )
                 selected_branch = project.selected_branch if project else None
                 local_path = project.local_path if project else await db.get_setting("local_path")
             else:
@@ -292,6 +317,7 @@ async def _run_loop(
                 stored_issue = await db.get_issue(issue_id)
                 if stored_issue and stored_issue.plan_json:
                     from talon.types import PlanResult
+
                     try:
                         precomputed_plan = PlanResult.model_validate_json(stored_issue.plan_json)
                     except Exception:
@@ -524,6 +550,7 @@ async def github_auth_exchange(body: _GitHubExchangeRequest):
 @app.get("/api/local/browse")
 async def browse_local_folder():
     """Open a native OS folder-picker dialog and return the selected path."""
+
     def _pick() -> str:
         import tkinter as tk
         from tkinter import filedialog
@@ -631,11 +658,17 @@ async def list_repo_branches(owner: str, repo: str):
     async with httpx.AsyncClient() as client:
         repo_res = await client.get(
             f"https://api.github.com/repos/{owner}/{repo}",
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.v3+json"},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github.v3+json",
+            },
         )
         branches_res = await client.get(
             f"https://api.github.com/repos/{owner}/{repo}/branches?per_page=100",
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.v3+json"},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github.v3+json",
+            },
         )
 
     if repo_res.status_code != 200 or branches_res.status_code != 200:
@@ -684,7 +717,9 @@ async def sync_github_issues(project_id: Optional[int] = Query(default=None)):
             if title not in existing_titles:
                 body = issue.get("body") or ""
                 new_issue = await db.create_issue(
-                    db.IssueCreate(title=title, description=body, status="Backlog", project_id=project_id)
+                    db.IssueCreate(
+                        title=title, description=body, status="Backlog", project_id=project_id
+                    )
                 )
                 await broadcast_issue_update(new_issue.id)
                 synced += 1
@@ -876,7 +911,9 @@ async def linear_webhook(
 
     project_id = await db.get_first_project_id()
     issue = await db.create_issue(
-        db.IssueCreate(title=title, description=description, status="In Progress", project_id=project_id)
+        db.IssueCreate(
+            title=title, description=description, status="In Progress", project_id=project_id
+        )
     )
     await broadcast_issue_update(issue.id)
 
@@ -910,7 +947,9 @@ async def github_webhook(
 
     project_id = await db.get_first_project_id()
     issue = await db.create_issue(
-        db.IssueCreate(title=title, description=body_text, status="In Progress", project_id=project_id)
+        db.IssueCreate(
+            title=title, description=body_text, status="In Progress", project_id=project_id
+        )
     )
     await broadcast_issue_update(issue.id)
 

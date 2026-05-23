@@ -119,10 +119,19 @@ def setup(
         )
 
     _COPY_IGNORE = shutil.ignore_patterns(
-        ".git", "node_modules", ".next", ".nuxt",
-        "venv", ".venv", "__pycache__", "*.pyc",
-        "dist", "build", ".tox",
-        "workspace", "runs",
+        ".git",
+        "node_modules",
+        ".next",
+        ".nuxt",
+        "venv",
+        ".venv",
+        "__pycache__",
+        "*.pyc",
+        "dist",
+        "build",
+        ".tox",
+        "workspace",
+        "runs",
     )
     shutil.copytree(str(base), str(run_ws), dirs_exist_ok=True, ignore=_COPY_IGNORE)
     console.print(f"  [dim]workspace -> {run_ws} (copy of {base})[/dim]")

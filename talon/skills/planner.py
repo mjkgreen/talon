@@ -23,7 +23,9 @@ from talon.types import PlanPhase, PlanResult
 console = Console()
 
 # Planner only gets read-only tools — no writes, no shell commands.
-_READ_ONLY_TOOLS = [t for t in TOOL_DEFINITIONS if t["name"] in {"read_file", "list_files", "search_files"}]
+_READ_ONLY_TOOLS = [
+    t for t in TOOL_DEFINITIONS if t["name"] in {"read_file", "list_files", "search_files"}
+]
 
 _PLANNER_SYSTEM = """\
 You are a senior software architect. Your job is to explore the workspace and then
@@ -104,7 +106,9 @@ async def run(goal: str, working_dir: str | None = None) -> PlanResult:
         tool_results: list[ToolResult] = []
         for tc in response.tool_calls:
             console.print(f"  [dim]planner tool:[/dim] {tc.name}({list(tc.input.values())[:2]})")
-            result_str = await asyncio.to_thread(dispatch_tool, tc.name, tc.input, working_dir or ".")
+            result_str = await asyncio.to_thread(
+                dispatch_tool, tc.name, tc.input, working_dir or "."
+            )
             tool_results.append(ToolResult(id=tc.id, content=result_str))
 
         provider.append_tool_results(messages, tool_results)
@@ -120,9 +124,7 @@ async def run(goal: str, working_dir: str | None = None) -> PlanResult:
     try:
         data = json.loads(raw_plan)
     except json.JSONDecodeError as e:
-        raise RuntimeError(
-            f"Planner returned invalid JSON: {e}\nRaw: {raw_plan[:300]!r}"
-        ) from e
+        raise RuntimeError(f"Planner returned invalid JSON: {e}\nRaw: {raw_plan[:300]!r}") from e
 
     plan = PlanResult(
         approach=data.get("approach", ""),
@@ -132,5 +134,8 @@ async def run(goal: str, working_dir: str | None = None) -> PlanResult:
     )
 
     console.print(f"  Approach: {plan.approach[:120]}")
-    console.print(f"  Phases: {len(plan.phases)}  Criteria: {len(plan.success_criteria)}  Explore turns: {turns}")
+    console.print(
+        f"  Phases: {len(plan.phases)}  Criteria: {len(plan.success_criteria)}"
+        f"  Explore turns: {turns}"
+    )
     return plan

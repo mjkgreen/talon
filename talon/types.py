@@ -30,10 +30,10 @@ class SubtaskResult(BaseModel):
 
 
 class PhaseStatus(str, Enum):
-    PENDING   = "pending"
-    RUNNING   = "running"
+    PENDING = "pending"
+    RUNNING = "running"
     COMPLETED = "completed"
-    FAILED    = "failed"
+    FAILED = "failed"
 
 
 class PhaseResult(BaseModel):
@@ -59,10 +59,10 @@ class ExecutorResult(BaseModel):
     @model_validator(mode="after")
     def _flatten_phases(self) -> "ExecutorResult":
         if self.phases and not self.subtasks:
-            object.__setattr__(self, "subtasks",
-                [st for ph in self.phases for st in ph.subtasks])
-            object.__setattr__(self, "subtask_results",
-                [sr for ph in self.phases for sr in ph.subtask_results])
+            object.__setattr__(self, "subtasks", [st for ph in self.phases for st in ph.subtasks])
+            object.__setattr__(
+                self, "subtask_results", [sr for ph in self.phases for sr in ph.subtask_results]
+            )
         return self
 
 
