@@ -22,8 +22,10 @@ import sys
 if sys.platform == "win32":
     if sys.stdout is None:
         try:
+            # FileIO must be opened with mode='w'; the default 'r' creates a
+            # read-only wrapper and print() would raise UnsupportedOperation.
             sys.stdout = io.TextIOWrapper(
-                io.FileIO(1, closefd=False),
+                io.FileIO(1, mode="w", closefd=False),
                 encoding="utf-8", errors="replace", line_buffering=True,
             )
         except Exception:
@@ -35,7 +37,7 @@ if sys.platform == "win32":
     if sys.stderr is None:
         try:
             sys.stderr = io.TextIOWrapper(
-                io.FileIO(2, closefd=False),
+                io.FileIO(2, mode="w", closefd=False),
                 encoding="utf-8", errors="replace", line_buffering=True,
             )
         except Exception:
