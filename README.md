@@ -37,14 +37,14 @@ sub-agents ×N       One agent per subtask, run concurrently within each phase
 reviewer            Reads files, runs tests, checks every success criterion;
  │                  returns pass/fail + score (0–1)
  │
- ├─ pass ─────────► browser-validator   Records a Playwright video proof-of-work
+ ├─ pass ─────────► browser-validator   Records a video proof-of-work (coming soon)
  │                        │
  │                        ▼
  │                   board-updater      Posts result + video to Linear / GitHub Projects
  │
  └─ fail ─────────► refiner            Synthesises blocking issues → action plan
                          │
-                         └──────────────► planner/sub-agents (next iteration, max 3)
+                         └──────────────► loops back to planner/sub-agents (next iteration, max set via settings)
 ```
 
 ### Agent Roles
