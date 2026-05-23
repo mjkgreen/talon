@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from talon.skills.pr_creator import _commit_and_push, _create_github_pr
+from talon.skills.pr_creator import _commit_and_push, _create_github_pr, _goal_to_slug
 from talon.types import ReviewFeedback, ReviewVerdict, RunState
 
 # ---------------------------------------------------------------------------
@@ -35,9 +35,9 @@ def _make_git_repo(path: Path) -> Path:
     return repo
 
 
-def _make_worktree(repo: Path, run_id: str) -> Path:
+def _make_worktree(repo: Path, run_id: str, goal: str = "Add a health endpoint") -> Path:
     """Create a worktree branch matching what workspace.setup() would create."""
-    branch = f"agent/run-{run_id}"
+    branch = f"talon/{_goal_to_slug(goal)}-{run_id[:6]}"
     wt = repo.parent / f"wt-{run_id}"
     subprocess.run(
         ["git", "worktree", "add", "-b", branch, str(wt)],
@@ -60,20 +60,22 @@ def _make_state(workspace: str | None = None) -> RunState:
 
 class TestCommitAndPush:
     def test_pushes_clean_worktree(self, tmp_path):
+        goal = "Add health endpoint"
         repo = _make_git_repo(tmp_path)
         run_id = "abc123"
-        wt = _make_worktree(repo, run_id)
+        wt = _make_worktree(repo, run_id, goal)
 
-        branch = _commit_and_push(str(wt), run_id, "Add health endpoint")
-        assert branch == f"agent/run-{run_id}"
+        branch = _commit_and_push(str(wt), run_id, goal)
+        assert branch == f"talon/{_goal_to_slug(goal)}-{run_id[:6]}"
 
     def test_commits_changes_before_push(self, tmp_path):
+        goal = "Add health endpoint"
         repo = _make_git_repo(tmp_path)
         run_id = "def456"
-        wt = _make_worktree(repo, run_id)
+        wt = _make_worktree(repo, run_id, goal)
 
         (wt / "new_file.py").write_text("# new")
-        branch = _commit_and_push(str(wt), run_id, "Add health endpoint")
+        branch = _commit_and_push(str(wt), run_id, goal)
         assert branch is not None
 
         log = subprocess.run(
@@ -85,12 +87,12 @@ class TestCommitAndPush:
         assert "Add health endpoint" in log.stdout
 
     def test_long_goal_truncated_in_commit(self, tmp_path):
+        long_goal = "A" * 200
         repo = _make_git_repo(tmp_path)
         run_id = "ghi789"
-        wt = _make_worktree(repo, run_id)
+        wt = _make_worktree(repo, run_id, long_goal)
 
         (wt / "f.py").write_text("x")
-        long_goal = "A" * 200
         branch = _commit_and_push(str(wt), run_id, long_goal)
         assert branch is not None
 
@@ -122,7 +124,7 @@ class TestCreateGithubPr:
         return response
 
     def test_returns_pr_url(self, monkeypatch):
-        monkeypatch.setattr("talon.skills.pr_creator.GITHUB_TOKEN", "tok")
+        monkeypatch.setattr("talon.skills.pr_creator._get_github_token", lambda: "tok")
         monkeypatch.setattr("talon.skills.pr_creator.GITHUB_REPO", "owner/repo")
 
         state = _make_state()
@@ -134,7 +136,7 @@ class TestCreateGithubPr:
         assert result == pr_url
 
     def test_includes_score_when_review_present(self, monkeypatch):
-        monkeypatch.setattr("talon.skills.pr_creator.GITHUB_TOKEN", "tok")
+        monkeypatch.setattr("talon.skills.pr_creator._get_github_token", lambda: "tok")
         monkeypatch.setattr("talon.skills.pr_creator.GITHUB_REPO", "owner/repo")
 
         state = _make_state()
@@ -164,7 +166,7 @@ class TestCreateGithubPr:
     def test_returns_none_on_http_error(self, monkeypatch):
         import urllib.error
 
-        monkeypatch.setattr("talon.skills.pr_creator.GITHUB_TOKEN", "tok")
+        monkeypatch.setattr("talon.skills.pr_creator._get_github_token", lambda: "tok")
         monkeypatch.setattr("talon.skills.pr_creator.GITHUB_REPO", "owner/repo")
 
         with patch(
@@ -190,7 +192,7 @@ class TestCreateGithubPr:
 class TestPrCreatorRun:
     @pytest.mark.asyncio
     async def test_skips_when_no_workspace(self, monkeypatch):
-        monkeypatch.setattr("talon.skills.pr_creator.GITHUB_TOKEN", "tok")
+        monkeypatch.setattr("talon.skills.pr_creator._get_github_token", lambda: "tok")
         monkeypatch.setattr("talon.skills.pr_creator.GITHUB_REPO", "owner/repo")
         from talon.skills import pr_creator
 
@@ -199,7 +201,7 @@ class TestPrCreatorRun:
 
     @pytest.mark.asyncio
     async def test_skips_when_no_token(self, monkeypatch):
-        monkeypatch.setattr("talon.skills.pr_creator.GITHUB_TOKEN", "")
+        monkeypatch.setattr("talon.skills.pr_creator._get_github_token", lambda: "")
         monkeypatch.setattr("talon.skills.pr_creator.GITHUB_REPO", "owner/repo")
         from talon.skills import pr_creator
 
@@ -208,7 +210,7 @@ class TestPrCreatorRun:
 
     @pytest.mark.asyncio
     async def test_skips_non_git_workspace(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("talon.skills.pr_creator.GITHUB_TOKEN", "tok")
+        monkeypatch.setattr("talon.skills.pr_creator._get_github_token", lambda: "tok")
         monkeypatch.setattr("talon.skills.pr_creator.GITHUB_REPO", "owner/repo")
         plain = tmp_path / "plain"
         plain.mkdir()
@@ -219,16 +221,17 @@ class TestPrCreatorRun:
 
     @pytest.mark.asyncio
     async def test_full_flow(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("talon.skills.pr_creator.GITHUB_TOKEN", "tok")
+        monkeypatch.setattr("talon.skills.pr_creator._get_github_token", lambda: "tok")
         monkeypatch.setattr("talon.skills.pr_creator.GITHUB_REPO", "owner/repo")
 
-        repo = _make_git_repo(tmp_path)
+        state = _make_state()
         run_id = "full01"
-        wt = _make_worktree(repo, run_id)
-        (wt / "app.py").write_text("# new feature")
-
-        state = _make_state(workspace=str(wt))
         state.run_id = run_id
+
+        repo = _make_git_repo(tmp_path)
+        wt = _make_worktree(repo, run_id, state.goal)
+        (wt / "app.py").write_text("# new feature")
+        state.workspace = str(wt)
 
         pr_url = "https://github.com/owner/repo/pull/99"
 
