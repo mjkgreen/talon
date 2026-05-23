@@ -19,19 +19,23 @@ Instead of relying on a single context window to write code and perform tasks, `
 
 ### How It Works
 
-The system operates via a continuous loop of goal decomposition, parallel execution, self-review, refinement, and verification. Below is a high-level flowchart of the workflow:
+The system operates via a continuous loop of workspace exploration, phased planning, parallel execution, self-review, refinement, and verification. Below is a high-level flowchart of the workflow:
 
 ```text
 Goal
  │
  ▼
-orchestrator        Decomposes goal → 3–7 subtasks with acceptance criteria
- │
+planner             Explores workspace (read/list/search) → produces phased plan
+ │                  (approach, constraints, phases, success criteria)
  ▼
-sub-agents ×N       One agent per subtask, run concurrently
+orchestrator        Iterates through each plan phase sequentially
+ │                  Decomposes each phase into parallel subtasks
+ ▼
+sub-agents ×N       One agent per subtask, run concurrently within each phase
  │                  Each has read/write/shell tool access in the workspace
  ▼
-reviewer            Reads files, runs tests, returns pass/fail + score (0–1)
+reviewer            Reads files, runs tests, checks every success criterion;
+ │                  returns pass/fail + score (0–1)
  │
  ├─ pass ─────────► browser-validator   Records a Playwright video proof-of-work
  │                        │
@@ -40,17 +44,18 @@ reviewer            Reads files, runs tests, returns pass/fail + score (0–1)
  │
  └─ fail ─────────► refiner            Synthesises blocking issues → action plan
                          │
-                         └──────────────► sub-agents (next iteration, max 3)
+                         └──────────────► planner/sub-agents (next iteration, max 3)
 ```
 
 ### Agent Roles
 
-1. **Orchestrator**: Decomposes the initial user goal into 3–7 subtasks, each assigned its own precise acceptance criteria.
-2. **Sub-agents (xN)**: Executed concurrently (one per subtask). Each sub-agent functions as an independent developer equipped with terminal and filesystem tools (`read_file`, `write_file`, `run_command`, `search_files`) to implement their respective tasks inside the workspace.
-3. **Reviewer**: Inspects the modified workspace files, runs user-defined test suites, and assigns a passing grade or failure along with an evaluation score (ranging from 0.0 to 1.0).
-4. **Refiner**: Active only on task failures. It analyzes the reviewer's feedback, aggregates test failures and compiler warnings, and produces a revised action plan for the next iteration of sub-agents.
-5. **Browser Validator**: (Opt-in) Uses Playwright to navigate the application, performs basic UI sanity checks, and records a high-definition walkthrough video to serve as visual proof-of-work.
-6. **Board Updater**: Automatically posts run summaries, code changes, and visual walkthrough links to project management boards (e.g., Linear or GitHub Projects).
+1. **Planner**: Before execution begins, the planner explores the workspace using read-only tools (`read_file`, `list_files`, `search_files`) to understand the existing codebase, conventions, and tech stack. It then produces a structured multi-phase plan (approach, constraints, ordered phases, success criteria) that guides all subsequent execution.
+2. **Orchestrator**: Iterates through plan phases sequentially. For each phase it decomposes the work into 1–7 concurrent subtasks tailored to that phase's scope and the output of prior phases.
+3. **Sub-agents (xN)**: Executed concurrently within a phase. Each sub-agent functions as an independent developer equipped with terminal and filesystem tools (`read_file`, `write_file`, `run_command`, `search_files`) to implement their specific subtask in the workspace.
+4. **Reviewer**: Inspects the modified workspace files, runs user-defined test suites, evaluates the result against every success criterion from the plan, and assigns a passing grade or failure along with a score (0.0–1.0).
+5. **Refiner**: Active only on task failures. It analyzes the reviewer's feedback, aggregates test failures and compiler warnings, and produces a revised action plan for the next iteration.
+6. **Browser Validator**: (Opt-in) Uses Playwright to navigate the application, performs basic UI sanity checks, and records a high-definition walkthrough video to serve as visual proof-of-work.
+7. **Board Updater**: Automatically posts run summaries, code changes, and visual walkthrough links to project management boards (e.g., Linear or GitHub Projects).
 
 ---
 
@@ -264,6 +269,7 @@ Below is a complete reference of the configuration variables supported by `talon
 | `REVIEWER_MODEL`            | String  | `gemini/gemini-pro-latest`    | Model override for the Reviewer (quality gate).                         |
 | `REFINER_MODEL`             | String  | `gemini/gemini-flash-latest`  | Model override for the Refiner (fix synthesis and next-loop planning).  |
 | `MAX_ITERATIONS`            | Integer | `3`                           | Maximum number of try-review-refine iterations before failing a run.    |
+| `PLANNER_MAX_TURNS`         | Integer | `500`                         | Maximum tool-call turns the planner may use to explore the workspace.   |
 | `AGENT_MAX_TOKENS`          | Integer | `8096`                        | Maximum token ceiling for single LLM generation calls.                  |
 | `WORKSPACE_DIR`             | String  | `./workspace`                 | Base directory under which individual run workspaces are generated.     |
 | `RUNS_DIR`                  | String  | `./runs`                      | Directory where full execution histories and state files are saved.     |
@@ -363,19 +369,48 @@ If you interact with `talon-agent` workflows from within interactive terminal as
 | `talon/config.py`                   | Model resolution logic: handles overrides, fallback, and key scanning.                       |
 | `talon/providers/litellm_p.py`      | LiteLLM client wrapper providing normalized tool-calling APIs across vendors.                |
 | `talon/tools.py`                    | Implementation of sub-agent tools: `read_file`, `write_file`, `run_command`, `search_files`. |
-| `talon/types.py`                    | Pydantic model schemas representing `RunState`, `ExecutorResult`, `ReviewFeedback`, etc.     |
-| `talon/skills/task_executor.py`     | Contains the parallel orchestrator execution engine.                                         |
-| `talon/skills/self_reviewer.py`     | Implements the file-reading and verification loop.                                           |
+| `talon/types.py`                    | Pydantic model schemas: `RunState`, `ExecutorResult`, `PhaseResult`, `ReviewFeedback`, etc.  |
+| `talon/skills/planner.py`           | Workspace-exploring planner: uses read-only tools then outputs a multi-phase plan.           |
+| `talon/skills/task_executor.py`     | Phase-sequential, intra-phase-parallel execution engine.                                     |
+| `talon/skills/self_reviewer.py`     | Reviewer with plan-aware success-criteria verification loop.                                 |
 | `talon/skills/refiner.py`           | Logic to distill logs into actionable developer instructions.                                |
 | `talon/skills/browser_validator.py` | Playwright interface logic for visually recording page runs.                                 |
 | `talon/skills/board_updater.py`     | Connector logic to post update summaries to board integrations.                              |
-| `talon/loop.py`                     | Orchestrates the top-level main execution pipeline loop.                                     |
+| `talon/loop.py`                     | Orchestrates the top-level main execution pipeline loop; streams phase-complete events.      |
 | `talon/main.py`                     | Defines the local user CLI interface.                                                        |
 | `talon/server_entry.py`             | PyInstaller standalone entry point. Finds ports, spawns fastapi.                             |
 | `talon-server.spec`                 | Spec configuration file for building Python server binaries via PyInstaller.                 |
 | `electron/`                         | Node project containing main/preload scripts for the Electron desktop wrapper.               |
 | `runs/<id>/state.json`              | Stores full execution logs, agent thoughts, and tools history for each run.                  |
 | `workspace/`                        | Local directory containing generated workspace checkouts or copied folders.                  |
+
+---
+
+## Changelog
+
+### 0.6.0
+
+**Workspace-exploring planner** — The planner now runs a full tool-use loop before producing a plan. It calls `list_files`, `read_file`, and `search_files` (read-only) to understand the existing codebase structure, conventions, and tech stack, then generates a phased plan grounded in what already exists. Configurable via `PLANNER_MAX_TURNS` (default 500).
+
+**Phased execution** — The executor no longer treats a goal as a single flat list of subtasks. It now iterates through the planner's phases sequentially. Within each phase, subtasks run in parallel as before. Each phase receives the aggregated output of prior phases as context, preventing rework and intra-phase dependency conflicts.
+
+**Incremental UI progress** — The loop emits a `on_phase_complete` callback after each phase finishes, which immediately persists partial state and pushes a WebSocket update. The task detail panel in the UI now shows each phase with a status indicator (pending / running / complete) and updates in real time as execution progresses, rather than waiting for the full iteration to finish.
+
+**Plan-aware reviewer** — The self-reviewer now receives the full plan (approach, phases, constraints, success criteria) and is instructed to verify each success criterion explicitly, not just the overall goal description.
+
+**Branch selection** — Projects that use a GitHub repository can now target a specific branch. The setup wizard (step 4) shows a branch dropdown that loads all branches for the selected repo and pre-selects the repo default. The selected branch is stored in the project database and passed through to `git clone --branch --single-branch` when the workspace is set up. A branch badge is shown in the main toolbar for the active project.
+
+**UI polish** — Task creation now shows a spinner and disables the submit button while the API call is in flight. Subtasks in the task detail panel show expandable output sections (click the chevron to inspect agent output for any subtask).
+
+**New API endpoint** — `GET /api/github/repos/{owner}/{repo}/branches` returns the list of branches and the repo default branch.
+
+---
+
+### 0.5.x
+
+- 0.5.2: fix reviewer JSON failures, raise tool turn limit, add limit hints in UI
+- 0.5.1: bump version
+- 0.5.0: bundle tiktoken/litellm/certifi data in PyInstaller exe; fix cl100k_base encoding
 
 ---
 

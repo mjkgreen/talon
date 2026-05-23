@@ -16,10 +16,14 @@ talon run "Add a /health endpoint to the Express app" --working-dir ./workspace
 Goal input
    │
    ▼
-task-executor          Decomposes goal → subtasks, runs N parallel sub-agents
-   │                   Each sub-agent: tool-use loop (read/write/run/search)
+planner                Explores workspace (read/list/search) → phased plan
+   │                   (approach, constraints, phases, success criteria)
    ▼
-self-reviewer          Inspects files + runs tests, returns pass/fail + score
+task-executor          Iterates phases sequentially; within each phase runs
+   │                   N parallel sub-agents (tool-use loop: read/write/run/search)
+   ▼
+self-reviewer          Reads files, runs tests, checks plan success criteria
+   │                   returns pass/fail + score (0–1)
    │
    ├─ pass ────────────► browser-validator   (Playwright video recording)
    │                          │
@@ -32,6 +36,7 @@ self-reviewer          Inspects files + runs tests, returns pass/fail + score
 ```
 
 Max iterations: `MAX_ITERATIONS` env var (default 3).
+Planner explore turns: `PLANNER_MAX_TURNS` env var (default 500).
 
 ## Skills (Claude Code slash commands)
 
@@ -57,10 +62,11 @@ talon review <run-id>         # dump run state JSON
 
 | Path | Purpose |
 |------|---------|
-| `talon/types.py` | Pydantic models: `RunState`, `ExecutorResult`, `ReviewFeedback`, … |
+| `talon/types.py` | Pydantic models: `RunState`, `ExecutorResult`, `PhaseResult`, `ReviewFeedback`, … |
 | `talon/tools.py` | Tool implementations: `read_file`, `write_file`, `run_command`, `search_files` |
-| `talon/skills/task_executor.py` | Goal decomposition + parallel sub-agent runner |
-| `talon/skills/self_reviewer.py` | Reviewer with tool-use loop and JSON verdict |
+| `talon/skills/planner.py` | Workspace-exploring planner; outputs multi-phase plan |
+| `talon/skills/task_executor.py` | Phase-sequential, intra-phase-parallel execution engine |
+| `talon/skills/self_reviewer.py` | Plan-aware reviewer with tool-use loop and JSON verdict |
 | `talon/skills/refiner.py` | Feedback → action plan synthesis |
 | `talon/skills/browser_validator.py` | Playwright video proof (enable with env var) |
 | `talon/skills/board_updater.py` | Linear / GitHub Projects poster |
