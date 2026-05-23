@@ -31,7 +31,7 @@ GITHUB_PROJECT_NUMBER: int | None = int(_pn) if _pn.isdigit() else None
 
 
 def _get_github_token() -> str:
-    return os.getenv("GITHUB_TOKEN") or sync_get_setting("github_token") or ""
+    return sync_get_setting("github_token") or os.getenv("GITHUB_TOKEN", "")
 
 
 def _format_payload(state: RunState, video_url: str | None, pr_url: str | None) -> dict:

@@ -114,6 +114,7 @@ async def run(
         run_workspace = await asyncio.to_thread(
             workspace.setup, state.run_id, working_dir,
             repo_url=repo_url, repo_branch=repo_branch, direct=direct_workspace,
+            goal=goal,
         )
         state.workspace = run_workspace
 

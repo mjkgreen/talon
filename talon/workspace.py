@@ -3,7 +3,7 @@ Per-run workspace isolation.
 
 Each run gets its own directory so concurrent runs never conflict.
 
-- If base_dir is a git repo  -> git worktree add on branch agent/run-<id>
+- If base_dir is a git repo  -> git worktree add on branch talon/run-<id>
 - If base_dir is a plain dir -> shutil.copytree into workspace/<id>/
 - If base_dir is None        -> fresh empty workspace/<id>/
 
@@ -14,6 +14,7 @@ or used for PR creation after the run completes.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -23,6 +24,12 @@ from rich.console import Console
 console = Console()
 
 WORKSPACE_BASE = os.getenv("WORKSPACE_DIR", "./workspace")
+
+
+def _goal_to_slug(goal: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", goal.lower())
+    slug = re.sub(r"-+", "-", slug).strip("-")[:45].rstrip("-")
+    return slug or "task"
 
 
 def _is_git_repo(path: Path) -> bool:
@@ -44,6 +51,7 @@ def setup(
     repo_url: str | None = None,
     repo_branch: str | None = None,
     direct: bool = False,
+    goal: str | None = None,
 ) -> str:
     """
     Create and return an isolated workspace path for this run.
@@ -94,7 +102,8 @@ def setup(
     run_ws.parent.mkdir(parents=True, exist_ok=True)
 
     if _is_git_repo(base):
-        branch = f"agent/run-{run_id}"
+        slug = _goal_to_slug(goal) if goal else f"run-{run_id}"
+        branch = f"talon/{slug}-{run_id[:6]}"
         result = subprocess.run(
             ["git", "worktree", "add", "-b", branch, str(run_ws)],
             cwd=str(base),

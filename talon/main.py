@@ -19,11 +19,16 @@ import os
 import sys
 from pathlib import Path
 
-# Windows pipes default to CP1252; replace before any Rich Console is created.
-if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
-    sys.stdout = io.TextIOWrapper(
-        sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True
-    )
+# On Windows the console code page defaults to CP1252, which mangles UTF-8
+# box-drawing characters emitted by Rich. Switch to UTF-8 (65001) first, then
+# rewrap stdout/stderr so Python also encodes as UTF-8.
+if sys.platform == "win32":
+    import ctypes
+    ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+    if hasattr(sys.stdout, "buffer"):
+        sys.stdout = io.TextIOWrapper(
+            sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True
+        )
     if hasattr(sys.stderr, "buffer"):
         sys.stderr = io.TextIOWrapper(
             sys.stderr.buffer, encoding="utf-8", errors="replace", line_buffering=True

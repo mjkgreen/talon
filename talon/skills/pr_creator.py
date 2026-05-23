@@ -30,13 +30,12 @@ from talon.types import RunState
 
 console = Console()
 
-GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "")
 GITHUB_BASE_BRANCH = os.getenv("GITHUB_BASE_BRANCH", "main")
 
 
 def _get_github_token() -> str:
-    return GITHUB_TOKEN or sync_get_setting("github_token") or ""
+    return sync_get_setting("github_token") or os.getenv("GITHUB_TOKEN", "")
 
 
 def _git(args: list[str], cwd: str) -> subprocess.CompletedProcess:
@@ -58,15 +57,21 @@ def _detect_github_repo(workspace: str) -> str | None:
     return m.group(1) if m else None
 
 
+def _goal_to_slug(goal: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", goal.lower())
+    slug = re.sub(r"-+", "-", slug).strip("-")[:45].rstrip("-")
+    return slug or "task"
+
+
 def _commit_and_push(workspace: str, run_id: str, goal: str) -> str | None:
     """Stage uncommitted changes, commit, push. Returns branch name or None on failure.
 
     Handles two cases:
-    - Worktree mode: already on agent/run-{run_id} branch → commit + push.
+    - Worktree mode: already on talon/<slug>-{run_id} branch → commit + push.
     - Direct mode: on the user's own branch → stash, create agent branch,
       pop stash, commit + push, return to original branch.
     """
-    agent_branch = f"agent/run-{run_id}"
+    agent_branch = f"talon/{_goal_to_slug(goal)}-{run_id[:6]}"
 
     status = _git(["status", "--porcelain"], workspace)
     if status.returncode != 0:
@@ -76,7 +81,7 @@ def _commit_and_push(workspace: str, run_id: str, goal: str) -> str | None:
     current = _git(["branch", "--show-current"], workspace)
     current_branch = current.stdout.strip() if current.returncode == 0 else ""
 
-    on_agent_branch = current_branch == agent_branch
+    on_agent_branch = current_branch == agent_branch or current_branch == f"talon/run-{run_id}"
     has_changes = bool(status.stdout.strip())
 
     if not on_agent_branch:
@@ -191,7 +196,7 @@ async def run(state: RunState, working_dir: str | None) -> str | None:
 
     token = _get_github_token()
     if not token:
-        console.print("  [dim]pr-creator: no GITHUB_TOKEN configured, skipping[/dim]")
+        console.print("  [dim]pr-creator: not authenticated with GitHub — sign in via Settings[/dim]")
         return None
 
     from talon.workspace import _is_git_repo
