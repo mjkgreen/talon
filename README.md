@@ -243,7 +243,7 @@ To prevent concurrent agent runs from clobbering each other, every execution run
 | :------------------ | :----------------------------------------------------------------------------------------------------------------------- |
 | **Not set**         | A fresh, empty directory is created at `workspace/<run-id>/`.                                                            |
 | **Plain directory** | The entire directory contents are copied into `workspace/<run-id>/`.                                                     |
-| **Git repository**  | An isolated branch named `agent/run-<id>` is created via `git worktree add` to preserve the parent repository structure. |
+| **Git repository**  | An isolated branch named `talon/<goal-slug>-<short-id>` is created via `git worktree add` to preserve the parent repository structure. |
 
 * **On Success (Pass)**: The workspace is kept intact at `workspace/<run-id>/` to allow manual verification, inspection, or manual PR creation. Use `talon cleanup <run-id>` to remove it later.
 * **On Failure (Fail)**: The workspace directory is automatically cleaned up and deleted to avoid cluttering your filesystem.
@@ -270,6 +270,7 @@ Below is a complete reference of the configuration variables supported by `talon
 | `REFINER_MODEL`             | String  | `gemini/gemini-flash-latest`  | Model override for the Refiner (fix synthesis and next-loop planning).  |
 | `MAX_ITERATIONS`            | Integer | `3`                           | Maximum number of try-review-refine iterations before failing a run.    |
 | `PLANNER_MAX_TURNS`         | Integer | `500`                         | Maximum tool-call turns the planner may use to explore the workspace.   |
+| `REVIEWER_MAX_TOOL_TURNS`   | Integer | `500`                         | Maximum tool-call turns the reviewer may use to inspect the workspace.  |
 | `AGENT_MAX_TOKENS`          | Integer | `8096`                        | Maximum token ceiling for single LLM generation calls.                  |
 | `WORKSPACE_DIR`             | String  | `./workspace`                 | Base directory under which individual run workspaces are generated.     |
 | `RUNS_DIR`                  | String  | `./runs`                      | Directory where full execution histories and state files are saved.     |
@@ -403,6 +404,14 @@ If you interact with `talon-agent` workflows from within interactive terminal as
 **UI polish** — Task creation now shows a spinner and disables the submit button while the API call is in flight. Subtasks in the task detail panel show expandable output sections (click the chevron to inspect agent output for any subtask).
 
 **New API endpoint** — `GET /api/github/repos/{owner}/{repo}/branches` returns the list of branches and the repo default branch.
+
+**Goal-based branch naming** — Worktree and PR branches are now named `talon/<goal-slug>-<short-id>` (e.g. `talon/add-health-endpoint-a3f2b1`) instead of the generic `agent/run-<id>`. The slug is derived from the goal text, making branches immediately recognisable in GitHub.
+
+**Reviewer tool turn limit raised** — `REVIEWER_MAX_TOOL_TURNS` default increased from 50 to 500, matching the planner, so the reviewer can thoroughly inspect large workspaces without hitting the limit.
+
+**GitHub token priority** — `board_updater` and `pr_creator` now prefer the token stored in the app's settings database over the `GITHUB_TOKEN` environment variable, so the in-app GitHub login always takes precedence.
+
+**Windows UTF-8 console fix** — `talon` CLI now calls `SetConsoleOutputCP(65001)` (via `ctypes`) before rewrapping `stdout`/`stderr`, correctly switching the Windows console code page to UTF-8 and preventing garbled box-drawing characters from Rich.
 
 ---
 
