@@ -1,10 +1,12 @@
 import React from "react";
+import { RefreshCw } from "lucide-react";
 
 interface AddTaskModalProps {
   newTitle: string;
   setNewTitle: (v: string) => void;
   newDescription: string;
   setNewDescription: (v: string) => void;
+  isSubmitting?: boolean;
   onClose: () => void;
   onSubmit: (e: React.FormEvent) => void;
 }
@@ -14,6 +16,7 @@ export function AddTaskModal({
   setNewTitle,
   newDescription,
   setNewDescription,
+  isSubmitting = false,
   onClose,
   onSubmit,
 }: AddTaskModalProps) {
@@ -49,10 +52,11 @@ export function AddTaskModal({
             </button>
             <button
               type="submit"
-              disabled={!newTitle.trim()}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-neutral-800 disabled:text-neutral-500 text-white rounded text-sm transition-colors"
+              disabled={!newTitle.trim() || isSubmitting}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-neutral-800 disabled:text-neutral-500 text-white rounded text-sm transition-colors flex items-center gap-2"
             >
-              Create Task
+              {isSubmitting && <RefreshCw size={13} className="animate-spin" />}
+              {isSubmitting ? "Creating..." : "Create Task"}
             </button>
           </div>
         </form>

@@ -28,7 +28,7 @@ from talon.skills import (
     self_reviewer,
     task_executor,
 )
-from talon.types import PlanResult, ReviewVerdict, RunState, RunStatus
+from talon.types import ExecutorResult, PhaseResult, PlanResult, ReviewVerdict, RunState, RunStatus
 
 console = Console()
 
@@ -74,6 +74,7 @@ async def run(
     working_dir: str | None = None,
     app_url: str | None = None,
     repo_url: str | None = None,
+    repo_branch: str | None = None,
     skip_board: bool = False,
     direct_workspace: bool = False,
     create_pr: bool = True,
@@ -112,7 +113,7 @@ async def run(
         # Blocking the loop freezes WebSocket heartbeats and drops connections.
         run_workspace = await asyncio.to_thread(
             workspace.setup, state.run_id, working_dir,
-            repo_url=repo_url, direct=direct_workspace,
+            repo_url=repo_url, repo_branch=repo_branch, direct=direct_workspace,
         )
         state.workspace = run_workspace
 
@@ -130,7 +131,7 @@ async def run(
     try:
         # --- Step 0: Plan ---
         if plan is None:
-            plan = await planner.run(goal=goal)
+            plan = await planner.run(goal=goal, working_dir=run_workspace)
         else:
             console.print("\n[bold blue]planner[/bold blue] (using pre-computed backlog plan)")
         state.plan_result = plan
@@ -148,6 +149,32 @@ async def run(
                 await on_log(f"=== Iteration {i}/{MAX_ITERATIONS} ===")
 
             # --- Step 1: Execute ---
+            # Save partial state after each phase completes so the UI shows
+            # incremental progress without waiting for the full iteration.
+            in_progress_exec: ExecutorResult | None = None
+
+            async def on_phase_complete(phase_result: PhaseResult) -> None:
+                nonlocal in_progress_exec
+                prior_phases = in_progress_exec.phases if in_progress_exec else []
+                all_phases = prior_phases + [phase_result]
+                partial_aggregated = "\n\n".join(
+                    f"## Phase {ph.phase_index + 1}: {ph.phase_name}\n{ph.aggregated_output}"
+                    for ph in all_phases
+                )
+                in_progress_exec = ExecutorResult(
+                    goal=goal,
+                    phases=all_phases,
+                    aggregated_output=partial_aggregated,
+                    iteration=i,
+                )
+                if state.executor_results and state.executor_results[-1].iteration == i:
+                    state.executor_results[-1] = in_progress_exec
+                else:
+                    state.executor_results.append(in_progress_exec)
+                _save_state(state)
+                if on_step:
+                    await on_step(state)
+
             exec_result = await task_executor.run(
                 goal=goal,
                 working_dir=run_workspace,
@@ -155,8 +182,13 @@ async def run(
                 refinement=refinement,
                 plan=plan,
                 on_log=on_log,
+                on_phase_complete=on_phase_complete,
             )
-            state.executor_results.append(exec_result)
+            # Replace the in-progress entry with the final result
+            if state.executor_results and state.executor_results[-1].iteration == i:
+                state.executor_results[-1] = exec_result
+            else:
+                state.executor_results.append(exec_result)
             _save_state(state)
             if on_step:
                 await on_step(state)
@@ -166,6 +198,7 @@ async def run(
                 goal=goal,
                 executor_result=exec_result,
                 working_dir=run_workspace,
+                plan=plan,
             )
             state.review_results.append(review)
             _save_state(state)

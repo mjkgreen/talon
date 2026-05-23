@@ -19,7 +19,7 @@ from rich.console import Console
 from talon.providers import get_provider
 from talon.providers.base import ToolResult
 from talon.tools import TOOL_DEFINITIONS, dispatch_tool
-from talon.types import ExecutorResult, ReviewCriterion, ReviewFeedback, ReviewVerdict
+from talon.types import ExecutorResult, PlanResult, ReviewCriterion, ReviewFeedback, ReviewVerdict
 
 console = Console()
 
@@ -76,7 +76,9 @@ _REVIEWER_TOOLS = [
 ]
 
 
-def _build_review_prompt(goal: str, executor_result: ExecutorResult, working_dir: str) -> str:
+def _build_review_prompt(
+    goal: str, executor_result: ExecutorResult, working_dir: str, plan: PlanResult | None
+) -> str:
     files_summary = (
         "\n".join(f"  - {f}" for r in executor_result.subtask_results for f in r.files_modified)
         or "  (none reported)"
@@ -91,13 +93,32 @@ def _build_review_prompt(goal: str, executor_result: ExecutorResult, working_dir
         f"Output: {r.output[:1000]}"
         for r in executor_result.subtask_results
     )
+
+    plan_section = ""
+    if plan:
+        criteria_lines = "\n".join(f"  - {c}" for c in plan.success_criteria) or "  (none)"
+        constraints_lines = "\n".join(f"  - {c}" for c in plan.constraints) or "  (none)"
+        phases_lines = "\n".join(
+            f"  Phase {i + 1}: {ph.name} — {ph.description}"
+            for i, ph in enumerate(plan.phases)
+        ) or "  (none)"
+        plan_section = (
+            f"## Agreed plan\n"
+            f"Approach: {plan.approach}\n\n"
+            f"Phases:\n{phases_lines}\n\n"
+            f"Constraints:\n{constraints_lines}\n\n"
+            f"Success criteria (verify each one):\n{criteria_lines}\n\n"
+        )
+
     return (
         f"Original goal: {goal}\n\n"
+        f"{plan_section}"
         f"Working directory: {working_dir}\n\n"
         f"Files reportedly modified:\n{files_summary}\n\n"
         f"Commands reportedly run:\n{commands_summary}\n\n"
         f"Agent's subtask outputs:\n{subtask_outputs}\n\n"
-        "---\nUsing the tools available, verify the implementation against the goal.\n"
+        "---\nUsing the tools available, verify the implementation against the goal "
+        "and every success criterion listed above.\n"
         "Then output your verdict JSON."
     )
 
@@ -198,14 +219,19 @@ async def _parse_verdict(raw: str, messages: list[dict], provider) -> _VerdictPa
     )
 
 
-async def run(goal: str, executor_result: ExecutorResult, working_dir: str) -> ReviewFeedback:
+async def run(
+    goal: str,
+    executor_result: ExecutorResult,
+    working_dir: str,
+    plan: PlanResult | None = None,
+) -> ReviewFeedback:
     provider = get_provider("reviewer")
     iteration = executor_result.iteration
 
     console.print(f"\n[bold yellow]self-reviewer[/bold yellow] iteration={iteration}")
 
     messages: list[dict] = [
-        {"role": "user", "content": _build_review_prompt(goal, executor_result, working_dir)}
+        {"role": "user", "content": _build_review_prompt(goal, executor_result, working_dir, plan)}
     ]
     raw_verdict = ""
 

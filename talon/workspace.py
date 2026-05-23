@@ -42,17 +42,19 @@ def setup(
     run_id: str,
     base_dir: str | None = None,
     repo_url: str | None = None,
+    repo_branch: str | None = None,
     direct: bool = False,
 ) -> str:
     """
     Create and return an isolated workspace path for this run.
 
     Args:
-        run_id:   Unique run identifier.
-        base_dir: Existing project directory to branch from, or None for fresh.
-        repo_url: URL to git clone.
-        direct:   If True and base_dir is set, use base_dir as-is (no copy or
-                  worktree).  The agents will edit the real files on disk.
+        run_id:      Unique run identifier.
+        base_dir:    Existing project directory to branch from, or None for fresh.
+        repo_url:    URL to git clone.
+        repo_branch: Branch to checkout after cloning (None = repo default).
+        direct:      If True and base_dir is set, use base_dir as-is (no copy or
+                     worktree).  The agents will edit the real files on disk.
     """
     if direct and base_dir:
         base = Path(base_dir).resolve()
@@ -68,11 +70,13 @@ def setup(
 
         console.print(f"  [dim]Cloning repository for run {run_id}...[/dim]")
         try:
-            subprocess.run(
-                ["git", "clone", repo_url, str(run_ws)],
-                check=True, capture_output=True, text=True, timeout=120,
-            )
-            console.print(f"  [dim]workspace -> {run_ws} (cloned)[/dim]")
+            clone_cmd = ["git", "clone"]
+            if repo_branch:
+                clone_cmd += ["--branch", repo_branch, "--single-branch"]
+            clone_cmd += [repo_url, str(run_ws)]
+            subprocess.run(clone_cmd, check=True, capture_output=True, text=True, timeout=120)
+            branch_label = f" branch={repo_branch}" if repo_branch else ""
+            console.print(f"  [dim]workspace -> {run_ws} (cloned{branch_label})[/dim]")
             return str(run_ws)
         except subprocess.TimeoutExpired:
             shutil.rmtree(run_ws, ignore_errors=True)

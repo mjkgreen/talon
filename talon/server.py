@@ -263,10 +263,12 @@ async def _run_loop(
                 project = await db.get_project(project_id)
                 workspace_mode = project.workspace_mode if project else await db.get_setting("workspace_mode")
                 selected_repo = project.selected_repo if project else await db.get_setting("selected_repo")
+                selected_branch = project.selected_branch if project else None
                 local_path = project.local_path if project else await db.get_setting("local_path")
             else:
                 workspace_mode = await db.get_setting("workspace_mode")
                 selected_repo = await db.get_setting("selected_repo")
+                selected_branch = None
                 local_path = await db.get_setting("local_path")
 
             repo_url = None
@@ -299,6 +301,7 @@ async def _run_loop(
                 goal=goal,
                 working_dir=base_dir,
                 repo_url=repo_url,
+                repo_branch=selected_branch or None,
                 skip_board=False,
                 direct_workspace=edit_local_directly,
                 create_pr=create_pr,
@@ -617,6 +620,30 @@ async def list_github_repos():
             )
         repos = res.json()
         return [{"full_name": r["full_name"], "name": r["name"]} for r in repos]
+
+
+@app.get("/api/github/repos/{owner}/{repo}/branches")
+async def list_repo_branches(owner: str, repo: str):
+    token = await db.get_setting("github_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="GitHub token not configured")
+
+    async with httpx.AsyncClient() as client:
+        repo_res = await client.get(
+            f"https://api.github.com/repos/{owner}/{repo}",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.v3+json"},
+        )
+        branches_res = await client.get(
+            f"https://api.github.com/repos/{owner}/{repo}/branches?per_page=100",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.v3+json"},
+        )
+
+    if repo_res.status_code != 200 or branches_res.status_code != 200:
+        raise HTTPException(status_code=400, detail="Failed to fetch branch info from GitHub")
+
+    default_branch = repo_res.json().get("default_branch", "main")
+    branches = [b["name"] for b in branches_res.json()]
+    return {"default_branch": default_branch, "branches": branches}
 
 
 @app.post("/api/github/sync")

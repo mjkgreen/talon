@@ -5,7 +5,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ReviewVerdict(str, Enum):
@@ -29,13 +29,41 @@ class SubtaskResult(BaseModel):
     error: Optional[str] = None
 
 
-class ExecutorResult(BaseModel):
-    goal: str
+class PhaseStatus(str, Enum):
+    PENDING   = "pending"
+    RUNNING   = "running"
+    COMPLETED = "completed"
+    FAILED    = "failed"
+
+
+class PhaseResult(BaseModel):
+    phase_index: int
+    phase_name: str
+    phase_description: str
     subtasks: list[Subtask]
     subtask_results: list[SubtaskResult]
     aggregated_output: str
+    status: PhaseStatus = PhaseStatus.COMPLETED
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ExecutorResult(BaseModel):
+    goal: str
+    phases: list[PhaseResult] = []
+    subtasks: list[Subtask] = []
+    subtask_results: list[SubtaskResult] = []
+    aggregated_output: str
     iteration: int
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+    @model_validator(mode="after")
+    def _flatten_phases(self) -> "ExecutorResult":
+        if self.phases and not self.subtasks:
+            object.__setattr__(self, "subtasks",
+                [st for ph in self.phases for st in ph.subtasks])
+            object.__setattr__(self, "subtask_results",
+                [sr for ph in self.phases for sr in ph.subtask_results])
+        return self
 
 
 class ReviewCriterion(BaseModel):

@@ -1,8 +1,8 @@
 """
 task-executor skill
 -------------------
-1. Decomposes a goal into 3–7 subtasks (single call, no tools)
-2. Spawns one sub-agent per subtask concurrently
+1. Iterates through planner phases sequentially
+2. Decomposes each phase into parallel subtasks (single LLM call per phase)
 3. Each sub-agent runs its own tool-use loop (read/write/run/search)
 4. Aggregates into ExecutorResult
 """
@@ -19,7 +19,16 @@ from rich.console import Console
 from talon.providers import get_provider
 from talon.providers.base import ToolResult
 from talon.tools import TOOL_DEFINITIONS, dispatch_tool
-from talon.types import ExecutorResult, PlanResult, RefinementResult, Subtask, SubtaskResult
+from talon.types import (
+    ExecutorResult,
+    PhaseResult,
+    PhaseStatus,
+    PlanPhase,
+    PlanResult,
+    RefinementResult,
+    Subtask,
+    SubtaskResult,
+)
 
 console = Console()
 
@@ -30,12 +39,12 @@ MAX_SUBAGENTS = int(os.getenv("MAX_SUBAGENTS", "7"))
 def _executor_system(max_subagents: int) -> str:
     return f"""\
 You are a senior software engineer acting as a task orchestrator.
-Your job is to decompose a high-level goal into concrete, independently-executable subtasks.
+Your job is to decompose a specific implementation phase into concrete, independently-executable subtasks.
 
 Rules:
 - Output ONLY valid JSON matching the schema below. No prose, no markdown fences.
-- Each subtask must be self-contained and independently executable.
-- Choose the number of subtasks that best fits the goal's complexity: 1–{max_subagents}.
+- Each subtask must be self-contained and independently executable within this phase.
+- Choose the number of subtasks that best fits the phase's complexity: 1–{max_subagents}.
   Prefer fewer, larger tasks over many tiny ones.
 - acceptance_criteria must be specific and verifiable (e.g. "src/auth.py contains class UserAuth").
 
@@ -63,38 +72,31 @@ Rules:
 """
 
 
-def _plan_context(plan: PlanResult) -> str:
-    lines = [f"Approach: {plan.approach}"]
-    if plan.constraints:
-        lines.append("Constraints:\n" + "\n".join(f"- {c}" for c in plan.constraints))
-    if plan.phases:
-        phase_text = "\n".join(
-            f"  {i}. {p.name}: {p.description}" for i, p in enumerate(plan.phases)
-        )
-        lines.append(f"Planned phases (use as subtask guidance):\n{phase_text}")
-    if plan.success_criteria:
-        lines.append(
-            "Success criteria:\n" + "\n".join(f"- {c}" for c in plan.success_criteria)
-        )
-    return "\n\n".join(lines)
-
-
-async def _decompose_goal(
+async def _decompose_phase(
+    phase: PlanPhase,
+    phase_index: int,
     goal: str,
+    completed_phase_outputs: list[str],
     refinement: str | None,
     max_subagents: int,
-    plan: PlanResult | None = None,
 ) -> list[Subtask]:
     provider = get_provider("orchestrator")
-    user_content = f"Goal: {goal}"
-    if plan:
-        user_content += f"\n\nImplementation plan:\n{_plan_context(plan)}"
+    parts = [
+        f"Overall goal: {goal}",
+        f"Current phase ({phase_index + 1}): {phase.name}\n{phase.description}",
+    ]
+    if completed_phase_outputs:
+        prior = "\n\n".join(
+            f"Phase {i + 1} output:\n{out[:800]}"
+            for i, out in enumerate(completed_phase_outputs)
+        )
+        parts.append(f"Completed phases (context only — do not redo this work):\n{prior}")
     if refinement:
-        user_content += f"\n\nRefinement instructions from previous review:\n{refinement}"
+        parts.append(f"Refinement from previous review:\n{refinement}")
 
     response = await provider.chat(
         system=_executor_system(max_subagents),
-        messages=[{"role": "user", "content": user_content}],
+        messages=[{"role": "user", "content": "\n\n".join(parts)}],
         tools=[],
         max_tokens=2048,
     )
@@ -118,6 +120,8 @@ async def _run_subagent(
     subtask: Subtask,
     goal: str,
     working_dir: str,
+    phase_name: str,
+    phase_context: str,
     on_log: Callable[[str], Awaitable[None]] | None = None,
 ) -> SubtaskResult:
     console.print(f"  [cyan]-> Sub-agent[/cyan] [{subtask.id}] {subtask.description}")
@@ -130,6 +134,8 @@ async def _run_subagent(
             "role": "user",
             "content": (
                 f"Overall goal: {goal}\n\n"
+                f"Current phase: {phase_name}\n"
+                f"{phase_context}\n\n"
                 f"Your specific task: {subtask.description}\n\n"
                 f"Acceptance criteria:\n"
                 + "\n".join(f"- {c}" for c in subtask.acceptance_criteria)
@@ -167,7 +173,6 @@ async def _run_subagent(
 
         provider.append_tool_results(messages, tool_results)
 
-    # If the tool-use loop ended without a text summary, request one explicitly.
     if not final_output:
         summary_response = await provider.chat(
             system=_SUBAGENT_SYSTEM,
@@ -194,6 +199,60 @@ async def _run_subagent(
     )
 
 
+async def _execute_phase(
+    phase: PlanPhase,
+    phase_index: int,
+    goal: str,
+    completed_phases: list[PhaseResult],
+    refinement: str | None,
+    working_dir: str,
+    max_subagents: int,
+    on_log: Callable[[str], Awaitable[None]] | None,
+    on_phase_complete: Callable[[PhaseResult], Awaitable[None]] | None,
+) -> PhaseResult:
+    completed_outputs = [p.aggregated_output for p in completed_phases]
+    subtasks = await _decompose_phase(
+        phase, phase_index, goal, completed_outputs, refinement, max_subagents
+    )
+
+    phase_context = (
+        "\n\n".join(
+            f"Phase {i + 1} ({completed_phases[i].phase_name}):\n{completed_phases[i].aggregated_output[:600]}"
+            for i in range(len(completed_phases))
+        )
+        or "(this is the first phase)"
+    )
+
+    if on_log:
+        await on_log(f"=== Phase {phase_index + 1}: {phase.name} ===")
+    console.print(f"  Decomposed into {len(subtasks)} subtask(s)")
+
+    results = await asyncio.gather(*[
+        _run_subagent(st, goal, working_dir, phase.name, phase_context, on_log)
+        for st in subtasks
+    ])
+
+    aggregated = "\n\n".join(
+        f"[{r.subtask.id}] {r.subtask.description}\n{r.output}" for r in results
+    )
+    all_files = sorted({f for r in results for f in r.files_modified})
+    if on_log and all_files:
+        await on_log(f"Phase {phase_index + 1} files modified: {list(all_files)}")
+
+    phase_result = PhaseResult(
+        phase_index=phase_index,
+        phase_name=phase.name,
+        phase_description=phase.description,
+        subtasks=subtasks,
+        subtask_results=list(results),
+        aggregated_output=aggregated,
+        status=PhaseStatus.COMPLETED,
+    )
+    if on_phase_complete:
+        await on_phase_complete(phase_result)
+    return phase_result
+
+
 async def run(
     goal: str,
     working_dir: str,
@@ -201,33 +260,45 @@ async def run(
     refinement: RefinementResult | None = None,
     plan: PlanResult | None = None,
     on_log: Callable[[str], Awaitable[None]] | None = None,
+    on_phase_complete: Callable[[PhaseResult], Awaitable[None]] | None = None,
 ) -> ExecutorResult:
     refinement_text = refinement.refined_instructions if refinement else None
 
     console.print(f"\n[bold blue]task-executor[/bold blue] iteration={iteration}")
     console.print(f"  Goal: {goal[:100]}")
 
-    subtasks = await _decompose_goal(goal, refinement_text, MAX_SUBAGENTS, plan=plan)
-    console.print(f"  Decomposed into {len(subtasks)} subtask(s)")
-    if on_log:
-        await on_log(f"Decomposed into {len(subtasks)} subtask(s)")
+    phases_to_run: list[PlanPhase] = plan.phases if plan and plan.phases else []
+    if not phases_to_run:
+        phases_to_run = [PlanPhase(name="Execute goal", description=goal[:200], dependencies=[])]
 
-    results = await asyncio.gather(*[
-        _run_subagent(st, goal, working_dir, on_log) for st in subtasks
-    ])
+    completed: list[PhaseResult] = []
+    for idx, phase in enumerate(phases_to_run):
+        console.print(f"  [blue]Phase {idx + 1}/{len(phases_to_run)}:[/blue] {phase.name}")
+        result = await _execute_phase(
+            phase=phase,
+            phase_index=idx,
+            goal=goal,
+            completed_phases=completed,
+            refinement=refinement_text,
+            working_dir=working_dir,
+            max_subagents=MAX_SUBAGENTS,
+            on_log=on_log,
+            on_phase_complete=on_phase_complete,
+        )
+        completed.append(result)
 
     aggregated = "\n\n".join(
-        f"[{r.subtask.id}] {r.subtask.description}\n{r.output}" for r in results
+        f"## Phase {ph.phase_index + 1}: {ph.phase_name}\n{ph.aggregated_output}"
+        for ph in completed
     )
-    all_files = sorted({f for r in results for f in r.files_modified})
+    all_files = sorted({f for ph in completed for sr in ph.subtask_results for f in sr.files_modified})
     console.print(f"  Files modified: {all_files or '(none)'}")
     if on_log:
         await on_log(f"Files modified: {list(all_files) if all_files else '(none)'}")
 
     return ExecutorResult(
         goal=goal,
-        subtasks=subtasks,
-        subtask_results=list(results),
+        phases=completed,
         aggregated_output=aggregated,
         iteration=iteration,
     )

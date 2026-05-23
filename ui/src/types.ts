@@ -29,6 +29,7 @@ export interface Project {
   name: string;
   workspace_mode: string;
   selected_repo?: string;
+  selected_branch?: string;
   local_path?: string;
   created_at: string;
   updated_at: string;
@@ -39,20 +40,49 @@ export interface Repo {
   name: string;
 }
 
+export interface SubtaskType {
+  id: string;
+  description: string;
+  acceptance_criteria: string[];
+}
+
+export interface SubtaskResultType {
+  subtask: SubtaskType;
+  output: string;
+  files_modified: string[];
+  commands_run: string[];
+  success: boolean;
+  error?: string;
+}
+
+export interface PhaseResult {
+  phase_index: number;
+  phase_name: string;
+  phase_description: string;
+  subtasks: SubtaskType[];
+  subtask_results: SubtaskResultType[];
+  aggregated_output: string;
+  status: "pending" | "running" | "completed" | "failed";
+  timestamp: string;
+}
+
+export interface IterationResult {
+  goal: string;
+  phases: PhaseResult[];
+  subtasks: SubtaskType[];
+  subtask_results: SubtaskResultType[];
+  aggregated_output: string;
+  iteration: number;
+  timestamp: string;
+}
+
+// Aliases for backward compat
+export type Subtask = SubtaskType;
+export type SubtaskResult = SubtaskResultType;
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type RunState = any;
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type Subtask = any;
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type SubtaskResult = any;
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type IterationResult = any;
-
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type ReviewResult = any;
-
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type RefinementResult = any;

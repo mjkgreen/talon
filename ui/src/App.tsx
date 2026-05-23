@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Clock,
   Folder,
+  GitBranch,
   Lightbulb,
   Play,
   Plus,
@@ -36,6 +37,7 @@ export default function KanbanBoard() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newDescription, setNewDescription] = useState("");
+  const [isCreatingTask, setIsCreatingTask] = useState(false);
 
   // --- Issue detail modal ---
   const [selectedIssue, setSelectedIssue] = useState<Issue | null>(null);
@@ -59,6 +61,9 @@ export default function KanbanBoard() {
   const [workspaceMode, setWorkspaceMode] = useState<"github" | "local" | "none" | "">("");
   const [localPath, setLocalPath] = useState("");
   const [selectedRepo, setSelectedRepo] = useState("");
+  const [selectedBranch, setSelectedBranch] = useState("");
+  const [branches, setBranches] = useState<string[]>([]);
+  const [loadingBranches, setLoadingBranches] = useState(false);
   const [, setHasGithubToken] = useState(false);
   const [repos, setRepos] = useState<Repo[]>([]);
   const [loadingRepos, setLoadingRepos] = useState(false);
@@ -199,7 +204,45 @@ export default function KanbanBoard() {
     setLoadingRepos(false);
   };
 
+  const fetchBranches = async (repoFullName: string) => {
+    if (!repoFullName) {
+      setBranches([]);
+      setSelectedBranch("");
+      return;
+    }
+    setLoadingBranches(true);
+    try {
+      const [owner, repo] = repoFullName.split("/");
+      const res = await fetch(apiUrl(`/api/github/repos/${owner}/${repo}/branches`));
+      if (res.ok) {
+        const data = await res.json() as { default_branch: string; branches: string[] };
+        setBranches(data.branches);
+        setSelectedBranch((prev) => prev || data.default_branch);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    setLoadingBranches(false);
+  };
+
   // ===================== effects =====================
+
+  // Sync branch state from the active project
+  useEffect(() => {
+    const project = projects.find((p) => p.id === activeProjectId);
+    if (project?.selected_branch) {
+      setSelectedBranch(project.selected_branch);
+    }
+  }, [activeProjectId, projects]);
+
+  // Fetch branches when wizard step 4 opens with a repo already selected
+  useEffect(() => {
+    if (wizardStep === 4 && selectedRepo) {
+      setSelectedBranch("");
+      fetchBranches(selectedRepo);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wizardStep]);
 
   useEffect(() => {
     const init = async () => {
@@ -452,7 +495,11 @@ export default function KanbanBoard() {
       await fetch(apiUrl(`/api/projects/${activeProjectId}`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workspace_mode: "github", selected_repo: selectedRepo }),
+        body: JSON.stringify({
+          workspace_mode: "github",
+          selected_repo: selectedRepo,
+          selected_branch: selectedBranch || null,
+        }),
       });
       fetchProjects();
     }
@@ -491,22 +538,27 @@ export default function KanbanBoard() {
   const addIssue = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTitle.trim()) return;
-    const res = await fetch(apiUrl("/api/issues"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title: newTitle,
-        description: newDescription,
-        status: "Backlog",
-        project_id: activeProjectId,
-      }),
-    });
-    if (res.ok) {
-      const created: Issue = await res.json();
-      setIssues((prev) => (prev.find((i) => i.id === created.id) ? prev : [created, ...prev]));
-      setNewTitle("");
-      setNewDescription("");
-      setIsAddModalOpen(false);
+    setIsCreatingTask(true);
+    try {
+      const res = await fetch(apiUrl("/api/issues"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: newTitle,
+          description: newDescription,
+          status: "Backlog",
+          project_id: activeProjectId,
+        }),
+      });
+      if (res.ok) {
+        const created: Issue = await res.json();
+        setIssues((prev) => (prev.find((i) => i.id === created.id) ? prev : [created, ...prev]));
+        setNewTitle("");
+        setNewDescription("");
+        setIsAddModalOpen(false);
+      }
+    } finally {
+      setIsCreatingTask(false);
     }
   };
 
@@ -663,6 +715,15 @@ export default function KanbanBoard() {
                     <Folder size={10} className="text-neutral-400" />
                   )}
                   <span className="max-w-[200px] truncate">{workspaceBadgeText}</span>
+                </div>
+              )}
+              {activeProject?.workspace_mode === "github" && activeProject?.selected_branch && (
+                <div
+                  className="flex items-center gap-1.5 text-xs bg-neutral-800 border border-neutral-700 text-neutral-300 px-2 py-0.5 rounded-full cursor-default"
+                  title="Target Branch"
+                >
+                  <GitBranch size={10} className="text-neutral-400" />
+                  <span className="max-w-[160px] truncate">{activeProject.selected_branch}</span>
                 </div>
               )}
               {modelBadge && (
@@ -879,6 +940,7 @@ export default function KanbanBoard() {
           setNewTitle={setNewTitle}
           newDescription={newDescription}
           setNewDescription={setNewDescription}
+          isSubmitting={isCreatingTask}
           onClose={() => setIsAddModalOpen(false)}
           onSubmit={addIssue}
         />
@@ -921,9 +983,17 @@ export default function KanbanBoard() {
         browsing={browsing}
         setBrowsing={setBrowsing}
         selectedRepo={selectedRepo}
-        setSelectedRepo={setSelectedRepo}
+        setSelectedRepo={(repo) => {
+          setSelectedRepo(repo);
+          setSelectedBranch("");
+          fetchBranches(repo);
+        }}
         repos={repos}
         loadingRepos={loadingRepos}
+        selectedBranch={selectedBranch}
+        setSelectedBranch={setSelectedBranch}
+        branches={branches}
+        loadingBranches={loadingBranches}
         githubAuthStatus={githubAuthStatus}
         githubAuthError={githubAuthError}
         onSelectMode={selectMode}
@@ -969,6 +1039,7 @@ export default function KanbanBoard() {
 
       {selectedIssue && (
         <IssueDetailModal
+          key={selectedIssue.id}
           issue={selectedIssue}
           liveRunStates={liveRunStates}
           runState={runState}

@@ -4,6 +4,8 @@ import {
   AlertCircle,
   Check,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Circle,
   XCircle,
   Video,
@@ -17,7 +19,11 @@ import {
   X,
 } from "lucide-react";
 import { apiUrl } from "../utils";
-import type { Issue, PlanResult, RunState, Subtask, SubtaskResult, IterationResult, ReviewResult, RefinementResult } from "../types";
+import type { Issue, PlanResult, PhaseResult, RunState, SubtaskType, SubtaskResultType, IterationResult, ReviewResult, RefinementResult } from "../types";
+
+// Backward-compat aliases used by SubtaskList
+type Subtask = SubtaskType;
+type SubtaskResult = SubtaskResultType;
 
 interface IssueDetailModalProps {
   issue: Issue;
@@ -357,7 +363,7 @@ function parseLiveSubtasks(iterLogs: string[]): { subtasks: Subtask[]; subtask_r
         : [];
       
       if (!subtask_results.some(r => r.subtask?.id === id)) {
-        const subtask = subtasks.find(st => st.id === id) || { id, description: "" };
+        const subtask = subtasks.find(st => st.id === id) || { id, description: "", acceptance_criteria: [] as string[] };
         subtask_results.push({
           subtask,
           success: true,
@@ -373,6 +379,99 @@ function parseLiveSubtasks(iterLogs: string[]): { subtasks: Subtask[]; subtask_r
 }
 
 
+interface ParsedLivePhase {
+  phase_index: number;
+  phase_name: string;
+  subtasks: SubtaskType[];
+  subtask_results: SubtaskResultType[];
+}
+
+function parseLivePhases(logs: string[]): ParsedLivePhase[] {
+  const phases: ParsedLivePhase[] = [];
+  let current: ParsedLivePhase | null = null;
+
+  for (const line of logs) {
+    const phaseMatch = line.match(/^=== Phase (\d+): (.+) ===$/);
+    if (phaseMatch) {
+      current = {
+        phase_index: parseInt(phaseMatch[1], 10) - 1,
+        phase_name: phaseMatch[2],
+        subtasks: [],
+        subtask_results: [],
+      };
+      phases.push(current);
+      continue;
+    }
+    if (!current) continue;
+
+    const launch = line.match(/^->\s+Sub-agent\s+\[([a-f0-9]+)\]\s+(.*)$/i);
+    if (launch && !current.subtasks.find(s => s.id === launch[1]))
+      current.subtasks.push({ id: launch[1], description: launch[2], acceptance_criteria: [] });
+
+    const done = line.match(/^\[([a-f0-9]+)\]\s+(done|modified:.*)$/i);
+    if (done && !current.subtask_results.find(r => r.subtask?.id === done[1])) {
+      const files = done[2].startsWith("modified:")
+        ? done[2].slice("modified:".length).split(",").map(f => f.trim())
+        : [];
+      const subtask = current.subtasks.find(s => s.id === done[1]) ?? { id: done[1], description: "", acceptance_criteria: [] as string[] };
+      current.subtask_results.push({ subtask, success: true, files_modified: files, commands_run: [], output: "" });
+    }
+  }
+  return phases;
+}
+
+function PhaseSection({
+  phase,
+  totalPhases,
+  isLive,
+  isActive,
+  logs,
+}: {
+  phase: PhaseResult | ParsedLivePhase;
+  totalPhases: number | null;
+  isLive: boolean;
+  isActive: boolean;
+  logs: string[];
+}) {
+  const isDone = "status" in phase ? phase.status === "completed" : phase.subtask_results.length > 0;
+  const isRunning = isLive && isActive && !isDone;
+
+  return (
+    <div className="border-b border-neutral-800/50 last:border-b-0">
+      <div className="px-4 py-2 flex items-center gap-2 bg-neutral-900/40">
+        <span className="text-xs font-mono text-neutral-600 shrink-0">
+          {phase.phase_index + 1}/{totalPhases ?? "?"}
+        </span>
+        {isRunning ? (
+          <RefreshCw size={12} className="animate-spin text-blue-400 shrink-0" />
+        ) : isDone ? (
+          <CheckCircle2 size={12} className="text-green-400 shrink-0" />
+        ) : (
+          <Circle size={12} className="text-neutral-600 shrink-0" />
+        )}
+        <span
+          className={`text-xs font-medium ${
+            isDone ? "text-neutral-400" : isRunning ? "text-neutral-200" : "text-neutral-600"
+          }`}
+        >
+          {phase.phase_name}
+        </span>
+      </div>
+      {phase.subtasks.length > 0 && (
+        <div className="pl-6">
+          <SubtaskList
+            subtasks={phase.subtasks}
+            subtaskResults={phase.subtask_results}
+            isLive={isLive && isActive}
+            isLatest={isLive && isActive}
+            logs={logs}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function IterationContent({
   iteration,
   iterationIndex,
@@ -382,6 +481,7 @@ function IterationContent({
   isLatest,
   logs,
   scrollRef,
+  planResult,
 }: {
   iteration: IterationResult;
   iterationIndex: number;
@@ -391,6 +491,7 @@ function IterationContent({
   isLatest: boolean;
   logs: string[];
   scrollRef: React.RefObject<HTMLDivElement | null>;
+  planResult: PlanResult | null;
 }) {
   const startStr = `=== Iteration ${iterationIndex + 1}/`;
   const endStr = `=== Iteration ${iterationIndex + 2}/`;
@@ -405,13 +506,54 @@ function IterationContent({
   } else {
       iterLogs = [];
   }
+  const livePhases = parseLivePhases(iterLogs);
+  const persistedPhases: PhaseResult[] = iteration.phases?.length > 0 ? iteration.phases : [];
+
+  // Merge persisted (completed) and live (in-progress) phases by index.
+  // Persisted takes priority — it has the full completed data.
+  // Live fills in phases that have started but aren't persisted yet.
+  const phaseMap = new Map<number, PhaseResult | ParsedLivePhase>();
+  for (const p of livePhases) phaseMap.set(p.phase_index, p);
+  for (const p of persistedPhases) phaseMap.set(p.phase_index, p); // overwrite live with persisted
+
+  // Add plan stubs for future phases not yet seen in logs
+  if (planResult) {
+    planResult.phases.forEach((ph, i) => {
+      if (!phaseMap.has(i)) {
+        phaseMap.set(i, { phase_index: i, phase_name: ph.name, subtasks: [], subtask_results: [] } as ParsedLivePhase);
+      }
+    });
+  }
+
+  const mergedPhases = Array.from(phaseMap.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([, ph]) => ph);
+
+  // The actively running phase is the last one seen in live logs (not yet completed).
+  const activePhaseIndex = livePhases.length > 0 ? livePhases[livePhases.length - 1].phase_index : -1;
+  const totalPhases: number | null = planResult ? planResult.phases.length : mergedPhases.length > 0 ? mergedPhases.length : null;
+
+  // Fallback flat subtask data for old run states that have no phases
   const { subtasks: liveSubtasks, subtask_results: liveResults } = parseLiveSubtasks(iterLogs);
   const displaySubtasks = iteration.subtasks && iteration.subtasks.length > 0 ? iteration.subtasks : liveSubtasks;
   const displayResults = iteration.subtask_results && iteration.subtask_results.length > 0 ? iteration.subtask_results : liveResults;
 
   return (
     <div>
-      {displaySubtasks?.length > 0 && (
+      {mergedPhases.length > 0 ? (
+        <div className="border-b border-neutral-800/50">
+          {mergedPhases.map((ph, pi) => (
+            <PhaseSection
+              key={pi}
+              phase={ph}
+              totalPhases={totalPhases}
+              isLive={isLive}
+              isActive={isLive && ph.phase_index === activePhaseIndex}
+              logs={iterLogs}
+            />
+          ))}
+        </div>
+      ) : displaySubtasks?.length > 0 && (
         <SubtaskList
           subtasks={displaySubtasks}
           subtaskResults={displayResults}
@@ -427,19 +569,11 @@ function IterationContent({
         </div>
       )}
 
-      <div className="p-4 border-b border-neutral-800/50">
-        <div className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-3">Output</div>
-        <div className="bg-neutral-900 p-4 rounded border border-neutral-800/50 overflow-x-auto">
-          <pre className="text-xs text-neutral-400 font-mono whitespace-pre-wrap">
-            {iteration.aggregated_output || "No output yet"}
-          </pre>
+      {isLive && isLatest && !review && !!iteration.aggregated_output && (
+        <div className="px-4 py-3 border-b border-neutral-800/50 flex items-center gap-2 text-xs text-neutral-500">
+          <RefreshCw size={12} className="animate-spin" /> Waiting for reviewer...
         </div>
-        {isLive && isLatest && !review && (
-          <div className="mt-3 flex items-center gap-2 text-xs text-neutral-500">
-            <RefreshCw size={12} className="animate-spin" /> Waiting for reviewer...
-          </div>
-        )}
-      </div>
+      )}
 
       {review && (
         <div className="p-4 border-b border-neutral-800/50">
@@ -479,6 +613,66 @@ function IterationContent({
               </div>
             ))}
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SubtaskItem({
+  st,
+  stResult,
+  isRunning,
+  liveDone,
+  iconColor,
+  textColor,
+}: {
+  st: Subtask;
+  stResult: SubtaskResult | undefined;
+  isRunning: boolean;
+  liveDone: boolean;
+  iconColor: string;
+  textColor: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const hasOutput = !!stResult?.output;
+  const filesModified: string[] = stResult?.files_modified ?? [];
+
+  return (
+    <div className="flex flex-col gap-1 text-xs">
+      <div className="flex items-start gap-2">
+        <span className={`mt-0.5 shrink-0 ${iconColor}`}>
+          {isRunning ? (
+            <RefreshCw size={12} className="animate-spin" />
+          ) : stResult?.success || liveDone ? (
+            <CheckCircle2 size={12} />
+          ) : stResult ? (
+            <XCircle size={12} />
+          ) : (
+            <Circle size={12} />
+          )}
+        </span>
+        <div className="flex-1 min-w-0">
+          <div className={textColor}>{st.description}</div>
+          {filesModified.length > 0 && (
+            <div className="mt-0.5 text-neutral-600 font-mono truncate">
+              {filesModified.slice(0, 3).join(", ")}
+              {filesModified.length > 3 && ` +${filesModified.length - 3} more`}
+            </div>
+          )}
+        </div>
+        {hasOutput && (
+          <button
+            onClick={() => setExpanded(e => !e)}
+            className="shrink-0 text-neutral-600 hover:text-neutral-400 mt-0.5"
+          >
+            {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          </button>
+        )}
+      </div>
+      {expanded && stResult?.output && (
+        <div className="ml-5 bg-neutral-950 rounded border border-neutral-800/50 p-2 overflow-x-auto max-h-64">
+          <pre className="text-xs text-neutral-500 font-mono whitespace-pre-wrap">{stResult.output}</pre>
         </div>
       )}
     </div>
@@ -538,31 +732,16 @@ function SubtaskList({
           const textColor =
             isRunning ? "text-neutral-300" : stResult?.success || liveDone ? "text-neutral-400" : "text-neutral-500";
 
-          const filesModified: string[] = stResult?.files_modified ?? [];
-
           return (
-            <div key={si} className="flex items-start gap-2 text-xs">
-              <span className={`mt-0.5 shrink-0 ${iconColor}`}>
-                {isRunning ? (
-                  <RefreshCw size={12} className="animate-spin" />
-                ) : stResult?.success || liveDone ? (
-                  <CheckCircle2 size={12} />
-                ) : stResult ? (
-                  <XCircle size={12} />
-                ) : (
-                  <Circle size={12} />
-                )}
-              </span>
-              <div className="flex-1 min-w-0">
-                <div className={textColor}>{st.description}</div>
-                {filesModified.length > 0 && (
-                  <div className="mt-0.5 text-neutral-600 font-mono truncate">
-                    {filesModified.slice(0, 3).join(", ")}
-                    {filesModified.length > 3 && ` +${filesModified.length - 3} more`}
-                  </div>
-                )}
-              </div>
-            </div>
+            <SubtaskItem
+              key={si}
+              st={st}
+              stResult={stResult}
+              isRunning={isRunning}
+              liveDone={liveDone}
+              iconColor={iconColor}
+              textColor={textColor}
+            />
           );
         })}
       </div>
@@ -621,7 +800,9 @@ export function IssueDetailModal({
 }: IssueDetailModalProps) {
   const activityLogRef = useRef<HTMLDivElement>(null);
   const logs = React.useMemo(() => runLogs[issue.id] ?? [], [runLogs, issue.id]);
-  const [macroTab, setMacroTab] = useState<"plan" | "trace" | "video">("trace");
+  const [macroTab, setMacroTab] = useState<"plan" | "trace" | "video">(
+    issue.status === "Queued" || issue.status === "Backlog" ? "plan" : "trace"
+  );
 
   useEffect(() => {
     const el = activityLogRef.current;
@@ -841,6 +1022,7 @@ export function IssueDetailModal({
                       isLatest={clampedTab === tabCount - 1}
                       logs={logs}
                       scrollRef={activityLogRef}
+                      planResult={activeRunState?.plan_result ?? null}
                     />
                   );
                 })()}

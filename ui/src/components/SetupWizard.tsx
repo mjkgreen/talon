@@ -1,5 +1,5 @@
 import React from "react";
-import { ArrowLeft, Check, Folder, Key, RefreshCw } from "lucide-react";
+import { ArrowLeft, Check, Folder, GitBranch, Key, RefreshCw } from "lucide-react";
 import { GithubLogo, API_KEY_PROVIDERS } from "../constants";
 import { apiUrl } from "../utils";
 import type { Repo } from "../types";
@@ -20,6 +20,10 @@ interface SetupWizardProps {
   setSelectedRepo: (v: string) => void;
   repos: Repo[];
   loadingRepos: boolean;
+  selectedBranch: string;
+  setSelectedBranch: (v: string) => void;
+  branches: string[];
+  loadingBranches: boolean;
   githubAuthStatus: "idle" | "waiting" | "error";
   githubAuthError: string;
   onSelectMode: (mode: "github" | "local" | "none") => void;
@@ -46,6 +50,10 @@ export function SetupWizard({
   setSelectedRepo,
   repos,
   loadingRepos,
+  selectedBranch,
+  setSelectedBranch,
+  branches,
+  loadingBranches,
   githubAuthStatus,
   githubAuthError,
   onSelectMode,
@@ -307,6 +315,51 @@ export function SetupWizard({
                 <p className="text-xs text-blue-400 mt-2 animate-pulse">Loading your repositories…</p>
               )}
             </div>
+
+            {selectedRepo && (
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-neutral-300 mb-2 flex items-center gap-1.5">
+                  <GitBranch size={14} className="text-neutral-400" />
+                  Target Branch
+                </label>
+                <div className="relative">
+                  <select
+                    value={selectedBranch}
+                    onChange={(e) => setSelectedBranch(e.target.value)}
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all appearance-none text-neutral-200"
+                    disabled={loadingBranches}
+                  >
+                    {loadingBranches && <option value="">Loading branches…</option>}
+                    {!loadingBranches && branches.length === 0 && (
+                      <option value="">No branches found</option>
+                    )}
+                    {branches.map((b) => (
+                      <option key={b} value={b}>{b}</option>
+                    ))}
+                  </select>
+                  <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none">
+                    {loadingBranches ? (
+                      <RefreshCw size={14} className="text-neutral-500 animate-spin" />
+                    ) : (
+                      <svg className="w-4 h-4 text-neutral-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+                      </svg>
+                    )}
+                  </div>
+                </div>
+                <p className="text-xs text-neutral-500 mt-2">
+                  Or create a new branch:
+                </p>
+                <input
+                  type="text"
+                  value={branches.includes(selectedBranch) ? "" : selectedBranch}
+                  onChange={(e) => setSelectedBranch(e.target.value)}
+                  placeholder="e.g. feature/my-branch"
+                  className="w-full mt-1.5 bg-neutral-950 border border-neutral-800 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all text-neutral-200 placeholder:text-neutral-600"
+                />
+              </div>
+            )}
+
             <div className="flex justify-between items-center mt-8">
               <button
                 onClick={() => setWizardStep(0)}
@@ -316,7 +369,7 @@ export function SetupWizard({
               </button>
               <button
                 onClick={onSaveRepo}
-                disabled={!selectedRepo}
+                disabled={!selectedRepo || !selectedBranch}
                 className="px-5 py-2.5 bg-green-600 hover:bg-green-500 disabled:bg-neutral-800 disabled:text-neutral-500 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ml-auto"
               >
                 Complete Setup <Check size={16} />

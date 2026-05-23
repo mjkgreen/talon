@@ -33,6 +33,7 @@ class Project(BaseModel):
     name: str
     workspace_mode: str
     selected_repo: Optional[str] = None
+    selected_branch: Optional[str] = None
     local_path: Optional[str] = None
     created_at: str
     updated_at: str
@@ -42,6 +43,7 @@ class ProjectCreate(BaseModel):
     name: str
     workspace_mode: str = "none"
     selected_repo: Optional[str] = None
+    selected_branch: Optional[str] = None
     local_path: Optional[str] = None
 
 
@@ -49,6 +51,7 @@ class ProjectUpdate(BaseModel):
     name: Optional[str] = None
     workspace_mode: Optional[str] = None
     selected_repo: Optional[str] = None
+    selected_branch: Optional[str] = None
     local_path: Optional[str] = None
 
 
@@ -162,6 +165,13 @@ async def init_db():
         except sqlite3.OperationalError:
             pass  # column already exists
 
+        # Migration: add selected_branch column to projects if missing
+        try:
+            await db.execute("ALTER TABLE projects ADD COLUMN selected_branch TEXT")
+            await db.commit()
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
         # Migration: seed default project from global settings when none exist
         async with db.execute("SELECT COUNT(*) FROM projects") as cursor:
             count = (await cursor.fetchone())[0]
@@ -232,9 +242,9 @@ async def create_project(p: ProjectCreate) -> Project:
     now = datetime.utcnow().isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            "INSERT INTO projects (name, workspace_mode, selected_repo, local_path, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (p.name, p.workspace_mode, p.selected_repo, p.local_path, now, now),
+            "INSERT INTO projects (name, workspace_mode, selected_repo, selected_branch, local_path, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (p.name, p.workspace_mode, p.selected_repo, p.selected_branch, p.local_path, now, now),
         )
         await db.commit()
         return await get_project(cursor.lastrowid)
@@ -280,6 +290,9 @@ async def update_project(project_id: int, updates: ProjectUpdate) -> Optional[Pr
         if updates.selected_repo is not None:
             fields.append("selected_repo = ?")
             values.append(updates.selected_repo or None)  # "" → NULL to allow clearing
+        if updates.selected_branch is not None:
+            fields.append("selected_branch = ?")
+            values.append(updates.selected_branch or None)  # "" → NULL to allow clearing
         if updates.local_path is not None:
             fields.append("local_path = ?")
             values.append(updates.local_path or None)  # "" → NULL to allow clearing
