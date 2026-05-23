@@ -31,11 +31,8 @@ let serverPort = null;
 function getPythonBinaryPath() {
   if (app.isPackaged) {
     const ext = process.platform === 'win32' ? '.exe' : '';
-    if (process.platform === 'darwin' || process.platform === 'linux') {
-      // One-dir bundle: resourcesPath/talon-server/talon-server
-      return path.join(process.resourcesPath, 'talon-server', `talon-server${ext}`);
-    }
-    return path.join(process.resourcesPath, `talon-server${ext}`);
+    // One-dir bundle: resourcesPath/talon-server/talon-server(.exe)
+    return path.join(process.resourcesPath, 'talon-server', `talon-server${ext}`);
   }
   // Dev mode: run server_entry directly via Python
   return null;

@@ -156,7 +156,7 @@ npm run build
 cd ..
 
 # 2. Bundle the Python server with PyInstaller
-pyinstaller talon-server.spec   # outputs dist/talon-server (or talon-server.exe)
+pyinstaller talon-server.spec   # outputs dist/talon-server 
 
 # 3. Build the Electron installer
 cd electron
