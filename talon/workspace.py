@@ -138,6 +138,51 @@ def setup(
     return str(run_ws)
 
 
+def ensure_planner_clone(
+    project_id: int,
+    repo_url: str,
+    selected_branch: str | None = None,
+) -> str:
+    """Return a local clone of the repo for the planner to explore.
+
+    Tries to update an existing clone first; falls back to a fresh clone.
+    Blocking — call via asyncio.to_thread.
+    """
+    planner_dir = Path(WORKSPACE_BASE) / f"planner-{project_id}"
+
+    if planner_dir.exists():
+        try:
+            result = subprocess.run(
+                ["git", "pull", "--ff-only", "--quiet"],
+                cwd=str(planner_dir),
+                capture_output=True,
+                timeout=60,
+            )
+            if result.returncode == 0:
+                console.print(f"  [dim]planner clone updated: {planner_dir}[/dim]")
+                return str(planner_dir)
+        except Exception:
+            pass
+        shutil.rmtree(str(planner_dir), ignore_errors=True)
+
+    planner_dir.parent.mkdir(parents=True, exist_ok=True)
+    clone_cmd = ["git", "clone"]
+    if selected_branch:
+        clone_cmd += ["--branch", selected_branch, "--single-branch"]
+    clone_cmd += [repo_url, str(planner_dir)]
+
+    try:
+        subprocess.run(clone_cmd, check=True, capture_output=True, text=True, timeout=120)
+        console.print(f"  [dim]planner clone ready: {planner_dir}[/dim]")
+        return str(planner_dir)
+    except subprocess.TimeoutExpired:
+        shutil.rmtree(str(planner_dir), ignore_errors=True)
+        raise RuntimeError("git clone timed out after 120 s")
+    except subprocess.CalledProcessError as e:
+        shutil.rmtree(str(planner_dir), ignore_errors=True)
+        raise RuntimeError(f"Failed to clone repo for planner: {e.stderr}")
+
+
 def teardown(run_id: str, base_dir: str | None, run_workspace: str) -> None:
     """
     Remove the isolated workspace. Called on failed/max-iterations runs.

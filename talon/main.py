@@ -4,6 +4,7 @@ CLI entry point for the autonomous agent system.
 Usage:
   talon run "Add user authentication to the Express API"
   talon run "..." --working-dir ./my-project --url http://localhost:3000
+  (defaults to the current directory when --working-dir is omitted)
   talon list
   talon review <run-id>
   talon cleanup <run-id>
@@ -185,7 +186,7 @@ def main() -> None:
             console.print("[red]Usage: talon run <goal>[/red]")
             sys.exit(1)
         goal = args[1]
-        working_dir = None
+        working_dir = os.getcwd()
         app_url = None
         skip_board = False
         i = 2

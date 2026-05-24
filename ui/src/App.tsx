@@ -52,6 +52,9 @@ export default function KanbanBoard() {
   const [editingPlan, setEditingPlan] = useState(false);
   const [planDraft, setPlanDraft] = useState<PlanResult | null>(null);
 
+  // --- Workspace error (invalid / stale path detected server-side) ---
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+
   // --- First-run wizard ---
   const [wizardStep, setWizardStep] = useState(0);
   const [wizardKeys, setWizardKeys] = useState<Record<string, string>>({});
@@ -108,6 +111,13 @@ export default function KanbanBoard() {
     activeProjectIdRef.current = id;
     localStorage.setItem("talon_active_project", String(id));
     fetchIssues(id);
+    const project = projects.find((p) => p.id === id);
+    if (project) {
+      setLocalPath(project.local_path || "");
+      setSelectedRepo(project.selected_repo || "");
+      setSelectedBranch(project.selected_branch || "");
+      setWorkspaceMode(project.workspace_mode as "github" | "local" | "none" | "");
+    }
   };
 
   // ===================== data fetching =====================
@@ -124,16 +134,30 @@ export default function KanbanBoard() {
     if (!res.ok) return null;
     const list: Project[] = await res.json();
     setProjects(list);
+
+    const syncWorkspaceFromProject = (project: Project) => {
+      setLocalPath(project.local_path || "");
+      setSelectedRepo(project.selected_repo || "");
+      setSelectedBranch(project.selected_branch || "");
+      setWorkspaceMode(project.workspace_mode as "github" | "local" | "none" | "");
+    };
+
     const stored = localStorage.getItem("talon_active_project");
     const storedId = stored ? parseInt(stored) : null;
-    if (storedId && list.find((p) => p.id === storedId)) {
-      setActiveProjectIdState(storedId);
-      activeProjectIdRef.current = storedId;
-      return storedId;
-    } else if (list.length > 0) {
+    if (storedId) {
+      const match = list.find((p) => p.id === storedId);
+      if (match) {
+        setActiveProjectIdState(storedId);
+        activeProjectIdRef.current = storedId;
+        syncWorkspaceFromProject(match);
+        return storedId;
+      }
+    }
+    if (list.length > 0) {
       setActiveProjectIdState(list[0].id);
       activeProjectIdRef.current = list[0].id;
       localStorage.setItem("talon_active_project", String(list[0].id));
+      syncWorkspaceFromProject(list[0]);
       return list[0].id;
     }
     return null;
@@ -171,23 +195,7 @@ export default function KanbanBoard() {
       setEditLocalDirectly(data.edit_local_directly === "true");
       setPushOnPass(data.push_on_pass !== "false");
 
-      const hasToken = !!data.github_token;
-      const hasRepo = !!data.selected_repo;
-      const mode: string = data.workspace_mode || "";
-      const lpath: string = data.local_path || "";
-      setHasGithubToken(hasToken);
-      if (hasRepo) setSelectedRepo(data.selected_repo);
-      if (lpath) setLocalPath(lpath);
-      if (!mode && hasToken && hasRepo) {
-        await fetch(apiUrl("/api/settings"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ workspace_mode: "github" }),
-        });
-        setWorkspaceMode("github");
-        return;
-      }
-      setWorkspaceMode(mode as "github" | "local" | "none" | "");
+      setHasGithubToken(!!data.github_token);
     } catch (e) {
       console.error("Failed to fetch settings", e);
     }
@@ -310,6 +318,20 @@ export default function KanbanBoard() {
         setProjects((prev) => prev.map((p) => (p.id === data.project.id ? data.project : p)));
       } else if (data.type === "project_deleted") {
         setProjects((prev) => prev.filter((p) => p.id !== data.project_id));
+      } else if (data.type === "workspace_invalid") {
+        // Revert the issue to Backlog (server already did this, just sync UI)
+        if (data.issue_id) {
+          setIssues((prev) =>
+            prev.map((i) => (i.id === data.issue_id ? { ...i, status: "Backlog" } : i))
+          );
+          setPlanningIssues((prev) => {
+            const next = new Set(prev);
+            next.delete(data.issue_id);
+            return next;
+          });
+        }
+        setWorkspaceError(data.error ?? "Workspace is invalid or no longer exists.");
+        setWizardStep(2);
       }
     };
 
@@ -381,6 +403,26 @@ export default function KanbanBoard() {
     }
   }, [renamingProjectId]);
 
+  // Re-sync project workspace state whenever the window regains focus so stale
+  // paths (e.g. configured in another tab or updated externally) are detected.
+  useEffect(() => {
+    const handleFocus = async () => {
+      const res = await fetch(apiUrl("/api/projects"));
+      if (!res.ok) return;
+      const list: Project[] = await res.json();
+      setProjects(list);
+      const active = list.find((p) => p.id === activeProjectIdRef.current);
+      if (active) {
+        setLocalPath(active.local_path || "");
+        setSelectedRepo(active.selected_repo || "");
+        setSelectedBranch(active.selected_branch || "");
+        setWorkspaceMode(active.workspace_mode as "github" | "local" | "none" | "");
+      }
+    };
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ===================== actions =====================
 
   const selectMode = async (mode: "github" | "local" | "none") => {
@@ -400,11 +442,18 @@ export default function KanbanBoard() {
     if (mode === "none") {
       setWizardStep(0);
     } else {
-      setWizardStep(3);
-      if (mode === "github") {
+      // Re-seed path/repo from the active project so the wizard input starts
+      // with that project's current value, not a stale global setting.
+      const proj = projects.find((p) => p.id === activeProjectId);
+      if (mode === "local") {
+        setLocalPath(proj?.local_path || "");
+      } else if (mode === "github") {
+        setSelectedRepo(proj?.selected_repo || "");
+        setSelectedBranch(proj?.selected_branch || "");
         setGithubAuthStatus("idle");
         setGithubAuthError("");
       }
+      setWizardStep(3);
     }
   };
 
@@ -482,6 +531,7 @@ export default function KanbanBoard() {
       });
       fetchProjects();
     }
+    setWorkspaceError(null);
     setWizardStep(0);
   };
 
@@ -503,6 +553,7 @@ export default function KanbanBoard() {
       });
       fetchProjects();
     }
+    setWorkspaceError(null);
     setWizardStep(0);
   };
 
@@ -577,6 +628,12 @@ export default function KanbanBoard() {
       setNoLlmGuardOpen(true);
       return;
     }
+    const project = projects.find((p) => p.id === activeProjectId);
+    const noWorkspace = !project?.workspace_mode || project.workspace_mode === "none";
+    if (destStatus === "In Progress" && noWorkspace) {
+      setWizardStep(2);
+      return;
+    }
     setIssues((prev) => prev.map((i) => (i.id === issueId ? { ...i, status: destStatus } : i)));
     await fetch(apiUrl(`/api/issues/${issueId}`), {
       method: "PATCH",
@@ -627,7 +684,7 @@ export default function KanbanBoard() {
     const res = await fetch(apiUrl("/api/projects"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newProjectName.trim(), workspace_mode: "none" }),
+      body: JSON.stringify({ name: newProjectName.trim(), workspace_mode: "" }),
     });
     if (res.ok) {
       const project: Project = await res.json();
@@ -1002,6 +1059,7 @@ export default function KanbanBoard() {
         onSaveLocalPath={saveLocalPathAndFinish}
         onSaveRepo={saveRepoAndFinish}
         onSaveWizardKeys={saveWizardKeysAndContinue}
+        workspaceError={workspaceError}
       />
 
       {settingsOpen && (

@@ -27,6 +27,7 @@ _PROVIDER_KEYS: dict[str, str] = {
 # Env var that holds each role's model override
 ROLE_ENV: dict[str, str] = {
     "orchestrator": "ORCHESTRATOR_MODEL",
+    "planner": "PLANNER_MODEL",
     "subagent": "SUBAGENT_MODEL",
     "reviewer": "REVIEWER_MODEL",
     "refiner": "REFINER_MODEL",
@@ -42,6 +43,16 @@ ROLE_PRIORITY: dict[str, list[str]] = {
         "gemini/gemini-flash-latest",
         "anthropic/claude-sonnet-4-6",
         "openai/gpt-4o",
+        "gemini/gemini-flash-latest",
+        "groq/llama3-70b-8192",
+        "mistral/mistral-large-latest",
+    ],
+    # Planner: workspace exploration + phased plan — speed > max reasoning
+    "planner": [
+        "anthropic/claude-sonnet-4-6",
+        "openai/gpt-4o",
+        "gemini/gemini-flash-latest",
+        "anthropic/claude-opus-4-7",
         "gemini/gemini-flash-latest",
         "groq/llama3-70b-8192",
         "mistral/mistral-large-latest",

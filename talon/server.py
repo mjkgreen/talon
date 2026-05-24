@@ -14,8 +14,8 @@ import json
 import os
 import re
 import traceback
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -154,14 +154,97 @@ manager = ConnectionManager()
 _planning_issues: set[int] = set()
 
 
+def _check_workspace(workspace_mode: str | None, local_path: str | None) -> str | None:
+    """Return an error string if the workspace is unusable, or None if it's fine."""
+    if workspace_mode == "local":
+        if not local_path:
+            return "Local workspace is configured but no path is set."
+        p = Path(local_path)
+        if not p.exists():
+            return f"Workspace directory not found: {local_path}"
+        if not p.is_dir():
+            return f"Workspace path is not a directory: {local_path}"
+    return None
+
+
 async def _run_planner_bg(issue_id: int, goal: str) -> None:
     """Generate a plan for a backlog issue and store it. Runs as a background task."""
     _planning_issues.add(issue_id)
     await manager.broadcast({"type": "plan_started", "issue_id": issue_id})
     try:
+        # Resolve workspace so the planner can explore the actual codebase.
+        working_dir: str | None = None
+        plan_project_id: int | None = None
+        issue = await db.get_issue(issue_id)
+        if issue and issue.project_id:
+            plan_project_id = issue.project_id
+            project = await db.get_project(issue.project_id)
+            if project:
+                if project.workspace_mode == "local":
+                    ws_error = _check_workspace(project.workspace_mode, project.local_path)
+                    if ws_error:
+                        await manager.broadcast({
+                            "type": "workspace_invalid",
+                            "issue_id": issue_id,
+                            "project_id": plan_project_id,
+                            "error": ws_error,
+                        })
+                        await manager.broadcast(
+                            {"type": "plan_error", "issue_id": issue_id, "error": ws_error}
+                        )
+                        return
+                    working_dir = project.local_path
+                elif project.workspace_mode == "github":
+                    github_token = await db.get_setting("github_token")
+                    if not github_token:
+                        ws_error = (
+                            "GitHub workspace configured but no GitHub token found"
+                            " — please re-authenticate."
+                        )
+                        await manager.broadcast({
+                            "type": "workspace_invalid",
+                            "issue_id": issue_id,
+                            "project_id": plan_project_id,
+                            "error": ws_error,
+                        })
+                        await manager.broadcast(
+                            {"type": "plan_error", "issue_id": issue_id, "error": ws_error}
+                        )
+                        return
+                    if not project.selected_repo:
+                        ws_error = "GitHub workspace configured but no repository selected."
+                        await manager.broadcast({
+                            "type": "workspace_invalid",
+                            "issue_id": issue_id,
+                            "project_id": plan_project_id,
+                            "error": ws_error,
+                        })
+                        await manager.broadcast(
+                            {"type": "plan_error", "issue_id": issue_id, "error": ws_error}
+                        )
+                        return
+                    repo_url = (
+                        f"https://x-access-token:{github_token}"
+                        f"@github.com/{project.selected_repo}.git"
+                    )
+                    try:
+                        from talon import workspace as _workspace
+                        working_dir = await asyncio.to_thread(
+                            _workspace.ensure_planner_clone,
+                            plan_project_id,
+                            repo_url,
+                            project.selected_branch or None,
+                        )
+                    except Exception as clone_err:
+                        console.print(
+                            f"[yellow]Planner clone failed for project"
+                            f" {plan_project_id}: {clone_err}[/yellow]"
+                        )
+                        # Non-fatal: plan without workspace exploration
+
         from talon.skills.planner import run as planner_run
 
-        plan = await planner_run(goal=goal)
+        plan = await planner_run(goal=goal, working_dir=working_dir)
         plan_json = plan.model_dump_json()
         await db.update_issue(issue_id, db.IssueUpdate(plan_json=plan_json))
         issue = await db.get_issue(issue_id)
@@ -297,6 +380,20 @@ async def _run_loop(
                 selected_repo = await db.get_setting("selected_repo")
                 selected_branch = None
                 local_path = await db.get_setting("local_path")
+
+            ws_error = _check_workspace(workspace_mode, local_path)
+            if ws_error:
+                console.print(f"[red]Workspace invalid for issue {issue_id}: {ws_error}[/red]")
+                if issue_id:
+                    await manager.broadcast({
+                        "type": "workspace_invalid",
+                        "issue_id": issue_id,
+                        "project_id": project_id,
+                        "error": ws_error,
+                    })
+                    await db.update_issue(issue_id, db.IssueUpdate(status="Backlog"))
+                    await broadcast_issue_update(issue_id)
+                return
 
             repo_url = None
             base_dir = working_dir
@@ -934,7 +1031,7 @@ async def linear_webhook(
     await broadcast_issue_update(issue.id)
 
     goal = f"{title}\n\n{description}".strip() if description else title
-    background_tasks.add_task(_run_loop, goal, "linear", issue.id)
+    background_tasks.add_task(_run_loop, goal, "linear", issue.id, None, project_id)
     return {"ok": True, "triggered": True, "goal": goal[:80]}
 
 
@@ -970,7 +1067,7 @@ async def github_webhook(
     await broadcast_issue_update(issue.id)
 
     goal = f"{title}\n\n{body_text}".strip() if body_text else title
-    background_tasks.add_task(_run_loop, goal, "github", issue.id)
+    background_tasks.add_task(_run_loop, goal, "github", issue.id, None, project_id)
     return {"ok": True, "triggered": True, "goal": goal[:80]}
 
 

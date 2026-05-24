@@ -26,6 +26,7 @@ interface SetupWizardProps {
   loadingBranches: boolean;
   githubAuthStatus: "idle" | "waiting" | "error";
   githubAuthError: string;
+  workspaceError: string | null;
   onSelectMode: (mode: "github" | "local" | "none") => void;
   onStartGithubOAuth: () => void;
   onCancelGithubAuth: () => void;
@@ -56,6 +57,7 @@ export function SetupWizard({
   loadingBranches,
   githubAuthStatus,
   githubAuthError,
+  workspaceError,
   onSelectMode,
   onStartGithubOAuth,
   onCancelGithubAuth,
@@ -124,8 +126,16 @@ export function SetupWizard({
                 <ArrowLeft size={14} /> Back
               </button>
             )}
-            <h2 className="text-2xl font-bold mb-2">Workspace Setup</h2>
-            <p className="text-sm text-neutral-400 mb-6">Where should Talon work when running tasks?</p>
+            <h2 className="text-2xl font-bold mb-2">Choose a Workspace</h2>
+            {workspaceError ? (
+              <div className="mb-4 text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-3">
+                {workspaceError}
+              </div>
+            ) : (
+              <p className="text-sm text-neutral-400 mb-6">
+                A workspace is required before running tasks. Where should Talon work?
+              </p>
+            )}
             <div className="space-y-3">
               <button
                 onClick={() => onSelectMode("github")}
@@ -149,22 +159,7 @@ export function SetupWizard({
                 </div>
                 <p className="text-xs text-neutral-500 ml-7">Point Talon at a folder on this machine.</p>
               </button>
-              <button
-                onClick={() => onSelectMode("none")}
-                className="w-full text-left p-4 rounded-xl border border-neutral-700 hover:border-neutral-600 bg-neutral-800/50 hover:bg-neutral-800 transition-all"
-              >
-                <div className="flex items-center gap-3 mb-1">
-                  <span className="text-neutral-400 font-medium text-sm">No Workspace</span>
-                </div>
-                <p className="text-xs text-neutral-500">Run tasks in a fresh empty workspace each time.</p>
-              </button>
             </div>
-            <button
-              onClick={() => setWizardStep(0)}
-              className="mt-5 text-sm text-neutral-500 hover:text-neutral-300 transition-colors"
-            >
-              {isConfigured ? "Cancel" : "Skip for now"}
-            </button>
           </div>
         )}
 
