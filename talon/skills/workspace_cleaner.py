@@ -9,7 +9,6 @@ artifacts that shouldn't be committed to the repository.
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
 from pathlib import Path
@@ -30,8 +29,10 @@ to ensure no temporary files, debug scripts, logs, or scratchpads are committed.
 You will be given the original goal and the output of `git status --porcelain`.
 Analyze the untracked and modified files.
 
-Return ONLY a JSON object specifying which files should be deleted and which should be added to .gitignore.
-Do not delete source code, test files that belong to the test suite, configuration, or intended artifacts.
+Return ONLY a JSON object specifying which files should be deleted and which should be
+added to .gitignore.
+Do not delete source code, test files that belong to the test suite, configuration, or
+intended artifacts.
 ONLY delete obvious scratchpads (e.g. `test_script.py`, `debug.log`, `temp.json`, `run.sh`).
 
 Schema:
@@ -120,7 +121,9 @@ async def run(state: RunState) -> None:
     # Handle deletions
     for file_path in decision.files_to_delete:
         if file_path not in untracked_files:
-            console.print(f"  [dim]Skipping deletion of '{file_path}' (not an untracked file)[/dim]")
+            console.print(
+                f"  [dim]Skipping deletion of '{file_path}' (not an untracked file)[/dim]"
+            )
             continue
             
         full_path = workspace_path / file_path
@@ -145,7 +148,10 @@ async def run(state: RunState) -> None:
                 f.write("\n# Auto-ignored by Talon workspace-cleaner\n")
                 for item in decision.files_to_gitignore:
                     if item not in untracked_files:
-                        console.print(f"  [dim]Skipping gitignore of '{item}' (not a new untracked/added file)[/dim]")
+                        console.print(
+                            f"  [dim]Skipping gitignore of '{item}'"
+                            " (not a new untracked/added file)[/dim]"
+                        )
                         continue
                     _git(["rm", "--cached", "-q", item], str(workspace_path))
                     f.write(f"{item}\n")
