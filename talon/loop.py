@@ -262,7 +262,7 @@ async def run(
         _save_state(state)
         if on_step:
             await on_step(state)
-        
+
     # --- Step 5: Create PR ---
     if state.status == RunStatus.PASSED and create_pr:
         pr_url = await pr_creator.run(state, working_dir)

@@ -69,7 +69,7 @@ async def run(state: RunState) -> None:
     status_cmd = _git(["status", "--porcelain"], state.workspace)
     if status_cmd.returncode != 0:
         return
-        
+
     status_output = status_cmd.stdout.strip()
     if not status_output:
         return  # No changes
@@ -80,7 +80,7 @@ async def run(state: RunState) -> None:
             untracked_files.add(line[3:].strip().strip('"'))
 
     provider = get_provider("refiner")  # Using refiner since it's a fast reasoning model
-    
+
     prompt = (
         f"Original Goal: {state.goal}\n\n"
         f"Git Status (--porcelain):\n{status_output}\n\n"
@@ -88,16 +88,16 @@ async def run(state: RunState) -> None:
     )
 
     console.print("\n[bold yellow]workspace-cleaner[/bold yellow] reviewing changes...")
-    
+
     response = await provider.chat(
         system=_CLEANER_SYSTEM,
         messages=[{"role": "user", "content": prompt}],
         tools=[],
         max_tokens=1024,
     )
-    
+
     raw = (response.text or "").strip()
-    
+
     match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
     if match:
         raw = match.group(1)
@@ -105,8 +105,8 @@ async def run(state: RunState) -> None:
         start = raw.find("{")
         end = raw.rfind("}")
         if start != -1 and end != -1:
-            raw = raw[start:end+1]
-            
+            raw = raw[start : end + 1]
+
     try:
         data = json.loads(raw)
         decision = _CleanerDecision.model_validate(data)
@@ -125,7 +125,7 @@ async def run(state: RunState) -> None:
                 f"  [dim]Skipping deletion of '{file_path}' (not an untracked file)[/dim]"
             )
             continue
-            
+
         full_path = workspace_path / file_path
         # Safety check: ensure we're inside the workspace
         try:
@@ -158,11 +158,11 @@ async def run(state: RunState) -> None:
                     ignored.append(item)
         except Exception:
             pass
-            
+
     if deleted:
         console.print(f"  [yellow]Deleted temporary files:[/yellow] {', '.join(deleted)}")
     if ignored:
         console.print(f"  [yellow]Added to .gitignore:[/yellow] {', '.join(ignored)}")
-        
+
     if not deleted and not ignored:
         console.print("  [dim]No cleanup needed.[/dim]")
