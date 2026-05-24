@@ -27,6 +27,7 @@ from talon.skills import (
     refiner,
     self_reviewer,
     task_executor,
+    workspace_cleaner,
 )
 from talon.types import ExecutorResult, PhaseResult, PlanResult, ReviewVerdict, RunState, RunStatus
 
@@ -255,6 +256,13 @@ async def run(
     if on_step:
         await on_step(state)
 
+    # --- Step 4.5: Clean up ---
+    if state.status == RunStatus.PASSED:
+        await workspace_cleaner.run(state)
+        _save_state(state)
+        if on_step:
+            await on_step(state)
+        
     # --- Step 5: Create PR ---
     if state.status == RunStatus.PASSED and create_pr:
         pr_url = await pr_creator.run(state, working_dir)

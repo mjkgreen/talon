@@ -11,6 +11,18 @@ Windows `.exe` · macOS `.dmg` · Linux `.AppImage`
 
 ---
 
+## Screenshots
+
+| Board view | Task plan |
+|:---:|:---:|
+| ![Talon board view](ui/public/talon-screenshot1.png) | ![Task implementation plan](ui/public/talon-screenshot2.png) |
+
+| Execution trace | Settings |
+|:---:|:---:|
+| ![Execution trace with iterations](ui/public/talon-screenshot3.png) | ![Model & workspace settings](ui/public/talon-screenshot4.png) |
+
+---
+
 ## Description
 
 `talon-agent` is an advanced AI-powered orchestrator and agentic workspace automation system designed to take high-level software development goals and turn them into fully executed, verified code changes. 
@@ -54,8 +66,9 @@ reviewer            Reads files, runs tests, checks every success criterion;
 3. **Sub-agents (xN)**: Executed concurrently within a phase. Each sub-agent functions as an independent developer equipped with terminal and filesystem tools (`read_file`, `write_file`, `run_command`, `search_files`) to implement their specific subtask in the workspace.
 4. **Reviewer**: Inspects the modified workspace files, runs user-defined test suites, evaluates the result against every success criterion from the plan, and assigns a passing grade or failure along with a score (0.0–1.0).
 5. **Refiner**: Active only on task failures. It analyzes the reviewer's feedback, aggregates test failures and compiler warnings, and produces a revised action plan for the next iteration.
-6. **Browser Validator**: (Opt-in) Uses Playwright to navigate the application, performs basic UI sanity checks, and records a high-definition walkthrough video to serve as visual proof-of-work.
-7. **Board Updater**: Automatically posts run summaries, code changes, and visual walkthrough links to project management boards (e.g., Linear or GitHub Projects).
+6. **Browser Validator**: (Opt-in) Uses Playwright to navigate the application, performs basic UI sanity checks, takes full-page screenshots at each goal-relevant URL, and records a high-definition `.webm` walkthrough video to serve as visual proof-of-work. Screenshots are saved alongside the video in `runs/<run-id>/` as `screenshot-NN-<path>.png`.
+7. **Workspace Cleaner**: Runs after a successful execution and before PR creation. Uses an LLM to inspect `git status` and identify temporary files, debug scripts, logs, and scratchpads left behind by sub-agents. Deletes confirmed temp files from the workspace and appends accidental environment files to `.gitignore`.
+8. **Board Updater**: Automatically posts run summaries, code changes, and visual walkthrough links to project management boards (e.g., Linear or GitHub Projects).
 
 ---
 
@@ -358,8 +371,9 @@ If you interact with `talon-agent` workflows from within interactive terminal as
 | `/task-executor`     | Decomposes the goal and runs concurrent sub-agents in parallel.                        |
 | `/self-reviewer`     | Reviews file changes, runs test suites, and outputs a pass/fail score.                 |
 | `/refiner`           | Analyzes test output/warnings and structures the next iteration's action plan.         |
-| `/browser-validator` | Initiates the Playwright session, performs navigation checks, and saves the recording. |
-| `/board-updater`     | Connects to Linear/GitHub API endpoints and uploads run statuses and files.            |
+| `/browser-validator`  | Initiates the Playwright session, takes screenshots, and saves the `.webm` recording.  |
+| `/workspace-cleaner`  | Scans git status post-execution, deletes temp files, and appends to `.gitignore`.      |
+| `/board-updater`      | Connects to Linear/GitHub API endpoints and uploads run statuses and files.            |
 
 ---
 
@@ -375,7 +389,8 @@ If you interact with `talon-agent` workflows from within interactive terminal as
 | `talon/skills/task_executor.py`     | Phase-sequential, intra-phase-parallel execution engine.                                     |
 | `talon/skills/self_reviewer.py`     | Reviewer with plan-aware success-criteria verification loop.                                 |
 | `talon/skills/refiner.py`           | Logic to distill logs into actionable developer instructions.                                |
-| `talon/skills/browser_validator.py` | Playwright interface logic for visually recording page runs.                                 |
+| `talon/skills/browser_validator.py` | Playwright interface logic for visually recording page runs and capturing screenshots.       |
+| `talon/skills/workspace_cleaner.py` | Post-execution LLM-assisted cleanup: removes temp files and updates `.gitignore`.            |
 | `talon/skills/board_updater.py`     | Connector logic to post update summaries to board integrations.                              |
 | `talon/loop.py`                     | Orchestrates the top-level main execution pipeline loop; streams phase-complete events.      |
 | `talon/main.py`                     | Defines the local user CLI interface.                                                        |
