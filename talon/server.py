@@ -12,7 +12,9 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import traceback
+from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
@@ -766,6 +768,20 @@ async def get_run_video(run_id: str):
             if video_path and os.path.exists(video_path):
                 return FileResponse(video_path)
     raise HTTPException(status_code=404, detail="Video not found")
+
+
+@app.get("/api/runs/{run_id}/screenshots/{filename}")
+async def get_run_screenshot(run_id: str, filename: str):
+    """Serve individual screenshot PNGs from the run's video directory."""
+    if not re.fullmatch(r"[a-zA-Z0-9_\-]+", run_id):
+        raise HTTPException(status_code=400, detail="Invalid run_id")
+    run_dir = Path(os.path.realpath(os.path.join(os.getenv("RUNS_DIR", "./runs"), run_id)))
+    screenshot_path = Path(os.path.realpath(os.path.join(str(run_dir), filename)))
+    if not screenshot_path.is_relative_to(run_dir):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if not screenshot_path.exists() or screenshot_path.suffix != ".png":
+        raise HTTPException(status_code=404, detail="Screenshot not found")
+    return FileResponse(str(screenshot_path), media_type="image/png")
 
 
 @app.post("/api/issues")

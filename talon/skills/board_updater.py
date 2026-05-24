@@ -36,6 +36,7 @@ def _get_github_token() -> str:
 
 def _format_payload(state: RunState, video_url: str | None, pr_url: str | None) -> dict:
     last_review = state.review_results[-1] if state.review_results else None
+    br = state.browser_result
     return {
         "run_id": state.run_id,
         "goal": state.goal,
@@ -43,6 +44,9 @@ def _format_payload(state: RunState, video_url: str | None, pr_url: str | None) 
         "iterations": state.iteration,
         "score": last_review.score if last_review else None,
         "verdict": last_review.verdict if last_review else None,
+        "browser_passed": br.passed if br else None,
+        "browser_score": br.score if br else None,
+        "browser_assertions": len(br.assertions) if br else 0,
         "video_url": video_url,
         "pr_url": pr_url,
         "timestamp": datetime.utcnow().isoformat(),
