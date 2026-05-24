@@ -18,6 +18,8 @@ from pathlib import Path
 
 from rich.console import Console
 
+from typing import Awaitable, Callable
+
 from talon.providers import get_provider
 from talon.providers.base import ToolResult
 from talon.types import BrowserAssertion, BrowserTestResult, RunState
@@ -248,6 +250,8 @@ async def _dispatch_browser_tool(
 
             if not exists and should_exist:
                 actual = "element not found"
+            elif exists and not should_exist:
+                actual = await page.locator(selector).first.inner_text()
 
             assertion = BrowserAssertion(
                 description=description,
@@ -306,11 +310,17 @@ async def _dispatch_browser_tool(
 
 
 async def run(
-    state: RunState, app_url: str, runs_dir: str
+    state: RunState,
+    app_url: str,
+    runs_dir: str,
+    on_progress: Callable[[BrowserTestResult], Awaitable[None]] | None = None,
 ) -> BrowserTestResult | None:
     """
     Run an LLM-driven browser test session against app_url.
     Returns a BrowserTestResult, or None on failure/disabled.
+
+    on_progress is called after each tool round with a partial BrowserTestResult
+    so callers can stream incremental state to the UI.
     """
     if not ENABLED:
         console.print(
@@ -351,6 +361,7 @@ async def run(
     counter = [0]
     final_passed = False
     final_summary = "Test did not complete"
+    mark_done_called = False
     steps = 0
 
     async with async_playwright() as pw:
@@ -394,6 +405,7 @@ async def run(
                     if is_done:
                         final_passed = tc.input.get("passed", False)
                         final_summary = tc.input.get("summary", "")
+                        mark_done_called = True
                         done = True
                         provider.append_tool_results(messages, tool_results)
                         break
@@ -402,6 +414,24 @@ async def run(
                     provider.append_tool_results(messages, tool_results)
                 if done:
                     break
+
+                if on_progress:
+                    partial_score = (
+                        (sum(1 for a in assertions if a.passed) / len(assertions))
+                        if assertions
+                        else 0.0
+                    )
+                    await on_progress(
+                        BrowserTestResult(
+                            passed=False,
+                            score=partial_score,
+                            summary=f"Testing… ({steps} steps, {len(assertions)} assertions)",
+                            assertions=list(assertions),
+                            screenshots=list(screenshots),
+                            video_path=video_path,
+                            steps=steps,
+                        )
+                    )
         finally:
             await context.close()
             await browser.close()
@@ -417,7 +447,6 @@ async def run(
         f"score={score:.0%} steps={steps} assertions={len(assertions)}"
     )
 
-    incomplete = final_summary == "Test did not complete"
     return BrowserTestResult(
         passed=final_passed,
         score=score,
@@ -426,5 +455,5 @@ async def run(
         screenshots=screenshots,
         video_path=video_path,
         steps=steps,
-        error="Agent did not call mark_done" if incomplete else None,
+        error=None if mark_done_called else "Agent did not call mark_done",
     )

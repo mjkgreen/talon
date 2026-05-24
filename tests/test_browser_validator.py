@@ -180,6 +180,127 @@ class TestDispatchBrowserTool:
         assert "error" in data
         assert "ERR_CONNECTION_REFUSED" in data["error"]
 
+    @pytest.mark.asyncio
+    async def test_click_returns_selector(self, tmp_path):
+        from talon.skills.browser_validator import _dispatch_browser_tool
+
+        page = _make_page()
+        result_str, is_done = await _dispatch_browser_tool(
+            "click", {"selector": "button#submit"}, page, tmp_path, [], [], [0]
+        )
+        assert is_done is False
+        assert json.loads(result_str)["clicked"] == "button#submit"
+        page.click.assert_called_once_with("button#submit", timeout=10000)
+
+    @pytest.mark.asyncio
+    async def test_fill_returns_selector(self, tmp_path):
+        from talon.skills.browser_validator import _dispatch_browser_tool
+
+        page = _make_page()
+        result_str, is_done = await _dispatch_browser_tool(
+            "fill", {"selector": "input#email", "value": "user@example.com"},
+            page, tmp_path, [], [], [0],
+        )
+        assert is_done is False
+        assert json.loads(result_str)["filled"] == "input#email"
+        page.fill.assert_called_once_with("input#email", "user@example.com")
+
+    @pytest.mark.asyncio
+    async def test_get_page_content_truncates(self, tmp_path):
+        from talon.skills.browser_validator import _dispatch_browser_tool
+
+        page = _make_page(body_text="x" * 5000)
+        result_str, is_done = await _dispatch_browser_tool(
+            "get_page_content", {}, page, tmp_path, [], [], [0]
+        )
+        assert is_done is False
+        assert len(json.loads(result_str)["text"]) == 4000
+
+    @pytest.mark.asyncio
+    async def test_get_element_text_returns_text(self, tmp_path):
+        from talon.skills.browser_validator import _dispatch_browser_tool
+
+        page = _make_page(body_text="Hello")
+        result_str, is_done = await _dispatch_browser_tool(
+            "get_element_text", {"selector": "h1"}, page, tmp_path, [], [], [0]
+        )
+        assert is_done is False
+        assert json.loads(result_str)["text"] == "Hello"
+
+    @pytest.mark.asyncio
+    async def test_wait_for_element_calls_playwright(self, tmp_path):
+        from talon.skills.browser_validator import _dispatch_browser_tool
+
+        page = _make_page()
+        result_str, is_done = await _dispatch_browser_tool(
+            "wait_for_element", {"selector": "#spinner", "timeout_ms": 5000},
+            page, tmp_path, [], [], [0],
+        )
+        assert is_done is False
+        assert json.loads(result_str)["found"] == "#spinner"
+        page.wait_for_selector.assert_called_once_with("#spinner", timeout=5000)
+
+    @pytest.mark.asyncio
+    async def test_select_option_returns_value(self, tmp_path):
+        from talon.skills.browser_validator import _dispatch_browser_tool
+
+        page = _make_page()
+        result_str, is_done = await _dispatch_browser_tool(
+            "select_option", {"selector": "select#lang", "value": "en"},
+            page, tmp_path, [], [], [0],
+        )
+        assert is_done is False
+        assert json.loads(result_str)["selected"] == "en"
+        page.select_option.assert_called_once_with("select#lang", "en")
+
+    @pytest.mark.asyncio
+    async def test_assert_element_should_not_exist_but_does(self, tmp_path):
+        from talon.skills.browser_validator import _dispatch_browser_tool
+
+        page = _make_page(locator_count=1, locator_text="Error banner")
+        assertions: list[BrowserAssertion] = []
+        await _dispatch_browser_tool(
+            "assert_element",
+            {"selector": ".error", "description": "No error shown", "should_exist": False},
+            page, tmp_path, assertions, [], [0],
+        )
+        assert assertions[0].passed is False
+        assert assertions[0].actual == "Error banner"
+
+    @pytest.mark.asyncio
+    async def test_mark_done_not_called_sets_error_field(self, tmp_path):
+        from talon.skills import browser_validator
+
+        state = RunState(goal="Quick test")
+
+        end_response = MagicMock()
+        end_response.stop_reason = "end_turn"
+        end_response.tool_calls = []
+
+        mock_provider = AsyncMock()
+        mock_provider.chat = AsyncMock(return_value=end_response)
+        mock_provider.append_assistant = MagicMock()
+        mock_provider.append_tool_results = MagicMock()
+
+        mock_page = _make_page()
+        mock_context = AsyncMock()
+        mock_context.new_page = AsyncMock(return_value=mock_page)
+        mock_browser = AsyncMock()
+        mock_browser.new_context = AsyncMock(return_value=mock_context)
+        mock_pw = AsyncMock()
+        mock_pw.chromium.launch = AsyncMock(return_value=mock_browser)
+        mock_playwright_cm = AsyncMock()
+        mock_playwright_cm.__aenter__ = AsyncMock(return_value=mock_pw)
+        mock_playwright_cm.__aexit__ = AsyncMock(return_value=False)
+
+        with patch.object(browser_validator, "ENABLED", True):
+            with patch.object(browser_validator, "get_provider", return_value=mock_provider):
+                with patch.object(browser_validator, "async_playwright", return_value=mock_playwright_cm):
+                    result = await browser_validator.run(state, "http://localhost:8080", str(tmp_path))
+
+        assert result is not None
+        assert result.error == "Agent did not call mark_done"
+
 
 # ---------------------------------------------------------------------------
 # Integration tests: run()
