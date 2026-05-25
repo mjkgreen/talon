@@ -23,6 +23,8 @@ interface SettingsModalProps {
   setReviewerMaxToolTurns: (v: string) => void;
   maxConcurrentRuns: string;
   setMaxConcurrentRuns: (v: string) => void;
+  browserTestMaxSteps: string;
+  setBrowserTestMaxSteps: (v: string) => void;
   advancedModelOpen: boolean;
   setAdvancedModelOpen: React.Dispatch<React.SetStateAction<boolean>>;
   savingSettings: boolean;
@@ -88,6 +90,8 @@ export function SettingsModal({
   setReviewerMaxToolTurns,
   maxConcurrentRuns,
   setMaxConcurrentRuns,
+  browserTestMaxSteps,
+  setBrowserTestMaxSteps,
   advancedModelOpen,
   setAdvancedModelOpen,
   savingSettings,
@@ -518,6 +522,20 @@ export function SettingsModal({
                 />
                 <p className="text-xs text-neutral-600 mt-1">
                   How many file reads / commands the reviewer can run before outputting its verdict (default: 50)
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-neutral-300 mb-1">Browser test max steps</label>
+                <input
+                  type="number"
+                  min={5}
+                  max={100}
+                  value={browserTestMaxSteps}
+                  onChange={(e) => setBrowserTestMaxSteps(e.target.value)}
+                  className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+                />
+                <p className="text-xs text-neutral-600 mt-1">
+                  How many tool-use steps the browser test agent can take per verification session (default: 20)
                 </p>
               </div>
               <div>

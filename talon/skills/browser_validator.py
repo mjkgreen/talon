@@ -10,7 +10,8 @@ To enable:
 """
 
 from __future__ import annotations
-
+ 
+import asyncio
 import json
 import os
 import re
@@ -189,7 +190,12 @@ _BROWSER_AGENT_SYSTEM = (
     "- Take screenshots at major transition states and also if/when an action fails to document behavior.\n"
     "- If the app is unreachable, immediately call mark_done(passed=false, summary='App is unreachable').\n"
     "- You have a strict budget of {max_steps} tool calls. You MUST call mark_done to finish. If you reach step 17 or above out of {max_steps}, immediately make your final assertions and call mark_done with your verdict. Do not let the step limit expire.\n"
-    "- Every action must be a tool call — no prose output."
+    "- Every action must be a tool call — no prose output.\n\n"
+    "Login & Authentication Flow:\n"
+    "- If the application lands on a login/authentication screen:\n"
+    "  1. Locate the username/email and password fields immediately (use get_page_content to inspect selectors).\n"
+    "  2. Fill both fields and click the login/submit button in consecutive, swift steps. Do not waste steps taking unnecessary screenshots or repeatedly querying the page content between typing and clicking submit.\n"
+    "  3. After clicking login, wait for navigation or use wait_for_element to ensure the dashboard/home screen has fully loaded before executing any assertions or main testing steps."
 )
 
 
@@ -355,6 +361,7 @@ async def run(
 
     console.print(f"\n[bold green]browser-validator[/bold green] testing {app_url}")
 
+    max_steps = int(os.getenv("BROWSER_TEST_MAX_STEPS", str(MAX_STEPS)))
     provider = get_provider("reviewer")
     video_dir = Path(runs_dir) / state.run_id
     video_dir.mkdir(parents=True, exist_ok=True)
@@ -391,7 +398,7 @@ async def run(
             f"  Username / Email: {test_user or '(not set)'}\n"
             f"  Password: {test_password or '(not set)'}"
         )
-    system = _BROWSER_AGENT_SYSTEM.format(max_steps=MAX_STEPS) + creds_hint
+    system = _BROWSER_AGENT_SYSTEM.format(max_steps=max_steps) + creds_hint
     messages: list[dict] = [
         {
             "role": "user",
@@ -435,6 +442,32 @@ async def run(
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(args=["--disable-gpu"])
+
+        # Pre-flight check: Compile/bundle the app in an unrecorded context first.
+        # This keeps the final video completely free of long compilation dead-times.
+        console.print("  [dim]browser-validator[/dim] performing pre-flight compilation check...")
+        pre_context = await browser.new_context(viewport={"width": 1280, "height": 720})
+        if cookie_file:
+            try:
+                raw_cookies = json.loads(Path(cookie_file).read_text(encoding="utf-8"))
+                await pre_context.add_cookies(raw_cookies)
+            except Exception:
+                pass
+        pre_page = await pre_context.new_page()
+        try:
+            await pre_page.goto(app_url, timeout=ACTION_TIMEOUT)
+            await pre_page.wait_for_load_state("load", timeout=ACTION_TIMEOUT)
+            for _attempt in range(45):
+                body_text = (await pre_page.inner_text("body") or "").strip().lower()
+                if not body_text or any(kw in body_text for kw in ["bundling", "compiling", "loading", "webpack", "metro", "please wait"]):
+                    await asyncio.sleep(1.0)
+                else:
+                    break
+        except Exception as _pe:
+            console.print(f"  [yellow]browser-validator[/yellow] pre-flight warning (continuing): {_pe}")
+        finally:
+            await pre_context.close()
+
         context = await browser.new_context(
             viewport={"width": 1280, "height": 720},
             record_video_dir=str(video_dir),
@@ -453,10 +486,10 @@ async def run(
         page = await context.new_page()
 
         try:
-            for _turn in range(MAX_STEPS):
+            for _turn in range(max_steps):
                 # Restrict tools to ONLY mark_done on the last step to force the agent to complete
                 current_tools = BROWSER_TOOL_DEFINITIONS
-                if _turn == MAX_STEPS - 1:
+                if _turn == max_steps - 1:
                     current_tools = [t for t in BROWSER_TOOL_DEFINITIONS if t["name"] == "mark_done"]
 
                 response = await provider.chat(
@@ -519,7 +552,7 @@ async def run(
                         )
                     )
 
-            if not mark_done_called and steps >= MAX_STEPS:
+            if not mark_done_called and steps >= max_steps:
                 final_passed = all(a.passed for a in assertions) if assertions else False
                 status_str = "passed" if final_passed else "failed"
                 final_summary = f"Auto-completed: reached step limit. {len(assertions)} assertions recorded, {status_str}."

@@ -1299,7 +1299,7 @@ export function IssueDetailModal({
               {/* Case 4: browser validation ran — full results */}
               {(activeRunState.browser_result || activeRunState.video_path) && (() => {
                 const br = activeRunState.browser_result;
-                const isRunning = br && br.summary?.startsWith("Testing…");
+                const isRunning = !!activeRunState.verification_running || (br && (br.summary?.startsWith("Testing…") || br.summary?.startsWith("Initializing")));
                 return (
                 <>
                   {/* Summary header */}

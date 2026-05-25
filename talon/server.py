@@ -62,6 +62,7 @@ _DB_TO_ENV: dict[str, str] = {
     "agent_max_tokens": "AGENT_MAX_TOKENS",
     "reviewer_max_tool_turns": "REVIEWER_MAX_TOOL_TURNS",
     "max_concurrent_runs": "MAX_CONCURRENT_RUNS",
+    "browser_test_max_steps": "BROWSER_TEST_MAX_STEPS",
 }
 
 _API_KEY_SETTINGS = {
@@ -121,13 +122,12 @@ def _has_llm_configured() -> bool:
 async def _apply_db_settings_to_env() -> None:
     """Load AI/model settings from DB into os.environ.
 
-    DB-stored values fill in missing env vars only — system env (set in .env
-    or the process environment) always takes precedence.
+    DB-stored values take precedence and overwrite process/env settings.
     """
     settings = await db.get_all_settings()
     for db_key, env_key in _DB_TO_ENV.items():
         value = settings.get(db_key)
-        if value and not os.environ.get(env_key):
+        if value:
             os.environ[env_key] = value
 
 
