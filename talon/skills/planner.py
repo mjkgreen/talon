@@ -71,6 +71,35 @@ Output ONLY valid JSON. No prose, no markdown fences.
 _MAX_EXPLORE_TURNS = int(os.getenv("PLANNER_MAX_TURNS", "500"))
 
 
+def _extract_json_object(text: str) -> str:
+    """Return the first top-level JSON object found in *text*, or '' if none."""
+    start = text.find("{")
+    if start == -1:
+        return ""
+    depth = 0
+    in_string = False
+    escape_next = False
+    for i, ch in enumerate(text[start:], start):
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return ""
+
+
 def _workspace_snapshot(working_dir: str, max_files: int = 200) -> str:
     """Return a compact file-tree string for the workspace root."""
     try:
@@ -118,13 +147,24 @@ async def run(goal: str, working_dir: str | None = None) -> PlanResult:
             system=_PLANNER_SYSTEM,
             messages=messages,
             tools=tools,
-            max_tokens=4096,
+            max_tokens=8192,
         )
         provider.append_assistant(messages, response)
 
         if response.stop_reason == "end_turn":
-            raw_plan = (response.text or "").strip()
-            break
+            candidate = (response.text or "").strip()
+            # Model may prefix with reasoning text — extract the JSON object.
+            extracted = _extract_json_object(candidate)
+            if extracted:
+                raw_plan = extracted
+                break
+            # No JSON yet; nudge the model to emit only the JSON.
+            console.print("  [yellow]planner: no JSON in response, requesting JSON output[/yellow]")
+            _nudge = (
+                "Please output only the JSON plan now — "
+                "no prose, no markdown fences, just the raw JSON object."
+            )
+            messages.append({"role": "user", "content": _nudge})
 
         async def _call(tc) -> ToolResult:
             if tc.name in _BLOCKED_TOOLS:
@@ -145,11 +185,6 @@ async def run(goal: str, working_dir: str | None = None) -> PlanResult:
 
     if not raw_plan:
         raise RuntimeError(f"Planner did not produce a plan after {turns} turns")
-
-    if raw_plan.startswith("```"):
-        raw_plan = raw_plan.split("```")[1]
-        if raw_plan.startswith("json"):
-            raw_plan = raw_plan[4:]
 
     try:
         data = json.loads(raw_plan)
