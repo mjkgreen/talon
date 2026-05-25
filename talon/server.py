@@ -445,7 +445,12 @@ async def _run_loop(
             )
 
             if issue_id:
-                final_status = "Done" if state.status == "passed" else "Failed"
+                if state.status == "passed":
+                    final_status = "Done"
+                elif state.status == "paused":
+                    final_status = "In Progress"
+                else:
+                    final_status = "Failed"
                 await db.update_issue(
                     issue_id, db.IssueUpdate(status=final_status, run_id=state.run_id)
                 )
@@ -956,6 +961,200 @@ async def refine_issue_plan(issue_id: int, background_tasks: BackgroundTasks):
     goal = f"{issue.title}\n\n{issue.description}".strip()
     background_tasks.add_task(_run_plan_refiner_bg, issue_id, goal)
     return {"ok": True}
+
+
+async def _resume_loop(issue_id: int, run_id: str) -> None:
+    sem = _get_semaphore()
+    if sem.locked():
+        console.print(f"[yellow]Resume queued (at concurrency limit) for issue {issue_id}[/yellow]")
+
+    await db.update_issue(issue_id, db.IssueUpdate(status="In Progress"))
+    await broadcast_issue_update(issue_id)
+
+    async with sem:
+        console.print(f"\n[bold green]-  Resumed[/bold green] [ui] issue {issue_id} (run: {run_id})")
+        try:
+            from talon.loop import resume
+
+            async def on_step(state):
+                await manager.broadcast(
+                    {
+                        "type": "run_state_updated",
+                        "issue_id": issue_id,
+                        "state": state.model_dump(mode="json"),
+                    }
+                )
+
+            async def on_log(message: str):
+                await manager.broadcast(
+                    {
+                        "type": "run_log",
+                        "issue_id": issue_id,
+                        "message": message,
+                    }
+                )
+
+            state = await resume(
+                run_id=run_id,
+                on_step=on_step,
+                on_log=on_log,
+            )
+
+            if state.status == "passed":
+                final_status = "Done"
+            elif state.status == "paused":
+                final_status = "In Progress"
+            else:
+                final_status = "Failed"
+            await db.update_issue(
+                issue_id, db.IssueUpdate(status=final_status)
+            )
+            await broadcast_issue_update(issue_id)
+
+        except Exception as e:
+            try:
+                console.print(f"[red]Resume error: {e}[/red]")
+                console.print(traceback.format_exc())
+            except Exception:
+                pass
+            try:
+                await manager.broadcast(
+                    {
+                        "type": "run_error",
+                        "issue_id": issue_id,
+                        "error": str(e),
+                    }
+                )
+            except Exception:
+                pass
+            await db.update_issue(issue_id, db.IssueUpdate(status="Failed"))
+            await broadcast_issue_update(issue_id)
+
+
+async def _run_verification_bg(issue_id: int, run_id: str) -> None:
+    try:
+        from talon.loop import _load_state, _save_state
+        from talon.skills import browser_validator
+        
+        state = _load_state(run_id)
+        app_url = await db.get_setting("default_app_url") or os.getenv("DEFAULT_APP_URL")
+        if not app_url:
+            await manager.broadcast({
+                "type": "run_error",
+                "issue_id": issue_id,
+                "error": "No application URL configured for verification. Set DEFAULT_APP_URL or app_url."
+            })
+            return
+
+        await manager.broadcast({
+            "type": "run_log",
+            "issue_id": issue_id,
+            "message": f"=== Re-running Browser Verification on {app_url} ==="
+        })
+
+        async def _on_browser_progress(partial):
+            state.browser_result = partial
+            _save_state(state)
+            await manager.broadcast({
+                "type": "run_state_updated",
+                "issue_id": issue_id,
+                "state": state.model_dump(mode="json")
+            })
+
+        runs_dir = os.getenv("RUNS_DIR", "./runs")
+        browser_result = await browser_validator.run(
+            state, app_url, runs_dir, on_progress=_on_browser_progress
+        )
+        if browser_result is not None:
+            state.browser_result = browser_result
+            state.video_path = browser_result.video_path
+        _save_state(state)
+
+        await manager.broadcast({
+            "type": "run_state_updated",
+            "issue_id": issue_id,
+            "state": state.model_dump(mode="json")
+        })
+        await manager.broadcast({
+            "type": "run_log",
+            "issue_id": issue_id,
+            "message": "=== Browser Verification Completed ==="
+        })
+    except Exception as e:
+        console.print(f"[red]Verification error: {e}[/red]")
+        await manager.broadcast({
+            "type": "run_error",
+            "issue_id": issue_id,
+            "error": f"Verification failed: {e}"
+        })
+
+
+@app.post("/api/issues/{issue_id}/verify")
+async def verify_issue_run(issue_id: int, background_tasks: BackgroundTasks):
+    issue = await db.get_issue(issue_id)
+    if not issue or not issue.run_id:
+        raise HTTPException(status_code=404, detail="Run not found for issue")
+    if issue.status not in ("Done", "Failed"):
+        raise HTTPException(status_code=400, detail="Cannot run verification until execution is complete.")
+    
+    background_tasks.add_task(_run_verification_bg, issue_id, issue.run_id)
+    return {"status": "verification_started"}
+
+
+@app.post("/api/issues/{issue_id}/pause")
+async def pause_issue_run(issue_id: int):
+    issue = await db.get_issue(issue_id)
+    if not issue or not issue.run_id:
+        raise HTTPException(status_code=404, detail="Run not found for issue")
+    
+    runs_dir = Path(os.getenv("RUNS_DIR", "./runs"))
+    state_file = runs_dir / issue.run_id / "state.json"
+    if not state_file.exists():
+        raise HTTPException(status_code=404, detail=f"Run not found: {issue.run_id}")
+    
+    sentinel = runs_dir / issue.run_id / "pause.signal"
+    sentinel.write_text(datetime.utcnow().isoformat(), encoding="utf-8")
+    
+    await manager.broadcast({
+        "type": "run_log",
+        "issue_id": issue_id,
+        "message": "--> Pause requested. The agent will pause gracefully after the current iteration completes."
+    })
+    
+    return {"status": "paused_signal_sent"}
+
+
+@app.post("/api/issues/{issue_id}/resume")
+async def resume_issue_run(issue_id: int, background_tasks: BackgroundTasks):
+    issue = await db.get_issue(issue_id)
+    if not issue or not issue.run_id:
+        raise HTTPException(status_code=404, detail="Run not found for issue")
+    
+    background_tasks.add_task(_resume_loop, issue_id, issue.run_id)
+    return {"status": "resuming"}
+
+
+@app.post("/api/issues/{issue_id}/restart")
+async def restart_issue_run(issue_id: int, background_tasks: BackgroundTasks):
+    issue = await db.get_issue(issue_id)
+    if not issue:
+        raise HTTPException(status_code=404, detail="Issue not found")
+    
+    # Trigger a fresh run
+    # Set status to Backlog temporarily to clear run_id in the loop
+    await db.update_issue(issue_id, db.IssueUpdate(status="Backlog", clear_run_id=True))
+    updated = await db.get_issue(issue_id)
+    await broadcast_issue_update(issue_id)
+    
+    background_tasks.add_task(
+        _run_loop,
+        f"{updated.title}\n\n{updated.description}",
+        "ui",
+        updated.id,
+        None,
+        updated.project_id,
+    )
+    return {"status": "restarting"}
 
 
 @app.patch("/api/issues/{issue_id}")

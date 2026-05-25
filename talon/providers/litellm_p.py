@@ -15,8 +15,14 @@ OpenAI/LiteLLM format (parameters) since that is the common wire format.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import random
+
+from asyncio_throttle import Throttler
+
+_GLOBAL_THROTTLER = Throttler(rate_limit=int(os.getenv("TALON_RPM_LIMIT", "300")), period=60.0)
 
 # Optimize LiteLLM import/startup performance
 # (disables slow AWS/Boto3 stream shape checks and telemetry)
@@ -79,33 +85,69 @@ class LiteLLMProvider:
         if response_format:
             kwargs["response_format"] = response_format
 
-        try:
-            raw = await litellm.acompletion(**kwargs, timeout=timeout)
-        except Exception as e:
-            err_str = str(e).lower()
-            is_context_error = (
-                "context_window" in err_str
-                or "contextwindow" in err_str
-                or "context window" in err_str
-                or "token count exceeds" in err_str
-                or "maximum number of tokens" in err_str
-                or "context_window_exceeded" in err_str
-            )
-            if is_context_error and len(messages) > 6:
-                # Prune older tool result messages in-place to recover.
-                cutoff = len(messages) - 6
-                for i in range(1, cutoff):
-                    if messages[i].get("role") == "tool":
-                        messages[i] = {
-                            "role": "tool",
-                            "tool_call_id": messages[i].get("tool_call_id"),
-                            "content": "[Tool result truncated to save context window space]",
-                        }
-                full_messages = [{"role": "system", "content": system}, *messages]
-                kwargs["messages"] = full_messages
-                raw = await litellm.acompletion(**kwargs, timeout=timeout)
-            else:
+        max_rate_limit_retries = 5
+        base_delay = 2.0
+        timeout_retried = False
+        context_pruned = False
+        last_error = None
+        
+        for attempt in range(max_rate_limit_retries + 1):
+            try:
+                async with _GLOBAL_THROTTLER:
+                    raw = await litellm.acompletion(**kwargs, timeout=timeout)
+                break
+            except Exception as e:
+                last_error = e
+                err_str = str(e).lower()
+                is_timeout = "timeout" in err_str or isinstance(e, asyncio.TimeoutError) or getattr(e, "status_code", None) == 408
+                is_rate_limit = "rate limit" in err_str or "429" in err_str or getattr(e, "status_code", None) == 429
+                
+                is_context_error = (
+                    "context_window" in err_str
+                    or "contextwindow" in err_str
+                    or "context window" in err_str
+                    or "token count exceeds" in err_str
+                    or "maximum number of tokens" in err_str
+                    or "context_window_exceeded" in err_str
+                )
+                
+                if is_timeout and not timeout_retried and attempt < max_rate_limit_retries:
+                    print(f"[LiteLLM] Timeout occurred. Retrying in 5s... ({e})")
+                    await asyncio.sleep(5)
+                    timeout_retried = True
+                    continue
+                    
+                if is_rate_limit and attempt < max_rate_limit_retries:
+                    retry_after = getattr(e, "response", None)
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                    if retry_after and hasattr(retry_after, "headers"):
+                        retry_val = retry_after.headers.get("Retry-After")
+                        if retry_val and retry_val.isdigit():
+                            delay = max(delay, int(retry_val))
+                    print(f"[LiteLLM] Rate limited. Retrying in {delay:.1f}s... (Attempt {attempt+1}/{max_rate_limit_retries})")
+                    await asyncio.sleep(delay)
+                    continue
+                    
+                if is_context_error and len(messages) > 7 and not context_pruned and attempt < max_rate_limit_retries:
+                    # Prune older tool result messages in-place to recover.
+                    cutoff = len(messages) - 6
+                    for i in range(1, cutoff):
+                        if messages[i].get("role") == "tool":
+                            messages[i] = {
+                                "role": "tool",
+                                "tool_call_id": messages[i].get("tool_call_id"),
+                                "content": "[Tool result truncated to save context window space]",
+                            }
+                    full_messages = [{"role": "system", "content": system}, *messages]
+                    kwargs["messages"] = full_messages
+                    context_pruned = True
+                    continue
+                    
                 raise e
+        else:
+            if last_error:
+                raise last_error
+                
         msg = raw.choices[0].message
 
         text: str | None = msg.content or None

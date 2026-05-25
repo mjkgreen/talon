@@ -234,6 +234,8 @@ async def run(
         state.error = str(e)
         state.finished_at = datetime.utcnow()
         _save_state(state)
+        if on_log:
+            await on_log(f"[FAILED] Run crashed: {e}")
         raise
 
     refinement = None
@@ -351,6 +353,8 @@ async def run(
         state.error = str(e)
         state.finished_at = datetime.utcnow()
         _save_state(state)
+        if on_log:
+            await on_log(f"[FAILED] Run crashed: {e}")
         raise
 
     state.finished_at = datetime.utcnow()
@@ -583,6 +587,8 @@ async def resume(
         state.error = str(e)
         state.finished_at = datetime.utcnow()
         _save_state(state)
+        if on_log:
+            await on_log(f"[FAILED] Run crashed: {e}")
         raise
 
     state.finished_at = datetime.utcnow()

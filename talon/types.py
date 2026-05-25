@@ -96,6 +96,7 @@ class RunStatus(str, Enum):
     PASSED = "passed"
     FAILED = "failed"
     MAX_ITERATIONS = "max_iterations"
+    PAUSED = "paused"
 
 
 class PlanPhase(BaseModel):
@@ -140,6 +141,7 @@ class RunState(BaseModel):
     executor_results: list[ExecutorResult] = []
     review_results: list[ReviewFeedback] = []
     refinement_results: list[RefinementResult] = []
+    completed_iterations: list[int] = []
     final_output: Optional[str] = None
     workspace: Optional[str] = None  # path to isolated run workspace
     video_path: Optional[str] = None

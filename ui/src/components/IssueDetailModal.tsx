@@ -12,9 +12,11 @@ import {
   FileText,
   Lightbulb,
   MessageSquare,
+  Pause,
   Pencil,
   Play,
   RefreshCw,
+  RotateCcw,
   Settings,
   X,
 } from "lucide-react";
@@ -44,6 +46,7 @@ interface IssueDetailModalProps {
 }
 
 function logLineClass(line: string) {
+  if (line.includes("[FAILED]")) return "text-red-500";
   if (line.startsWith("===")) return "text-blue-500";
   if (line.startsWith("->")) return "text-cyan-500";
   if (line.startsWith("Files modified:")) return "text-green-500";
@@ -99,6 +102,9 @@ function PlanSection({
   setEditingPlan,
   planDraft,
   setPlanDraft,
+  onRegeneratePlan,
+  onStartExecution,
+  isActionPending,
 }: {
   issue: Issue;
   planningIssues: Set<number>;
@@ -106,6 +112,9 @@ function PlanSection({
   setEditingPlan: (v: boolean) => void;
   planDraft: PlanResult | null;
   setPlanDraft: React.Dispatch<React.SetStateAction<PlanResult | null>>;
+  onRegeneratePlan: () => void;
+  onStartExecution: () => void;
+  isActionPending: boolean;
 }) {
   const [commentDraft, setCommentDraft] = useState("");
 
@@ -312,7 +321,7 @@ function PlanSection({
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) addComment();
             }}
           />
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button
               onClick={addComment}
               disabled={!commentDraft.trim() || isPlanning || issue.status !== "Backlog"}
@@ -332,6 +341,26 @@ function PlanSection({
               }
               Refine Plan
             </button>
+            {issue.status === "Backlog" && (
+              <>
+                <button
+                  onClick={onRegeneratePlan}
+                  disabled={isActionPending || isPlanning}
+                  className="text-xs text-neutral-400 hover:text-neutral-200 bg-neutral-800 border border-neutral-700 px-3 py-1.5 rounded transition-colors disabled:opacity-40 flex items-center gap-1.5"
+                  title="Discard current plan and generate from scratch"
+                >
+                  <RotateCcw size={11} /> Regenerate Plan
+                </button>
+                <button
+                  onClick={onStartExecution}
+                  disabled={isActionPending || isPlanning}
+                  className="text-xs text-violet-300 bg-violet-500/10 hover:bg-violet-500/20 border border-violet-500/30 px-3 py-1.5 rounded transition-colors disabled:opacity-40 flex items-center gap-1.5"
+                  title="Approve plan and run agent"
+                >
+                  <Play size={11} /> Run Agent
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -803,6 +832,67 @@ export function IssueDetailModal({
   const [macroTab, setMacroTab] = useState<"plan" | "trace" | "video">(
     issue.status === "Queued" || issue.status === "Backlog" ? "plan" : "trace"
   );
+  const [isActionPending, setIsActionPending] = useState(false);
+
+  const handlePause = async () => {
+    setIsActionPending(true);
+    try {
+      await fetch(apiUrl(`/api/issues/${issue.id}/pause`), { method: "POST" });
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  const handleResume = async () => {
+    setIsActionPending(true);
+    try {
+      await fetch(apiUrl(`/api/issues/${issue.id}/resume`), { method: "POST" });
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  const handleRestart = async () => {
+    if (!confirm("Are you sure you want to restart this task and run all iterations from scratch?")) return;
+    setIsActionPending(true);
+    try {
+      await fetch(apiUrl(`/api/issues/${issue.id}/restart`), { method: "POST" });
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  const handleRegeneratePlan = async () => {
+    if (!confirm("Are you sure you want to regenerate the implementation plan? This will clear any comments you've added.")) return;
+    setIsActionPending(true);
+    try {
+      await fetch(apiUrl(`/api/issues/${issue.id}/plan/regenerate`), { method: "POST" });
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  const handleStartExecution = async () => {
+    setIsActionPending(true);
+    try {
+      await fetch(apiUrl(`/api/issues/${issue.id}`), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "In Progress" }),
+      });
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  const handleVerify = async () => {
+    setIsActionPending(true);
+    try {
+      await fetch(apiUrl(`/api/issues/${issue.id}/verify`), { method: "POST" });
+    } finally {
+      setIsActionPending(false);
+    }
+  };
 
   useEffect(() => {
     const el = activityLogRef.current;
@@ -829,6 +919,74 @@ export function IssueDetailModal({
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
       <div className="bg-neutral-900 border border-neutral-800 p-8 rounded-2xl w-full max-w-4xl shadow-2xl relative overflow-hidden flex flex-col h-[90vh]">
+        <div className="absolute top-4 right-14 flex items-center gap-2 z-10 bg-neutral-900 border border-neutral-800 p-1 rounded-lg">
+          {issue.status === "In Progress" && activeRunState?.status !== "paused" && (
+            <button
+              onClick={handlePause}
+              disabled={isActionPending}
+              className="flex items-center gap-1.5 text-xs text-yellow-400 bg-yellow-400/10 hover:bg-yellow-400/20 border border-yellow-500/20 px-2.5 py-1 rounded-md font-medium transition-colors"
+              title="Pause Agent between iterations"
+            >
+              <Pause size={12} /> Pause
+            </button>
+          )}
+
+          {((issue.status === "In Progress" && activeRunState?.status === "paused") ||
+            (issue.status === "Failed" && issue.run_id)) && (
+            <button
+              onClick={handleResume}
+              disabled={isActionPending}
+              className="flex items-center gap-1.5 text-xs text-green-400 bg-green-400/10 hover:bg-green-400/20 border border-green-500/20 px-2.5 py-1 rounded-md font-medium transition-colors"
+              title="Resume Agent execution from last checkpoint"
+            >
+              <Play size={12} /> Resume
+            </button>
+          )}
+
+          {(issue.status === "Failed" || issue.status === "Done") && (
+            <button
+              onClick={handleRestart}
+              disabled={isActionPending}
+              className="flex items-center gap-1.5 text-xs text-blue-400 bg-blue-400/10 hover:bg-blue-400/20 border border-blue-500/20 px-2.5 py-1 rounded-md font-medium transition-colors"
+              title="Restart Agent execution from scratch"
+            >
+              <RotateCcw size={12} /> Restart
+            </button>
+          )}
+
+          {issue.status === "Backlog" && issue.plan_json && (
+            <>
+              <button
+                onClick={handleRegeneratePlan}
+                disabled={isActionPending || planningIssues.has(issue.id)}
+                className="flex items-center gap-1.5 text-xs text-neutral-400 hover:text-neutral-200 bg-neutral-800 border border-neutral-700 px-2.5 py-1 rounded-md font-medium transition-colors"
+                title="Regenerate plan from scratch"
+              >
+                <RotateCcw size={12} /> Regenerate Plan
+              </button>
+              <button
+                onClick={handleStartExecution}
+                disabled={isActionPending}
+                className="flex items-center gap-1.5 text-xs text-violet-400 bg-violet-400/10 hover:bg-violet-400/20 border border-violet-500/20 px-2.5 py-1 rounded-md font-medium transition-colors"
+                title="Approve plan and start execution"
+              >
+                <Play size={12} /> Run Agent
+              </button>
+            </>
+          )}
+
+          {issue.status === "Backlog" && !issue.plan_json && (
+            <button
+              onClick={handleRegeneratePlan}
+              disabled={isActionPending || planningIssues.has(issue.id)}
+              className="flex items-center gap-1.5 text-xs text-violet-400 bg-violet-400/10 hover:bg-violet-400/20 border border-violet-500/20 px-2.5 py-1 rounded-md font-medium transition-colors"
+              title="Start planning"
+            >
+              <RefreshCw size={12} className={planningIssues.has(issue.id) ? "animate-spin" : ""} /> Generate Plan
+            </button>
+          )}
+        </div>
+
         <button
           onClick={onClose}
           className="absolute top-4 right-4 p-2 text-neutral-500 hover:text-white bg-neutral-800 hover:bg-neutral-700 rounded-lg transition-colors z-10"
@@ -896,6 +1054,9 @@ export function IssueDetailModal({
               setEditingPlan={setEditingPlan}
               planDraft={planDraft}
               setPlanDraft={setPlanDraft}
+              onRegeneratePlan={handleRegeneratePlan}
+              onStartExecution={handleStartExecution}
+              isActionPending={isActionPending}
             />
           )}
 
@@ -999,8 +1160,17 @@ export function IssueDetailModal({
 
                 {tabCount === 0 && (
                   <div className="p-8 text-center text-neutral-500 text-sm flex flex-col items-center gap-3">
-                    <RefreshCw size={20} className="animate-spin text-blue-500" />
-                    Agent initializing... decomposing goal into subtasks...
+                    {activeRunState?.status === "paused" ? (
+                      <>
+                        <Pause size={20} className="text-yellow-400" />
+                        <span>Agent is paused. You can resume or restart execution using the controls at the top right.</span>
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw size={20} className="animate-spin text-blue-500" />
+                        <span>Agent initializing... decomposing goal into subtasks...</span>
+                      </>
+                    )}
                   </div>
                 )}
 
@@ -1034,6 +1204,21 @@ export function IssueDetailModal({
 
           {macroTab === "video" && activeRunState && (
             <div className="space-y-4">
+              <div className="flex justify-between items-center bg-neutral-950/40 p-4 border border-neutral-800 rounded-xl">
+                <div>
+                  <h4 className="text-sm font-medium text-neutral-200">On-Demand Verification</h4>
+                  <p className="text-xs text-neutral-500">Run or retry browser automation and screenshot validation for this task.</p>
+                </div>
+                <button
+                  onClick={handleVerify}
+                  disabled={isActionPending || (issue.status !== "Done" && issue.status !== "Failed")}
+                  className="flex items-center gap-1.5 text-xs text-green-400 bg-green-400/10 hover:bg-green-400/20 border border-green-500/20 px-3 py-1.5 rounded-lg font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  title={issue.status !== "Done" && issue.status !== "Failed" ? "Cannot run verification until agent execution is complete" : "Run browser verification / validation"}
+                >
+                  <RefreshCw size={12} className={isActionPending ? "animate-spin" : ""} />
+                  {isActionPending ? "Verifying..." : "Run Verification"}
+                </button>
+              </div>
 
               {/* Case 1: run still in progress or old run without detection data */}
               {activeRunState.ui_changes_detected == null &&

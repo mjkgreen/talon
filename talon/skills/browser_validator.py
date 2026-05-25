@@ -343,6 +343,19 @@ async def run(
     video_dir.mkdir(parents=True, exist_ok=True)
     video_path = str(video_dir / "proof.webm")
 
+    # Gather execution context dynamically to guide the browser validator on any task
+    all_files_modified = set()
+    aggregated_outputs = []
+    for er in state.executor_results:
+        for sr in er.subtask_results:
+            if sr.files_modified:
+                all_files_modified.update(sr.files_modified)
+            if sr.output:
+                aggregated_outputs.append(sr.output)
+
+    files_str = ", ".join(sorted(list(all_files_modified))) if all_files_modified else "(none)"
+    outputs_str = "\n---\n".join(aggregated_outputs) if aggregated_outputs else "(none)"
+
     system = _BROWSER_AGENT_SYSTEM.format(max_steps=MAX_STEPS)
     messages: list[dict] = [
         {
@@ -350,8 +363,12 @@ async def run(
             "content": (
                 f"Goal: {state.goal}\n"
                 f"App URL: {app_url}\n\n"
-                "Test that the application satisfies the goal. "
-                "Call mark_done when finished."
+                f"Files Modified During Execution:\n{files_str}\n\n"
+                f"Actions / Execution Results Summary:\n{outputs_str}\n\n"
+                "Your job is to test and verify the relevant changes that were made in this run.\n"
+                "Using the browser tools, navigate the application and work through the flows of the changed files/features "
+                "to prove they work, taking screenshots of major states as visual proof.\n"
+                "Call mark_done with your overall verdict when done."
             ),
         }
     ]

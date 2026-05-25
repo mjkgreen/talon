@@ -8,9 +8,11 @@ import {
   Folder,
   GitBranch,
   Lightbulb,
+  Pause,
   Play,
   Plus,
   RefreshCw,
+  RotateCcw,
   Settings as SettingsIcon,
   Trash2,
   X,
@@ -126,7 +128,22 @@ export default function KanbanBoard() {
     const id = projId !== undefined ? projId : activeProjectId;
     const url = id != null ? apiUrl(`/api/issues?project_id=${id}`) : apiUrl("/api/issues");
     const res = await fetch(url);
-    if (res.ok) setIssues(await res.json());
+    if (res.ok) {
+      const data: Issue[] = await res.json();
+      setIssues(data);
+      data.forEach((issue) => {
+        if (issue.run_id) {
+          fetch(apiUrl(`/api/runs/${issue.run_id}`))
+            .then((r) => (r.ok ? r.json() : null))
+            .then((state) => {
+              if (state) {
+                setLiveRunStates((prev) => ({ ...prev, [issue.id]: state }));
+              }
+            })
+            .catch(() => {});
+        }
+      });
+    }
   };
 
   const fetchProjects = async (): Promise<number | null> => {
@@ -618,6 +635,21 @@ export default function KanbanBoard() {
     await fetch(apiUrl(`/api/issues/${id}`), { method: "DELETE" });
   };
 
+  const pauseIssue = async (id: number) => {
+    await fetch(apiUrl(`/api/issues/${id}/pause`), { method: "POST" });
+  };
+
+  const resumeIssue = async (id: number) => {
+    setIssues((prev) => prev.map((i) => (i.id === id ? { ...i, status: "In Progress" } : i)));
+    await fetch(apiUrl(`/api/issues/${id}/resume`), { method: "POST" });
+  };
+
+  const restartIssue = async (id: number) => {
+    if (!confirm("Are you sure you want to restart this task and run all iterations from scratch?")) return;
+    setIssues((prev) => prev.map((i) => (i.id === id ? { ...i, status: "In Progress" } : i)));
+    await fetch(apiUrl(`/api/issues/${id}/restart`), { method: "POST" });
+  };
+
   const onDragEnd = async (result: DropResult) => {
     if (!result.destination) return;
     const sourceStatus = result.source.droppableId;
@@ -932,22 +964,68 @@ export default function KanbanBoard() {
                               >
                                 <div className="flex justify-between items-start mb-2">
                                   <span className="text-xs text-neutral-500 font-mono">T-{issue.id}</span>
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      deleteIssue(issue.id);
-                                    }}
-                                    className="text-neutral-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                                  >
-                                    <Trash2 size={14} />
-                                  </button>
+                                  <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    {issue.status === "In Progress" && liveRunStates[issue.id]?.status !== "paused" && (
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          pauseIssue(issue.id);
+                                        }}
+                                        title="Pause Agent"
+                                        className="text-neutral-500 hover:text-yellow-400 p-0.5 rounded hover:bg-neutral-700"
+                                      >
+                                        <Pause size={13} />
+                                      </button>
+                                    )}
+                                    {((issue.status === "In Progress" && liveRunStates[issue.id]?.status === "paused") ||
+                                      (issue.status === "Failed" && issue.run_id)) && (
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          resumeIssue(issue.id);
+                                        }}
+                                        title="Resume Agent"
+                                        className="text-neutral-500 hover:text-green-400 p-0.5 rounded hover:bg-neutral-700"
+                                      >
+                                        <Play size={13} />
+                                      </button>
+                                    )}
+                                    {(issue.status === "Failed" || issue.status === "Done") && (
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          restartIssue(issue.id);
+                                        }}
+                                        title="Restart Agent"
+                                        className="text-neutral-500 hover:text-blue-400 p-0.5 rounded hover:bg-neutral-700"
+                                      >
+                                        <RotateCcw size={13} />
+                                      </button>
+                                    )}
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        deleteIssue(issue.id);
+                                      }}
+                                      title="Delete task"
+                                      className="text-neutral-500 hover:text-red-400 p-0.5 rounded hover:bg-neutral-700"
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
+                                  </div>
                                 </div>
                                 <h3 className="text-sm font-medium text-neutral-200 mb-3">{issue.title}</h3>
                                 <div className="flex items-center gap-3 text-xs">
-                                  {issue.status === "In Progress" && (
-                                    <span className="flex items-center gap-1 text-blue-400 bg-blue-400/10 px-2 py-1 rounded">
-                                      <Play size={12} className="animate-pulse" /> Agent running
-                                    </span>
+                                   {issue.status === "In Progress" && (
+                                    liveRunStates[issue.id]?.status === "paused" ? (
+                                      <span className="flex items-center gap-1 text-yellow-400 bg-yellow-400/10 px-2 py-1 rounded">
+                                        <Pause size={12} /> Agent paused
+                                      </span>
+                                    ) : (
+                                      <span className="flex items-center gap-1 text-blue-400 bg-blue-400/10 px-2 py-1 rounded">
+                                        <Play size={12} className="animate-pulse" /> Agent running
+                                      </span>
+                                    )
                                   )}
                                   {issue.status === "Done" && (
                                     <span className="flex items-center gap-1 text-green-400 bg-green-400/10 px-2 py-1 rounded">

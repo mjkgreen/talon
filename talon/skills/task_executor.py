@@ -17,6 +17,13 @@ from typing import Awaitable, Callable
 import litellm
 from rich.console import Console
 
+_subagent_sem = None
+def _get_subagent_sem():
+    global _subagent_sem
+    if _subagent_sem is None:
+        _subagent_sem = asyncio.Semaphore(int(os.getenv("TALON_SUBAGENT_CONCURRENCY", "4")))
+    return _subagent_sem
+
 from talon.providers import get_provider
 from talon.providers.base import ToolResult
 from talon.tools import TOOL_DEFINITIONS, dispatch_tool
@@ -208,11 +215,13 @@ async def _run_subagent_with_retry(
     max_retries: int = 1,
     retry_delay: float = 5.0,
 ) -> SubtaskResult:
+    sem = _get_subagent_sem()
     for attempt in range(max_retries + 1):
         try:
-            return await _run_subagent(
-                subtask, goal, working_dir, phase_name, phase_context, on_log
-            )
+            async with sem:
+                return await _run_subagent(
+                    subtask, goal, working_dir, phase_name, phase_context, on_log
+                )
         except litellm.Timeout:
             if attempt < max_retries:
                 if on_log:
