@@ -182,7 +182,7 @@ async def run(
     on_log: Callable[[str], Awaitable[None]] | None = None,
     start_command: str | None = None,
     project_env_vars: dict[str, str] | None = None,
-    env_file: str | None = None,
+    env_content: str | None = None,
     cookie_file: str | None = None,
     test_user: str | None = None,
     test_password: str | None = None,
@@ -397,7 +397,7 @@ async def run(
                     run_workspace,
                     extra_env=project_env_vars,
                     start_command=start_command,
-                    env_file=env_file,
+                    env_content=env_content,
                 )
             except Exception as _ws_err:
                 console.print(f"[yellow]workspace-starter: {_ws_err}[/yellow]")

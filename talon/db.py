@@ -37,7 +37,7 @@ class Project(BaseModel):
     local_path: Optional[str] = None
     start_command: Optional[str] = None
     project_env_vars: Optional[str] = None  # JSON string {"KEY": "value"}
-    env_file: Optional[str] = None  # path to a .env file to load into subprocess
+    env_content: Optional[str] = None  # raw .env text pasted by the user
     cookie_file: Optional[str] = None
     test_user: Optional[str] = None
     test_password: Optional[str] = None
@@ -53,7 +53,7 @@ class ProjectCreate(BaseModel):
     local_path: Optional[str] = None
     start_command: Optional[str] = None
     project_env_vars: Optional[str] = None
-    env_file: Optional[str] = None
+    env_content: Optional[str] = None
     cookie_file: Optional[str] = None
     test_user: Optional[str] = None
     test_password: Optional[str] = None
@@ -67,7 +67,7 @@ class ProjectUpdate(BaseModel):
     local_path: Optional[str] = None
     start_command: Optional[str] = None
     project_env_vars: Optional[str] = None
-    env_file: Optional[str] = None
+    env_content: Optional[str] = None
     cookie_file: Optional[str] = None
     test_user: Optional[str] = None
     test_password: Optional[str] = None
@@ -207,9 +207,9 @@ async def init_db():
         except sqlite3.OperationalError:
             pass
 
-        # Migration: add env_file column to projects if missing
+        # Migration: add env_content column to projects if missing
         try:
-            await db.execute("ALTER TABLE projects ADD COLUMN env_file TEXT")
+            await db.execute("ALTER TABLE projects ADD COLUMN env_content TEXT")
             await db.commit()
         except sqlite3.OperationalError:
             pass
@@ -318,7 +318,7 @@ async def create_project(p: ProjectCreate) -> Project:
         cursor = await db.execute(
             "INSERT INTO projects"
             " (name, workspace_mode, selected_repo, selected_branch,"
-            "  local_path, start_command, project_env_vars, env_file,"
+            "  local_path, start_command, project_env_vars, env_content,"
             "  cookie_file, test_user, test_password,"
             "  created_at, updated_at)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -330,7 +330,7 @@ async def create_project(p: ProjectCreate) -> Project:
                 p.local_path,
                 p.start_command,
                 p.project_env_vars,
-                p.env_file,
+                p.env_content,
                 p.cookie_file,
                 p.test_user,
                 p.test_password,
@@ -394,9 +394,9 @@ async def update_project(project_id: int, updates: ProjectUpdate) -> Optional[Pr
         if updates.project_env_vars is not None:
             fields.append("project_env_vars = ?")
             values.append(updates.project_env_vars or None)
-        if updates.env_file is not None:
-            fields.append("env_file = ?")
-            values.append(updates.env_file or None)
+        if updates.env_content is not None:
+            fields.append("env_content = ?")
+            values.append(updates.env_content or None)
         if updates.cookie_file is not None:
             fields.append("cookie_file = ?")
             values.append(updates.cookie_file or None)

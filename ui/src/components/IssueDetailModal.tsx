@@ -21,7 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { apiUrl } from "../utils";
-import type { Issue, PlanResult, PhaseResult, RunState, SubtaskType, SubtaskResultType, IterationResult, ReviewResult, RefinementResult, BrowserAssertion } from "../types";
+import type { Issue, Project, PlanResult, PhaseResult, RunState, SubtaskType, SubtaskResultType, IterationResult, ReviewResult, RefinementResult, BrowserAssertion } from "../types";
 
 // Backward-compat aliases used by SubtaskList
 type Subtask = SubtaskType;
@@ -29,6 +29,7 @@ type SubtaskResult = SubtaskResultType;
 
 interface IssueDetailModalProps {
   issue: Issue;
+  projects: Project[];
   liveRunStates: Record<number, RunState>;
   runState: RunState | null;
   runErrors: Record<number, string>;
@@ -812,6 +813,7 @@ function detectLimitHint(error: string): LimitHint | null {
 
 export function IssueDetailModal({
   issue,
+  projects,
   liveRunStates,
   runState,
   runErrors,
@@ -833,6 +835,7 @@ export function IssueDetailModal({
     issue.status === "Queued" || issue.status === "Backlog" ? "plan" : "trace"
   );
   const [isActionPending, setIsActionPending] = useState(false);
+  const activeProject = projects.find((p) => p.id === issue.project_id);
 
   const handlePause = async () => {
     setIsActionPending(true);
@@ -889,7 +892,9 @@ export function IssueDetailModal({
     setIsActionPending(true);
     try {
       await fetch(apiUrl(`/api/issues/${issue.id}/verify`), { method: "POST" });
-    } finally {
+      // Don't clear isActionPending here — let the WS event take over so there's
+      // no flash between the POST returning and verification_running becoming true.
+    } catch {
       setIsActionPending(false);
     }
   };
@@ -902,6 +907,22 @@ export function IssueDetailModal({
   const activeRunState = liveRunStates[issue.id] || runState;
   const runError = runErrors[issue.id];
   const isLive = issue.status === "In Progress" && !!liveRunStates[issue.id];
+  const isVerifying = isActionPending || !!activeRunState?.verification_running;
+  const missingAuth =
+    !!activeProject &&
+    !activeProject.test_user &&
+    !activeProject.test_password &&
+    !activeProject.cookie_file;
+
+  // Once the server confirms verification is running (or it finishes), release the
+  // local pending flag — isVerifying stays true via verification_running anyway.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (activeRunState?.verification_running != null) {
+      setIsActionPending(false);
+    }
+  }, [activeRunState?.verification_running, activeRunState?.browser_result]);
+
   const iterations: IterationResult[] = activeRunState?.executor_results ?? [];
   let maxLogIteration = 0;
   for (const line of logs) {
@@ -1211,17 +1232,41 @@ export function IssueDetailModal({
                 </div>
                 <button
                   onClick={handleVerify}
-                  disabled={isActionPending || (issue.status !== "Done" && issue.status !== "Failed")}
+                  disabled={isVerifying || (issue.status !== "Done" && issue.status !== "Failed")}
                   className="flex items-center gap-1.5 text-xs text-green-400 bg-green-400/10 hover:bg-green-400/20 border border-green-500/20 px-3 py-1.5 rounded-lg font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   title={issue.status !== "Done" && issue.status !== "Failed" ? "Cannot run verification until agent execution is complete" : "Run browser verification / validation"}
                 >
-                  <RefreshCw size={12} className={isActionPending ? "animate-spin" : ""} />
-                  {isActionPending ? "Verifying..." : "Run Verification"}
+                  <RefreshCw size={12} className={isVerifying ? "animate-spin" : ""} />
+                  {isVerifying ? "Verifying..." : "Run Verification"}
                 </button>
               </div>
 
+              {/* Auth warning — show when no credentials are configured */}
+              {missingAuth && (
+                <div className="flex items-start gap-2 text-xs text-amber-400 bg-amber-400/10 border border-amber-400/20 rounded-lg px-3 py-2.5">
+                  <AlertCircle size={14} className="shrink-0 mt-0.5" />
+                  <span>
+                    No test credentials configured. If your app requires login, add{" "}
+                    <span className="font-medium">test_user</span> and{" "}
+                    <span className="font-medium">test_password</span> in project settings before running verification.
+                  </span>
+                </div>
+              )}
+
+              {/* Case 0: verification started but dev server still booting (no result yet) */}
+              {activeRunState.verification_running && !activeRunState.browser_result && (
+                <div className="flex items-center gap-3 border border-blue-500/20 bg-blue-500/5 rounded-xl px-4 py-3">
+                  <RefreshCw size={16} className="animate-spin text-blue-400 shrink-0" />
+                  <div>
+                    <p className="text-sm font-medium text-blue-300">Starting verification…</p>
+                    <p className="text-xs text-neutral-400 mt-0.5">Booting dev server and preparing browser tests. Check the activity log for details.</p>
+                  </div>
+                </div>
+              )}
+
               {/* Case 1: run still in progress or old run without detection data */}
-              {activeRunState.ui_changes_detected == null &&
+              {!activeRunState.verification_running &&
+               activeRunState.ui_changes_detected == null &&
                !activeRunState.browser_result && !activeRunState.video_path && (
                 <div className="p-8 text-center text-neutral-500 border border-neutral-800/50 border-dashed rounded-xl">
                   Browser validation runs after the task completes.
@@ -1229,14 +1274,15 @@ export function IssueDetailModal({
               )}
 
               {/* Case 2: no UI changes detected */}
-              {activeRunState.ui_changes_detected === false && (
+              {!activeRunState.verification_running && activeRunState.ui_changes_detected === false && (
                 <div className="p-8 text-center text-neutral-500 border border-neutral-800/50 border-dashed rounded-xl">
                   No UI or frontend files were modified in this run.
                 </div>
               )}
 
               {/* Case 3: UI changes detected but no browser validation ran */}
-              {activeRunState.ui_changes_detected === true &&
+              {!activeRunState.verification_running &&
+               activeRunState.ui_changes_detected === true &&
                !activeRunState.browser_result && !activeRunState.video_path && (
                 <div className="p-8 text-center text-neutral-500 border border-neutral-800/50 border-dashed rounded-xl">
                   <p className="mb-2">UI changes detected.</p>

@@ -52,7 +52,7 @@ export interface Project {
   local_path?: string;
   start_command?: string;
   project_env_vars?: string;
-  env_file?: string;
+  env_content?: string;
   cookie_file?: string;
   test_user?: string;
   test_password?: string;

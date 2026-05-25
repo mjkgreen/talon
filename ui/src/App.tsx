@@ -102,7 +102,7 @@ export default function KanbanBoard() {
   // --- Per-project environment settings ---
   const [startCommand, setStartCommand] = useState("");
   const [envVarRows, setEnvVarRows] = useState<EnvVarRow[]>([]);
-  const [envFile, setEnvFile] = useState("");
+  const [envContent, setEnvContent] = useState("");
   const [cookieFile, setCookieFile] = useState("");
   const [testUser, setTestUser] = useState("");
   const [testPassword, setTestPassword] = useState("");
@@ -141,7 +141,7 @@ export default function KanbanBoard() {
       setWorkspaceMode(project.workspace_mode as "github" | "local" | "none" | "");
       setStartCommand(project.start_command || "");
       setEnvVarRows(_parseEnvVarRows(project.project_env_vars));
-      setEnvFile(project.env_file || "");
+      setEnvContent(project.env_content || "");
       setCookieFile(project.cookie_file || "");
       setTestUser(project.test_user || "");
       setTestPassword(project.test_password || "");
@@ -185,7 +185,7 @@ export default function KanbanBoard() {
       setWorkspaceMode(project.workspace_mode as "github" | "local" | "none" | "");
       setStartCommand(project.start_command || "");
       setEnvVarRows(_parseEnvVarRows(project.project_env_vars));
-      setEnvFile(project.env_file || "");
+      setEnvContent(project.env_content || "");
       setCookieFile(project.cookie_file || "");
       setTestUser(project.test_user || "");
       setTestPassword(project.test_password || "");
@@ -469,7 +469,7 @@ export default function KanbanBoard() {
         setWorkspaceMode(active.workspace_mode as "github" | "local" | "none" | "");
         setStartCommand(active.start_command || "");
         setEnvVarRows(_parseEnvVarRows(active.project_env_vars));
-        setEnvFile(active.env_file || "");
+        setEnvContent(active.env_content || "");
         setCookieFile(active.cookie_file || "");
         setTestUser(active.test_user || "");
         setTestPassword(active.test_password || "");
@@ -744,7 +744,7 @@ export default function KanbanBoard() {
       body: JSON.stringify({
         start_command: startCommand || null,
         project_env_vars: Object.keys(envObj).length ? JSON.stringify(envObj) : null,
-        env_file: envFile || null,
+        env_content: envContent || null,
         cookie_file: cookieFile || null,
         test_user: testUser || null,
         test_password: testPassword || null,
@@ -1068,7 +1068,9 @@ export default function KanbanBoard() {
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        deleteIssue(issue.id);
+                                        if (window.confirm("Delete this issue? This cannot be undone.")) {
+                                          deleteIssue(issue.id);
+                                        }
                                       }}
                                       title="Delete task"
                                       className="text-neutral-500 hover:text-red-400 p-0.5 rounded hover:bg-neutral-700"
@@ -1231,8 +1233,8 @@ export default function KanbanBoard() {
           setStartCommand={setStartCommand}
           envVarRows={envVarRows}
           setEnvVarRows={setEnvVarRows}
-          envFile={envFile}
-          setEnvFile={setEnvFile}
+          envContent={envContent}
+          setEnvContent={setEnvContent}
           cookieFile={cookieFile}
           setCookieFile={setCookieFile}
           testUser={testUser}
@@ -1255,6 +1257,7 @@ export default function KanbanBoard() {
         <IssueDetailModal
           key={selectedIssue.id}
           issue={selectedIssue}
+          projects={projects}
           liveRunStates={liveRunStates}
           runState={runState}
           runErrors={runErrors}

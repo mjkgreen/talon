@@ -1,5 +1,5 @@
 import React from "react";
-import { Check, ChevronDown, ChevronRight, Folder, Plus, RefreshCw, Settings as SettingsIcon, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Folder, Plus, RefreshCw, Settings as SettingsIcon, Trash2, Upload, X } from "lucide-react";
 import { GithubLogo, API_KEY_PROVIDERS, MODEL_ROLES } from "../constants";
 import type { Project } from "../types";
 
@@ -35,8 +35,8 @@ interface SettingsModalProps {
   setStartCommand: (v: string) => void;
   envVarRows: EnvVarRow[];
   setEnvVarRows: React.Dispatch<React.SetStateAction<EnvVarRow[]>>;
-  envFile: string;
-  setEnvFile: (v: string) => void;
+  envContent: string;
+  setEnvContent: (v: string) => void;
   cookieFile: string;
   setCookieFile: (v: string) => void;
   testUser: string;
@@ -100,8 +100,8 @@ export function SettingsModal({
   setStartCommand,
   envVarRows,
   setEnvVarRows,
-  envFile,
-  setEnvFile,
+  envContent,
+  setEnvContent,
   cookieFile,
   setCookieFile,
   testUser,
@@ -391,19 +391,38 @@ export function SettingsModal({
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-1">
-                      .env file path
-                    </label>
-                    <input
-                      type="text"
-                      value={envFile}
-                      onChange={(e) => setEnvFile(e.target.value)}
-                      placeholder="/path/to/.env (optional)"
-                      className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-sm font-medium text-neutral-300">
+                        .env content
+                      </label>
+                      <label className="flex items-center gap-1 text-xs text-neutral-400 hover:text-neutral-200 cursor-pointer transition-colors">
+                        <Upload size={12} />
+                        Upload file
+                        <input
+                          type="file"
+                          accept=".env,text/plain"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            const reader = new FileReader();
+                            reader.onload = (ev) => setEnvContent(ev.target?.result as string ?? "");
+                            reader.readAsText(file);
+                            e.target.value = "";
+                          }}
+                        />
+                      </label>
+                    </div>
+                    <textarea
+                      value={envContent}
+                      onChange={(e) => setEnvContent(e.target.value)}
+                      placeholder={"DATABASE_URL=postgresql://...\nNEXT_PUBLIC_API_URL=http://localhost:8000"}
+                      rows={4}
+                      className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all resize-y"
                     />
                     <p className="text-xs text-neutral-600 mt-1">
-                      Load a <code>.env</code> file into the dev server subprocess. Variables
-                      set above override values in this file.
+                      Paste or upload your <code>.env</code> file. Injected into the dev server
+                      subprocess. Variables set in the key-value list above take precedence.
                     </p>
                   </div>
 

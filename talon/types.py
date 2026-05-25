@@ -147,6 +147,7 @@ class RunState(BaseModel):
     video_path: Optional[str] = None
     ui_changes_detected: Optional[bool] = None
     browser_result: Optional[BrowserTestResult] = None
+    verification_running: bool = False
     pr_url: Optional[str] = None
     board_url: Optional[str] = None
     started_at: datetime = Field(default_factory=datetime.utcnow)

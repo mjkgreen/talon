@@ -54,3 +54,35 @@ class TestScreenshotEndpoint:
         monkeypatch.setenv("RUNS_DIR", str(tmp_path))
         resp = client.get("/api/runs/abc%2F..%2Fetc/screenshots/x.png")
         assert resp.status_code in (400, 404)
+
+
+def test_reset_stalled_verifications(tmp_path, monkeypatch):
+    import json
+    from talon.server import _reset_stalled_verifications
+
+    monkeypatch.setenv("RUNS_DIR", str(tmp_path))
+
+    # Create a run directory with verification_running: True
+    run_dir1 = tmp_path / "run1"
+    run_dir1.mkdir()
+    state_file1 = run_dir1 / "state.json"
+    state_file1.write_text(json.dumps({"verification_running": True, "browser_result": None}), encoding="utf-8")
+
+    # Create a run directory with verification_running: False
+    run_dir2 = tmp_path / "run2"
+    run_dir2.mkdir()
+    state_file2 = run_dir2 / "state.json"
+    state_file2.write_text(json.dumps({"verification_running": False, "browser_result": None}), encoding="utf-8")
+
+    # Call the cleanup
+    _reset_stalled_verifications()
+
+    # Verify run1 was reset
+    with open(state_file1, "r", encoding="utf-8") as f:
+        data1 = json.load(f)
+    assert data1["verification_running"] is False
+
+    # Verify run2 remains False
+    with open(state_file2, "r", encoding="utf-8") as f:
+        data2 = json.load(f)
+    assert data2["verification_running"] is False

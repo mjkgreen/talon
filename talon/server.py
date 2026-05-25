@@ -131,6 +131,27 @@ async def _apply_db_settings_to_env() -> None:
             os.environ[env_key] = value
 
 
+def _reset_stalled_verifications() -> None:
+    """Find all run states on disk and reset `verification_running` to False if stuck as True."""
+    runs_dir_path = os.getenv("RUNS_DIR", "./runs")
+    if os.path.exists(runs_dir_path):
+        for run_id in os.listdir(runs_dir_path):
+            run_dir = os.path.join(runs_dir_path, run_id)
+            if os.path.isdir(run_dir):
+                state_file = os.path.join(run_dir, "state.json")
+                if os.path.exists(state_file):
+                    try:
+                        with open(state_file, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        if isinstance(data, dict) and data.get("verification_running"):
+                            console.print(f"[yellow]Resetting stalled verification_running for run: {run_id}[/yellow]")
+                            data["verification_running"] = False
+                            with open(state_file, "w", encoding="utf-8") as f:
+                                json.dump(data, f, indent=2)
+                    except Exception as e:
+                        console.print(f"[red]Error resetting stalled verification run {run_id}: {e}[/red]")
+
+
 class ConnectionManager:
     def __init__(self):
         self.active_connections: list[WebSocket] = []
@@ -424,7 +445,7 @@ async def _run_loop(
             # Load project-level server/env settings
             project_start_command: str | None = None
             project_env_vars: dict[str, str] | None = None
-            project_env_file: str | None = None
+            project_env_content: str | None = None
             project_cookie_file: str | None = None
             project_test_user: str | None = None
             project_test_password: str | None = None
@@ -432,7 +453,7 @@ async def _run_loop(
                 _proj = await db.get_project(project_id)
                 if _proj:
                     project_start_command = _proj.start_command or None
-                    project_env_file = _proj.env_file or None
+                    project_env_content = _proj.env_content or None
                     project_cookie_file = _proj.cookie_file or None
                     project_test_user = _proj.test_user or None
                     project_test_password = _proj.test_password or None
@@ -467,7 +488,7 @@ async def _run_loop(
                 on_log=on_log,
                 start_command=project_start_command,
                 project_env_vars=project_env_vars,
-                env_file=project_env_file,
+                env_content=project_env_content,
                 cookie_file=project_cookie_file,
                 test_user=project_test_user,
                 test_password=project_test_password,
@@ -510,6 +531,7 @@ async def _run_loop(
 async def startup_event():
     await db.init_db()
     await _apply_db_settings_to_env()
+    _reset_stalled_verifications()
     stalled = await db.reset_stalled_issues()
     for issue_id in stalled:
         await broadcast_issue_update(issue_id)
@@ -1063,11 +1085,25 @@ async def _resume_loop(issue_id: int, run_id: str) -> None:
 async def _run_verification_bg(issue_id: int, run_id: str) -> None:
     _server_proc = None
     _server_port = None
+    state = None
     try:
         from talon.loop import _load_state, _save_state
         from talon.skills import browser_validator
 
         state = _load_state(run_id)
+
+        # Mark as in-progress and clear old results immediately so the UI shows a clean slate.
+        state.verification_running = True
+        state.browser_result = None
+        state.video_path = None
+        _save_state(state)
+        await manager.broadcast(
+            {
+                "type": "run_state_updated",
+                "issue_id": issue_id,
+                "state": state.model_dump(mode="json"),
+            }
+        )
 
         # Load project-level settings so verify has the same context as the original run.
         issue = await db.get_issue(issue_id)
@@ -1083,7 +1119,7 @@ async def _run_verification_bg(issue_id: int, run_id: str) -> None:
                 project_env_vars = _json.loads(project_env_vars_raw)
             except Exception:
                 pass
-        project_env_file = project.env_file if project else None
+        project_env_content = project.env_content if project else None
         project_cookie_file = project.cookie_file if project else None
         project_test_user = project.test_user if project else None
         project_test_password = project.test_password if project else None
@@ -1104,6 +1140,7 @@ async def _run_verification_bg(issue_id: int, run_id: str) -> None:
                 candidate = os.path.join(
                     os.getenv("WORKSPACE_DIR", "./workspace"), os.path.basename(candidate)
                 )
+            candidate = os.path.abspath(candidate)
             if os.path.isdir(candidate):
                 workspace_to_start = candidate
 
@@ -1144,7 +1181,7 @@ async def _run_verification_bg(issue_id: int, run_id: str) -> None:
                     workspace_to_start,
                     extra_env=project_env_vars,
                     start_command=project_start_command,
-                    env_file=project_env_file,
+                    env_content=project_env_content,
                 )
                 await manager.broadcast(
                     {
@@ -1154,16 +1191,42 @@ async def _run_verification_bg(issue_id: int, run_id: str) -> None:
                     }
                 )
             except Exception as _ws_err:
-                console.print(f"[yellow]workspace-starter failed: {_ws_err}[/yellow]")
+                _err_detail = (
+                    f"{type(_ws_err).__name__}: {_ws_err}"
+                    if str(_ws_err)
+                    else type(_ws_err).__name__
+                )
+                console.print(f"[yellow]workspace-starter failed: {_err_detail}[/yellow]")
+                _user_hint = (
+                    " No start command could be detected automatically."
+                    if isinstance(_ws_err, ValueError)
+                    else " The start command may be wrong for this project."
+                )
+                state.verification_running = False
+                from talon.loop import _save_state as _ss_inner
+
+                _ss_inner(state)
                 await manager.broadcast(
                     {
-                        "type": "run_log",
+                        "type": "run_state_updated",
                         "issue_id": issue_id,
-                        "message": f"Dev server failed to start: {_ws_err} — using default URL",
+                        "state": state.model_dump(mode="json"),
                     }
                 )
+                await manager.broadcast(
+                    {
+                        "type": "run_error",
+                        "issue_id": issue_id,
+                        "error": (
+                            f"Dev server failed to start: {_err_detail}."
+                            f"{_user_hint}"
+                            " Set a custom start command in Project Settings → Start Command."
+                        ),
+                    }
+                )
+                return
 
-        # Fall back to the configured default URL
+        # Fall back to the configured default URL only when no workspace was found.
         if not app_url:
             app_url = static_url
 
@@ -1180,17 +1243,19 @@ async def _run_verification_bg(issue_id: int, run_id: str) -> None:
             )
             return
 
-        # Clear previous result so the UI shows a clean slate while verification runs.
-        state.browser_result = None
-        state.video_path = None
-        _save_state(state)
-        await manager.broadcast(
-            {
-                "type": "run_state_updated",
-                "issue_id": issue_id,
-                "state": state.model_dump(mode="json"),
-            }
-        )
+        # Warn if no auth credentials are configured — the user should set these before testing.
+        if not project_test_user and not project_cookie_file:
+            await manager.broadcast(
+                {
+                    "type": "run_log",
+                    "issue_id": issue_id,
+                    "message": (
+                        "⚠️  No test credentials configured."
+                        " If your app requires login, set test_user /"
+                        " test_password in project settings."
+                    ),
+                }
+            )
 
         await manager.broadcast(
             {
@@ -1224,6 +1289,7 @@ async def _run_verification_bg(issue_id: int, run_id: str) -> None:
         if browser_result is not None:
             state.browser_result = browser_result
             state.video_path = browser_result.video_path
+        state.verification_running = False
         _save_state(state)
 
         await manager.broadcast(
@@ -1250,6 +1316,19 @@ async def _run_verification_bg(issue_id: int, run_id: str) -> None:
             from talon.skills import workspace_starter as _ws_mod
 
             await _ws_mod.stop_workspace_server(_server_proc, _server_port)
+        # If the task exited before clearing the flag (exception path), clear it now.
+        if state is not None and state.verification_running:
+            from talon.loop import _save_state as _ss
+
+            state.verification_running = False
+            _ss(state)
+            await manager.broadcast(
+                {
+                    "type": "run_state_updated",
+                    "issue_id": issue_id,
+                    "state": state.model_dump(mode="json"),
+                }
+            )
 
 
 @app.post("/api/issues/{issue_id}/verify")
@@ -1455,6 +1534,10 @@ if os.path.exists(ui_dir):
 
     @app.get("/{full_path:path}")
     async def serve_ui(full_path: str):
+        # API paths that escaped routing (e.g. via path traversal / percent-encoding)
+        # must not be silently served as the SPA index.
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not found")
         path = os.path.join(ui_dir, full_path)
         if os.path.exists(path) and os.path.isfile(path):
             return FileResponse(path)

@@ -53,6 +53,55 @@ def _find_venv_python(workspace: Path) -> str | None:
     return None
 
 
+def _detect_js_framework(pkg_data: dict) -> str | None:
+    """Return a framework slug from package.json dependency keys."""
+    deps = {**pkg_data.get("dependencies", {}), **pkg_data.get("devDependencies", {})}
+    if "expo" in deps:
+        return "expo"
+    if "next" in deps:
+        return "next"
+    if "nuxt" in deps or "nuxt3" in deps:
+        return "nuxt"
+    if "@angular/core" in deps:
+        return "angular"
+    if "@sveltejs/kit" in deps:
+        return "sveltekit"
+    if "svelte" in deps:
+        return "svelte"
+    if "vite" in deps or "@vitejs/plugin-react" in deps or "@vitejs/plugin-vue" in deps:
+        return "vite"
+    if "react-scripts" in deps:
+        return "cra"
+    return None
+
+
+def _scan_readme_for_command(workspace: Path) -> str | None:
+    """Look inside README / CONTRIBUTING for an npm/yarn/pnpm start command."""
+    _start_kws = ("dev", "start", "serve", "develop")
+    for name in ("README.md", "readme.md", "CONTRIBUTING.md"):
+        p = workspace / name
+        if not p.exists():
+            continue
+        try:
+            text = p.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        # Prefer commands inside fenced code blocks first, then bare inline ticks.
+        for pattern in (
+            r"```(?:bash|sh|shell|console)?\n(.*?)\n```",
+            r"`((?:npm run|yarn|pnpm) [\w:-]+)`",
+        ):
+            for m in re.finditer(pattern, text, re.DOTALL | re.IGNORECASE):
+                block = m.group(1)
+                for line in block.splitlines():
+                    line = line.strip().strip("`$").strip()
+                    if any(line.startswith(p) for p in ("npm run", "yarn ", "pnpm ")):
+                        if any(kw in line for kw in _start_kws):
+                            return line
+        break  # only look at the first README found
+    return None
+
+
 def detect_start_command(workspace_dir: str) -> str | None:
     """Inspect workspace_dir and return an appropriate start command, or None."""
     d = Path(workspace_dir)
@@ -62,12 +111,33 @@ def detect_start_command(workspace_dir: str) -> str | None:
         try:
             data = json.loads(pkg.read_text(encoding="utf-8"))
             scripts = data.get("scripts", {})
-            if "dev" in scripts:
-                return "npm run dev"
-            if "start" in scripts:
-                return "npm run start"
+            framework = _detect_js_framework(data)
+
+            # Framework-aware command selection
+            if framework == "expo":
+                # Expo is a React Native framework; --web serves in browser
+                if "web" in scripts:
+                    return "npm run web"
+                return "npx expo start --web"
+            if framework in ("next", "nuxt", "vite", "sveltekit", "svelte"):
+                if "dev" in scripts:
+                    return "npm run dev"
+            if framework == "angular":
+                return "npm run start" if "start" in scripts else "npx ng serve"
+            if framework == "cra":
+                return "npm start" if "start" in scripts else "npx react-scripts start"
+
+            # Generic script priority: dev > start > serve > develop
+            for name in ("dev", "start", "serve", "develop"):
+                if name in scripts:
+                    return f"npm run {name}"
         except (json.JSONDecodeError, OSError):
             pass
+
+    # README / CONTRIBUTING hint
+    readme_cmd = _scan_readme_for_command(d)
+    if readme_cmd:
+        return readme_cmd
 
     python = _find_venv_python(d) or "python"
 
@@ -184,33 +254,33 @@ async def _resolve_url(proc: asyncio.subprocess.Process, port: int, startup_time
     raise StartupTimeoutError(f"Dev server did not start within {startup_timeout}s on port {port}")
 
 
-def _parse_env_file(path: str) -> dict[str, str]:
-    """Parse a .env file into a dict, ignoring comments and blank lines."""
+def _parse_env_lines(lines: list[str]) -> dict[str, str]:
+    """Parse .env-format lines into a dict, ignoring comments and blank lines."""
     result: dict[str, str] = {}
-    try:
-        for line in Path(path).read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            key = key.strip()
-            value = value.strip()
-            if len(value) >= 2 and value[0] in ('"', "'") and value[-1] == value[0]:
-                value = value[1:-1]
-            if key:
-                result[key] = value
-    except Exception as e:
-        console.print(f"[yellow]workspace-starter[/yellow] could not read env file {path}: {e}")
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] in ('"', "'") and value[-1] == value[0]:
+            value = value[1:-1]
+        if key:
+            result[key] = value
     return result
+
+
+def _parse_env_text(content: str) -> dict[str, str]:
+    """Parse a raw .env string (pasted by the user) into a dict."""
+    return _parse_env_lines(content.splitlines())
 
 
 async def start_workspace_server(
     workspace_dir: str,
     extra_env: dict[str, str] | None = None,
     start_command: str | None = None,
-    env_file: str | None = None,
+    env_content: str | None = None,
 ) -> tuple[asyncio.subprocess.Process, str, int]:
     """
     Auto-detect and start a development server in workspace_dir.
@@ -230,8 +300,35 @@ async def start_workspace_server(
         )
 
     port = await _claim_port(_DEFAULT_PROBE_PORTS)
-    file_env = _parse_env_file(env_file) if env_file else {}
+    file_env = _parse_env_text(env_content) if env_content else {}
     env = {**os.environ, **file_env, "PORT": str(port), **(extra_env or {})}
+
+    # Install npm dependencies if node_modules is missing (worktrees/copies exclude them).
+    ws_path = Path(workspace_dir)
+    if (ws_path / "package.json").exists() and not (ws_path / "node_modules").exists():
+        install_cmd = "npm ci" if (ws_path / "package-lock.json").exists() else "npm install"
+        console.print(
+            f"[cyan]workspace-starter[/cyan] node_modules missing"
+            f" — running [dim]{install_cmd}[/dim]"
+        )
+        install_proc = await asyncio.create_subprocess_shell(
+            install_cmd,
+            cwd=workspace_dir,
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        try:
+            await asyncio.wait_for(install_proc.wait(), timeout=180.0)
+        except asyncio.TimeoutError:
+            install_proc.kill()
+            await _release_port(port)
+            raise StartupTimeoutError(f"npm install timed out after 180s in {workspace_dir}")
+        if install_proc.returncode != 0:
+            await _release_port(port)
+            raise RuntimeError(
+                f"{install_cmd} failed (exit {install_proc.returncode}) in {workspace_dir}"
+            )
 
     console.print(
         f"\n[bold cyan]workspace-starter[/bold cyan] launching [dim]{cmd}[/dim] on port {port}"
@@ -245,10 +342,27 @@ async def start_workspace_server(
         stderr=asyncio.subprocess.STDOUT,
     )
 
+    # Give the process a moment, then check it didn't exit immediately.
+    await asyncio.sleep(1.0)
+    if proc.returncode is not None:
+        try:
+            snippet = await asyncio.wait_for(proc.stdout.read(2048), timeout=1.0)  # type: ignore[union-attr]
+            detail = snippet.decode(errors="replace").strip()
+        except Exception:
+            detail = ""
+        await _release_port(port)
+        raise RuntimeError(
+            f"Dev server process exited immediately (code {proc.returncode})"
+            + (f":\n{detail[:300]}" if detail else "")
+        )
+
     try:
         url = await _resolve_url(proc, port, float(STARTUP_TIMEOUT))
     except StartupTimeoutError:
-        proc.terminate()
+        try:
+            proc.terminate()
+        except ProcessLookupError:
+            pass  # process already exited
         await _release_port(port)
         raise
 
