@@ -1,4 +1,5 @@
 """Tests for the browser_validator skill."""
+
 from __future__ import annotations
 
 import json
@@ -13,6 +14,7 @@ from talon.types import BrowserAssertion, BrowserTestResult, RunState
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_tool_call(tc_id: str, tc_name: str, tc_input: dict):
     """Create a mock tool call with explicit attribute assignment (MagicMock `name` param is reserved)."""
@@ -57,6 +59,7 @@ def _make_page(
 # Unit tests: _dispatch_browser_tool
 # ---------------------------------------------------------------------------
 
+
 class TestDispatchBrowserTool:
     @pytest.mark.asyncio
     async def test_navigate_returns_url_and_title(self, tmp_path):
@@ -80,7 +83,11 @@ class TestDispatchBrowserTool:
         result_str, is_done = await _dispatch_browser_tool(
             "assert_element",
             {"selector": "h1", "description": "Heading exists", "expected_text": "welcome"},
-            page, tmp_path, assertions, [], [0],
+            page,
+            tmp_path,
+            assertions,
+            [],
+            [0],
         )
         assert is_done is False
         assert len(assertions) == 1
@@ -95,7 +102,11 @@ class TestDispatchBrowserTool:
         await _dispatch_browser_tool(
             "assert_element",
             {"selector": "#missing", "description": "Should exist"},
-            page, tmp_path, assertions, [], [0],
+            page,
+            tmp_path,
+            assertions,
+            [],
+            [0],
         )
         assert assertions[0].passed is False
         assert assertions[0].actual == "element not found"
@@ -109,7 +120,11 @@ class TestDispatchBrowserTool:
         await _dispatch_browser_tool(
             "assert_url",
             {"description": "Health endpoint", "expected_pattern": "/health"},
-            page, tmp_path, assertions, [], [0],
+            page,
+            tmp_path,
+            assertions,
+            [],
+            [0],
         )
         assert assertions[0].passed is True
 
@@ -122,7 +137,11 @@ class TestDispatchBrowserTool:
         await _dispatch_browser_tool(
             "assert_url",
             {"description": "Health endpoint", "expected_pattern": "/health"},
-            page, tmp_path, assertions, [], [0],
+            page,
+            tmp_path,
+            assertions,
+            [],
+            [0],
         )
         assert assertions[0].passed is False
 
@@ -198,8 +217,13 @@ class TestDispatchBrowserTool:
 
         page = _make_page()
         result_str, is_done = await _dispatch_browser_tool(
-            "fill", {"selector": "input#email", "value": "user@example.com"},
-            page, tmp_path, [], [], [0],
+            "fill",
+            {"selector": "input#email", "value": "user@example.com"},
+            page,
+            tmp_path,
+            [],
+            [],
+            [0],
         )
         assert is_done is False
         assert json.loads(result_str)["filled"] == "input#email"
@@ -233,8 +257,13 @@ class TestDispatchBrowserTool:
 
         page = _make_page()
         result_str, is_done = await _dispatch_browser_tool(
-            "wait_for_element", {"selector": "#spinner", "timeout_ms": 5000},
-            page, tmp_path, [], [], [0],
+            "wait_for_element",
+            {"selector": "#spinner", "timeout_ms": 5000},
+            page,
+            tmp_path,
+            [],
+            [],
+            [0],
         )
         assert is_done is False
         assert json.loads(result_str)["found"] == "#spinner"
@@ -246,8 +275,13 @@ class TestDispatchBrowserTool:
 
         page = _make_page()
         result_str, is_done = await _dispatch_browser_tool(
-            "select_option", {"selector": "select#lang", "value": "en"},
-            page, tmp_path, [], [], [0],
+            "select_option",
+            {"selector": "select#lang", "value": "en"},
+            page,
+            tmp_path,
+            [],
+            [],
+            [0],
         )
         assert is_done is False
         assert json.loads(result_str)["selected"] == "en"
@@ -262,7 +296,11 @@ class TestDispatchBrowserTool:
         await _dispatch_browser_tool(
             "assert_element",
             {"selector": ".error", "description": "No error shown", "should_exist": False},
-            page, tmp_path, assertions, [], [0],
+            page,
+            tmp_path,
+            assertions,
+            [],
+            [0],
         )
         assert assertions[0].passed is False
         assert assertions[0].actual == "Error banner"
@@ -295,8 +333,12 @@ class TestDispatchBrowserTool:
 
         with patch.object(browser_validator, "ENABLED", True):
             with patch.object(browser_validator, "get_provider", return_value=mock_provider):
-                with patch.object(browser_validator, "async_playwright", return_value=mock_playwright_cm):
-                    result = await browser_validator.run(state, "http://localhost:8080", str(tmp_path))
+                with patch.object(
+                    browser_validator, "async_playwright", return_value=mock_playwright_cm
+                ):
+                    result = await browser_validator.run(
+                        state, "http://localhost:8080", str(tmp_path)
+                    )
 
         assert result is not None
         assert result.error == "Agent did not call mark_done"
@@ -305,6 +347,7 @@ class TestDispatchBrowserTool:
 # ---------------------------------------------------------------------------
 # Integration tests: run()
 # ---------------------------------------------------------------------------
+
 
 class TestBrowserValidatorRun:
     @pytest.mark.asyncio
@@ -334,20 +377,26 @@ class TestBrowserValidatorRun:
 
         nav_response = MagicMock()
         nav_response.stop_reason = "tool_use"
-        nav_response.tool_calls = [_make_tool_call("t1", "navigate", {"url": "http://localhost:8080/"})]
+        nav_response.tool_calls = [
+            _make_tool_call("t1", "navigate", {"url": "http://localhost:8080/"})
+        ]
 
         assert_response = MagicMock()
         assert_response.stop_reason = "tool_use"
-        assert_response.tool_calls = [_make_tool_call("t2", "assert_element", {"selector": "body", "description": "Body exists"})]
+        assert_response.tool_calls = [
+            _make_tool_call(
+                "t2", "assert_element", {"selector": "body", "description": "Body exists"}
+            )
+        ]
 
         done_response = MagicMock()
         done_response.stop_reason = "tool_use"
-        done_response.tool_calls = [_make_tool_call("t3", "mark_done", {"passed": True, "summary": "Page loaded fine"})]
+        done_response.tool_calls = [
+            _make_tool_call("t3", "mark_done", {"passed": True, "summary": "Page loaded fine"})
+        ]
 
         mock_provider = AsyncMock()
-        mock_provider.chat = AsyncMock(
-            side_effect=[nav_response, assert_response, done_response]
-        )
+        mock_provider.chat = AsyncMock(side_effect=[nav_response, assert_response, done_response])
         mock_provider.append_assistant = MagicMock()
         mock_provider.append_tool_results = MagicMock()
 
@@ -364,8 +413,12 @@ class TestBrowserValidatorRun:
 
         with patch.object(browser_validator, "ENABLED", True):
             with patch.object(browser_validator, "get_provider", return_value=mock_provider):
-                with patch.object(browser_validator, "async_playwright", return_value=mock_playwright_cm):
-                    result = await browser_validator.run(state, "http://localhost:8080", str(tmp_path))
+                with patch.object(
+                    browser_validator, "async_playwright", return_value=mock_playwright_cm
+                ):
+                    result = await browser_validator.run(
+                        state, "http://localhost:8080", str(tmp_path)
+                    )
 
         assert isinstance(result, BrowserTestResult)
         assert result.passed is True
@@ -379,15 +432,25 @@ class TestBrowserValidatorRun:
 
         assert1_response = MagicMock()
         assert1_response.stop_reason = "tool_use"
-        assert1_response.tool_calls = [_make_tool_call("t1", "assert_element", {"selector": "#exists", "description": "Present element"})]
+        assert1_response.tool_calls = [
+            _make_tool_call(
+                "t1", "assert_element", {"selector": "#exists", "description": "Present element"}
+            )
+        ]
 
         assert2_response = MagicMock()
         assert2_response.stop_reason = "tool_use"
-        assert2_response.tool_calls = [_make_tool_call("t2", "assert_element", {"selector": "#missing", "description": "Missing element"})]
+        assert2_response.tool_calls = [
+            _make_tool_call(
+                "t2", "assert_element", {"selector": "#missing", "description": "Missing element"}
+            )
+        ]
 
         done_response = MagicMock()
         done_response.stop_reason = "tool_use"
-        done_response.tool_calls = [_make_tool_call("t3", "mark_done", {"passed": False, "summary": "One check failed"})]
+        done_response.tool_calls = [
+            _make_tool_call("t3", "mark_done", {"passed": False, "summary": "One check failed"})
+        ]
 
         mock_provider = AsyncMock()
         mock_provider.chat = AsyncMock(
@@ -424,8 +487,12 @@ class TestBrowserValidatorRun:
 
         with patch.object(browser_validator, "ENABLED", True):
             with patch.object(browser_validator, "get_provider", return_value=mock_provider):
-                with patch.object(browser_validator, "async_playwright", return_value=mock_playwright_cm):
-                    result = await browser_validator.run(state, "http://localhost:8080", str(tmp_path))
+                with patch.object(
+                    browser_validator, "async_playwright", return_value=mock_playwright_cm
+                ):
+                    result = await browser_validator.run(
+                        state, "http://localhost:8080", str(tmp_path)
+                    )
 
         assert result is not None
         assert result.score == pytest.approx(0.5)
@@ -439,7 +506,9 @@ class TestBrowserValidatorRun:
 
         nav_response = MagicMock()
         nav_response.stop_reason = "tool_use"
-        nav_response.tool_calls = [_make_tool_call("t1", "navigate", {"url": "http://localhost:8080/"})]
+        nav_response.tool_calls = [
+            _make_tool_call("t1", "navigate", {"url": "http://localhost:8080/"})
+        ]
 
         mock_provider = AsyncMock()
         mock_provider.chat = AsyncMock(return_value=nav_response)
@@ -460,8 +529,12 @@ class TestBrowserValidatorRun:
         with patch.object(browser_validator, "ENABLED", True):
             with patch.object(browser_validator, "MAX_STEPS", 3):
                 with patch.object(browser_validator, "get_provider", return_value=mock_provider):
-                    with patch.object(browser_validator, "async_playwright", return_value=mock_playwright_cm):
-                        result = await browser_validator.run(state, "http://localhost:8080", str(tmp_path))
+                    with patch.object(
+                        browser_validator, "async_playwright", return_value=mock_playwright_cm
+                    ):
+                        result = await browser_validator.run(
+                            state, "http://localhost:8080", str(tmp_path)
+                        )
 
         assert result is not None
         assert mock_provider.chat.call_count == 3
@@ -474,7 +547,9 @@ class TestBrowserValidatorRun:
 
         done_response = MagicMock()
         done_response.stop_reason = "tool_use"
-        done_response.tool_calls = [_make_tool_call("t1", "mark_done", {"passed": True, "summary": "Done"})]
+        done_response.tool_calls = [
+            _make_tool_call("t1", "mark_done", {"passed": True, "summary": "Done"})
+        ]
 
         mock_provider = AsyncMock()
         mock_provider.chat = AsyncMock(return_value=done_response)
@@ -494,8 +569,12 @@ class TestBrowserValidatorRun:
 
         with patch.object(browser_validator, "ENABLED", True):
             with patch.object(browser_validator, "get_provider", return_value=mock_provider):
-                with patch.object(browser_validator, "async_playwright", return_value=mock_playwright_cm):
-                    result = await browser_validator.run(state, "http://localhost:8080", str(tmp_path))
+                with patch.object(
+                    browser_validator, "async_playwright", return_value=mock_playwright_cm
+                ):
+                    result = await browser_validator.run(
+                        state, "http://localhost:8080", str(tmp_path)
+                    )
 
         assert result is not None
         assert result.video_path is not None
@@ -505,6 +584,7 @@ class TestBrowserValidatorRun:
 # ---------------------------------------------------------------------------
 # Type tests: TestBrowserTypes
 # ---------------------------------------------------------------------------
+
 
 class TestBrowserTypes:
     def test_browser_assertion_defaults(self):

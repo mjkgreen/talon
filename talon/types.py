@@ -143,6 +143,7 @@ class RunState(BaseModel):
     final_output: Optional[str] = None
     workspace: Optional[str] = None  # path to isolated run workspace
     video_path: Optional[str] = None
+    ui_changes_detected: Optional[bool] = None
     browser_result: Optional[BrowserTestResult] = None
     pr_url: Optional[str] = None
     board_url: Optional[str] = None

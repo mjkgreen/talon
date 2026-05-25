@@ -171,7 +171,11 @@ async def run(goal: str, working_dir: str | None = None) -> PlanResult:
                 console.print(f"  [red]planner: blocked disallowed tool call: {tc.name}[/red]")
                 return ToolResult(
                     id=tc.id,
-                    content=json.dumps({"error": f"Tool '{tc.name}' is not available to the planner. Use only: read_file, list_files, search_files."}),  # noqa: E501
+                    content=json.dumps(
+                        {
+                            "error": f"Tool '{tc.name}' is not available to the planner. Use only: read_file, list_files, search_files."
+                        }
+                    ),  # noqa: E501
                 )
             console.print(f"  [dim]planner tool:[/dim] {tc.name}({list(tc.input.values())[:2]})")
             result_str = await asyncio.to_thread(

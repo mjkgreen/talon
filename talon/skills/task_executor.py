@@ -14,6 +14,7 @@ import json
 import os
 from typing import Awaitable, Callable
 
+import litellm
 from rich.console import Console
 
 from talon.providers import get_provider
@@ -197,6 +198,35 @@ async def _run_subagent(
     )
 
 
+async def _run_subagent_with_retry(
+    subtask: Subtask,
+    goal: str,
+    working_dir: str,
+    phase_name: str,
+    phase_context: str,
+    on_log: Callable[[str], Awaitable[None]] | None,
+    max_retries: int = 1,
+    retry_delay: float = 5.0,
+) -> SubtaskResult:
+    for attempt in range(max_retries + 1):
+        try:
+            return await _run_subagent(
+                subtask, goal, working_dir, phase_name, phase_context, on_log
+            )
+        except litellm.Timeout:
+            if attempt < max_retries:
+                if on_log:
+                    await on_log(
+                        f"-> Sub-agent [{subtask.id}] timeout, retrying in {retry_delay:.0f}s..."
+                    )
+                console.print(
+                    f"  [yellow]Sub-agent [{subtask.id}] timeout — retrying[/yellow]"
+                )
+                await asyncio.sleep(retry_delay)
+            else:
+                raise
+
+
 async def _execute_phase(
     phase: PlanPhase,
     phase_index: int,
@@ -226,12 +256,30 @@ async def _execute_phase(
         await on_log(f"=== Phase {phase_index + 1}: {phase.name} ===")
     console.print(f"  Decomposed into {len(subtasks)} subtask(s)")
 
-    results = await asyncio.gather(
+    raw_results = await asyncio.gather(
         *[
-            _run_subagent(st, goal, working_dir, phase.name, phase_context, on_log)
+            _run_subagent_with_retry(st, goal, working_dir, phase.name, phase_context, on_log)
             for st in subtasks
-        ]
+        ],
+        return_exceptions=True,
     )
+    results: list[SubtaskResult] = []
+    for st, outcome in zip(subtasks, raw_results):
+        if isinstance(outcome, BaseException):
+            if on_log:
+                await on_log(f"[FAILED] [{st.id}] {outcome}")
+            console.print(f"  [red]Sub-agent [{st.id}] failed:[/red] {outcome}")
+            results.append(
+                SubtaskResult(
+                    subtask=st,
+                    output=f"(sub-agent failed: {outcome})",
+                    files_modified=[],
+                    commands_run=[],
+                    success=False,
+                )
+            )
+        else:
+            results.append(outcome)
 
     aggregated = "\n\n".join(
         f"[{r.subtask.id}] {r.subtask.description}\n{r.output}" for r in results

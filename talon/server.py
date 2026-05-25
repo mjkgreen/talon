@@ -183,12 +183,14 @@ async def _run_planner_bg(issue_id: int, goal: str) -> None:
                 if project.workspace_mode == "local":
                     ws_error = _check_workspace(project.workspace_mode, project.local_path)
                     if ws_error:
-                        await manager.broadcast({
-                            "type": "workspace_invalid",
-                            "issue_id": issue_id,
-                            "project_id": plan_project_id,
-                            "error": ws_error,
-                        })
+                        await manager.broadcast(
+                            {
+                                "type": "workspace_invalid",
+                                "issue_id": issue_id,
+                                "project_id": plan_project_id,
+                                "error": ws_error,
+                            }
+                        )
                         await manager.broadcast(
                             {"type": "plan_error", "issue_id": issue_id, "error": ws_error}
                         )
@@ -201,24 +203,28 @@ async def _run_planner_bg(issue_id: int, goal: str) -> None:
                             "GitHub workspace configured but no GitHub token found"
                             " — please re-authenticate."
                         )
-                        await manager.broadcast({
-                            "type": "workspace_invalid",
-                            "issue_id": issue_id,
-                            "project_id": plan_project_id,
-                            "error": ws_error,
-                        })
+                        await manager.broadcast(
+                            {
+                                "type": "workspace_invalid",
+                                "issue_id": issue_id,
+                                "project_id": plan_project_id,
+                                "error": ws_error,
+                            }
+                        )
                         await manager.broadcast(
                             {"type": "plan_error", "issue_id": issue_id, "error": ws_error}
                         )
                         return
                     if not project.selected_repo:
                         ws_error = "GitHub workspace configured but no repository selected."
-                        await manager.broadcast({
-                            "type": "workspace_invalid",
-                            "issue_id": issue_id,
-                            "project_id": plan_project_id,
-                            "error": ws_error,
-                        })
+                        await manager.broadcast(
+                            {
+                                "type": "workspace_invalid",
+                                "issue_id": issue_id,
+                                "project_id": plan_project_id,
+                                "error": ws_error,
+                            }
+                        )
                         await manager.broadcast(
                             {"type": "plan_error", "issue_id": issue_id, "error": ws_error}
                         )
@@ -229,6 +235,7 @@ async def _run_planner_bg(issue_id: int, goal: str) -> None:
                     )
                     try:
                         from talon import workspace as _workspace
+
                         working_dir = await asyncio.to_thread(
                             _workspace.ensure_planner_clone,
                             plan_project_id,
@@ -385,12 +392,14 @@ async def _run_loop(
             if ws_error:
                 console.print(f"[red]Workspace invalid for issue {issue_id}: {ws_error}[/red]")
                 if issue_id:
-                    await manager.broadcast({
-                        "type": "workspace_invalid",
-                        "issue_id": issue_id,
-                        "project_id": project_id,
-                        "error": ws_error,
-                    })
+                    await manager.broadcast(
+                        {
+                            "type": "workspace_invalid",
+                            "issue_id": issue_id,
+                            "project_id": project_id,
+                            "error": ws_error,
+                        }
+                    )
                     await db.update_issue(issue_id, db.IssueUpdate(status="Backlog"))
                     await broadcast_issue_update(issue_id)
                 return
