@@ -421,6 +421,27 @@ async def _run_loop(
             push_on_pass_setting = await db.get_setting("push_on_pass")
             create_pr = push_on_pass_setting != "false"  # default True
 
+            # Load project-level server/env settings
+            project_start_command: str | None = None
+            project_env_vars: dict[str, str] | None = None
+            project_env_file: str | None = None
+            project_cookie_file: str | None = None
+            project_test_user: str | None = None
+            project_test_password: str | None = None
+            if project_id:
+                _proj = await db.get_project(project_id)
+                if _proj:
+                    project_start_command = _proj.start_command or None
+                    project_env_file = _proj.env_file or None
+                    project_cookie_file = _proj.cookie_file or None
+                    project_test_user = _proj.test_user or None
+                    project_test_password = _proj.test_password or None
+                    if _proj.project_env_vars:
+                        try:
+                            project_env_vars = json.loads(_proj.project_env_vars)
+                        except Exception:
+                            pass
+
             # Load pre-computed plan from backlog phase (if any)
             precomputed_plan = None
             if issue_id:
@@ -444,6 +465,12 @@ async def _run_loop(
                 plan=precomputed_plan,
                 on_step=on_step,
                 on_log=on_log,
+                start_command=project_start_command,
+                project_env_vars=project_env_vars,
+                env_file=project_env_file,
+                cookie_file=project_cookie_file,
+                test_user=project_test_user,
+                test_password=project_test_password,
             )
 
             if issue_id:
@@ -974,7 +1001,9 @@ async def _resume_loop(issue_id: int, run_id: str) -> None:
     await broadcast_issue_update(issue_id)
 
     async with sem:
-        console.print(f"\n[bold green]-  Resumed[/bold green] [ui] issue {issue_id} (run: {run_id})")
+        console.print(
+            f"\n[bold green]-  Resumed[/bold green] [ui] issue {issue_id} (run: {run_id})"
+        )
         try:
             from talon.loop import resume
 
@@ -1008,9 +1037,7 @@ async def _resume_loop(issue_id: int, run_id: str) -> None:
                 final_status = "Paused"
             else:
                 final_status = "Failed"
-            await db.update_issue(
-                issue_id, db.IssueUpdate(status=final_status)
-            )
+            await db.update_issue(issue_id, db.IssueUpdate(status=final_status))
             await broadcast_issue_update(issue_id)
 
         except Exception as e:
@@ -1034,61 +1061,195 @@ async def _resume_loop(issue_id: int, run_id: str) -> None:
 
 
 async def _run_verification_bg(issue_id: int, run_id: str) -> None:
+    _server_proc = None
+    _server_port = None
     try:
         from talon.loop import _load_state, _save_state
         from talon.skills import browser_validator
-        
+
         state = _load_state(run_id)
-        app_url = await db.get_setting("default_app_url") or os.getenv("DEFAULT_APP_URL")
+
+        # Load project-level settings so verify has the same context as the original run.
+        issue = await db.get_issue(issue_id)
+        project = await db.get_project(issue.project_id) if issue and issue.project_id else None
+
+        project_start_command = project.start_command if project else None
+        project_env_vars_raw = project.project_env_vars if project else None
+        project_env_vars: dict[str, str] | None = None
+        if project_env_vars_raw:
+            try:
+                import json as _json
+
+                project_env_vars = _json.loads(project_env_vars_raw)
+            except Exception:
+                pass
+        project_env_file = project.env_file if project else None
+        project_cookie_file = project.cookie_file if project else None
+        project_test_user = project.test_user if project else None
+        project_test_password = project.test_password if project else None
+
+        static_url = await db.get_setting("default_app_url") or os.getenv("DEFAULT_APP_URL")
+        app_url: str | None = None
+
+        # Determine which directory to boot the dev server from.
+        # Passed runs keep their isolated workspace; failed runs tear it down,
+        # so fall back to the project's local_path in that case.
+        # Resolve a potentially relative workspace path against WORKSPACE_DIR.
+        # state.workspace may be stored as a relative path (e.g. "workspace/abc123"),
+        # so resolve it before calling os.path.isdir.
+        workspace_to_start: str | None = None
+        if state.workspace:
+            candidate = state.workspace
+            if not os.path.isabs(candidate):
+                candidate = os.path.join(
+                    os.getenv("WORKSPACE_DIR", "./workspace"), os.path.basename(candidate)
+                )
+            if os.path.isdir(candidate):
+                workspace_to_start = candidate
+
+        console.print(
+            f"[cyan]verification[/cyan] workspace={workspace_to_start!r}  (raw={state.workspace!r})"
+        )
+        if not workspace_to_start:
+            console.print(
+                "[yellow]verification[/yellow] workspace not found — falling back to default URL"
+            )
+
+        if workspace_to_start:
+            from talon.skills import workspace_starter
+
+            detected_cmd = project_start_command or workspace_starter.detect_start_command(
+                workspace_to_start
+            )
+            console.print(
+                f"[cyan]verification[/cyan] workspace: {workspace_to_start}"
+                f"  cmd: {detected_cmd or '(none detected)'}"
+            )
+            await manager.broadcast(
+                {
+                    "type": "run_log",
+                    "issue_id": issue_id,
+                    "message": (
+                        f"Starting dev server: {detected_cmd or '(auto-detect)'}"
+                        f"  in {workspace_to_start}"
+                    ),
+                }
+            )
+            try:
+                (
+                    _server_proc,
+                    app_url,
+                    _server_port,
+                ) = await workspace_starter.start_workspace_server(
+                    workspace_to_start,
+                    extra_env=project_env_vars,
+                    start_command=project_start_command,
+                    env_file=project_env_file,
+                )
+                await manager.broadcast(
+                    {
+                        "type": "run_log",
+                        "issue_id": issue_id,
+                        "message": f"Dev server ready at {app_url}",
+                    }
+                )
+            except Exception as _ws_err:
+                console.print(f"[yellow]workspace-starter failed: {_ws_err}[/yellow]")
+                await manager.broadcast(
+                    {
+                        "type": "run_log",
+                        "issue_id": issue_id,
+                        "message": f"Dev server failed to start: {_ws_err} — using default URL",
+                    }
+                )
+
+        # Fall back to the configured default URL
         if not app_url:
-            await manager.broadcast({
-                "type": "run_error",
-                "issue_id": issue_id,
-                "error": "No application URL configured for verification. Set DEFAULT_APP_URL or app_url."
-            })
+            app_url = static_url
+
+        if not app_url:
+            await manager.broadcast(
+                {
+                    "type": "run_error",
+                    "issue_id": issue_id,
+                    "error": (
+                        "No application URL configured for verification."
+                        " Set DEFAULT_APP_URL or configure the project workspace."
+                    ),
+                }
+            )
             return
 
-        await manager.broadcast({
-            "type": "run_log",
-            "issue_id": issue_id,
-            "message": f"=== Re-running Browser Verification on {app_url} ==="
-        })
+        # Clear previous result so the UI shows a clean slate while verification runs.
+        state.browser_result = None
+        state.video_path = None
+        _save_state(state)
+        await manager.broadcast(
+            {
+                "type": "run_state_updated",
+                "issue_id": issue_id,
+                "state": state.model_dump(mode="json"),
+            }
+        )
+
+        await manager.broadcast(
+            {
+                "type": "run_log",
+                "issue_id": issue_id,
+                "message": f"=== Re-running Browser Verification on {app_url} ===",
+            }
+        )
 
         async def _on_browser_progress(partial):
             state.browser_result = partial
             _save_state(state)
-            await manager.broadcast({
-                "type": "run_state_updated",
-                "issue_id": issue_id,
-                "state": state.model_dump(mode="json")
-            })
+            await manager.broadcast(
+                {
+                    "type": "run_state_updated",
+                    "issue_id": issue_id,
+                    "state": state.model_dump(mode="json"),
+                }
+            )
 
         runs_dir = os.getenv("RUNS_DIR", "./runs")
         browser_result = await browser_validator.run(
-            state, app_url, runs_dir, on_progress=_on_browser_progress
+            state,
+            app_url,
+            runs_dir,
+            on_progress=_on_browser_progress,
+            cookie_file=project_cookie_file,
+            test_user=project_test_user,
+            test_password=project_test_password,
         )
         if browser_result is not None:
             state.browser_result = browser_result
             state.video_path = browser_result.video_path
         _save_state(state)
 
-        await manager.broadcast({
-            "type": "run_state_updated",
-            "issue_id": issue_id,
-            "state": state.model_dump(mode="json")
-        })
-        await manager.broadcast({
-            "type": "run_log",
-            "issue_id": issue_id,
-            "message": "=== Browser Verification Completed ==="
-        })
+        await manager.broadcast(
+            {
+                "type": "run_state_updated",
+                "issue_id": issue_id,
+                "state": state.model_dump(mode="json"),
+            }
+        )
+        await manager.broadcast(
+            {
+                "type": "run_log",
+                "issue_id": issue_id,
+                "message": "=== Browser Verification Completed ===",
+            }
+        )
     except Exception as e:
         console.print(f"[red]Verification error: {e}[/red]")
-        await manager.broadcast({
-            "type": "run_error",
-            "issue_id": issue_id,
-            "error": f"Verification failed: {e}"
-        })
+        await manager.broadcast(
+            {"type": "run_error", "issue_id": issue_id, "error": f"Verification failed: {e}"}
+        )
+    finally:
+        if _server_proc is not None and _server_port is not None:
+            from talon.skills import workspace_starter as _ws_mod
+
+            await _ws_mod.stop_workspace_server(_server_proc, _server_port)
 
 
 @app.post("/api/issues/{issue_id}/verify")
@@ -1097,8 +1258,10 @@ async def verify_issue_run(issue_id: int, background_tasks: BackgroundTasks):
     if not issue or not issue.run_id:
         raise HTTPException(status_code=404, detail="Run not found for issue")
     if issue.status not in ("Done", "Failed"):
-        raise HTTPException(status_code=400, detail="Cannot run verification until execution is complete.")
-    
+        raise HTTPException(
+            status_code=400, detail="Cannot run verification until execution is complete."
+        )
+
     background_tasks.add_task(_run_verification_bg, issue_id, issue.run_id)
     return {"status": "verification_started"}
 
@@ -1108,21 +1271,23 @@ async def pause_issue_run(issue_id: int):
     issue = await db.get_issue(issue_id)
     if not issue or not issue.run_id:
         raise HTTPException(status_code=404, detail="Run not found for issue")
-    
+
     runs_dir = Path(os.getenv("RUNS_DIR", "./runs"))
     state_file = runs_dir / issue.run_id / "state.json"
     if not state_file.exists():
         raise HTTPException(status_code=404, detail=f"Run not found: {issue.run_id}")
-    
+
     sentinel = runs_dir / issue.run_id / "pause.signal"
     sentinel.write_text(datetime.utcnow().isoformat(), encoding="utf-8")
-    
-    await manager.broadcast({
-        "type": "run_log",
-        "issue_id": issue_id,
-        "message": "--> Pause requested. The agent will pause gracefully after the current iteration completes."
-    })
-    
+
+    await manager.broadcast(
+        {
+            "type": "run_log",
+            "issue_id": issue_id,
+            "message": "--> Pause requested. The agent will pause gracefully after the current iteration completes.",
+        }
+    )
+
     return {"status": "paused_signal_sent"}
 
 
@@ -1131,7 +1296,7 @@ async def resume_issue_run(issue_id: int, background_tasks: BackgroundTasks):
     issue = await db.get_issue(issue_id)
     if not issue or not issue.run_id:
         raise HTTPException(status_code=404, detail="Run not found for issue")
-    
+
     background_tasks.add_task(_resume_loop, issue_id, issue.run_id)
     return {"status": "resuming"}
 
@@ -1141,13 +1306,13 @@ async def restart_issue_run(issue_id: int, background_tasks: BackgroundTasks):
     issue = await db.get_issue(issue_id)
     if not issue:
         raise HTTPException(status_code=404, detail="Issue not found")
-    
+
     # Trigger a fresh run
     # Set status to Backlog temporarily to clear run_id in the loop
     await db.update_issue(issue_id, db.IssueUpdate(status="Backlog", clear_run_id=True))
     updated = await db.get_issue(issue_id)
     await broadcast_issue_update(issue_id)
-    
+
     background_tasks.add_task(
         _run_loop,
         f"{updated.title}\n\n{updated.description}",

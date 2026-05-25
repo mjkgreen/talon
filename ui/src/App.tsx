@@ -27,6 +27,7 @@ import { NewProjectModal } from "./components/NewProjectModal";
 import { NoLlmGuardModal } from "./components/NoLlmGuardModal";
 import { SetupWizard } from "./components/SetupWizard";
 import { SettingsModal } from "./components/SettingsModal";
+import type { EnvVarRow } from "./components/SettingsModal";
 import { IssueDetailModal } from "./components/IssueDetailModal";
 
 export default function KanbanBoard() {
@@ -86,7 +87,7 @@ export default function KanbanBoard() {
 
   // --- Settings modal ---
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<"ai" | "model" | "workspace" | "limits">("ai");
+  const [settingsTab, setSettingsTab] = useState<"ai" | "model" | "workspace" | "environment" | "limits">("ai");
   const [savingSettings, setSavingSettings] = useState(false);
   const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({});
   const [modelDrafts, setModelDrafts] = useState<Record<string, string>>({});
@@ -97,6 +98,14 @@ export default function KanbanBoard() {
   const [maxConcurrentRuns, setMaxConcurrentRuns] = useState("3");
   const [editLocalDirectly, setEditLocalDirectly] = useState(false);
   const [pushOnPass, setPushOnPass] = useState(true);
+
+  // --- Per-project environment settings ---
+  const [startCommand, setStartCommand] = useState("");
+  const [envVarRows, setEnvVarRows] = useState<EnvVarRow[]>([]);
+  const [envFile, setEnvFile] = useState("");
+  const [cookieFile, setCookieFile] = useState("");
+  const [testUser, setTestUser] = useState("");
+  const [testPassword, setTestPassword] = useState("");
 
   // --- Project management ---
   const [newProjectModalOpen, setNewProjectModalOpen] = useState(false);
@@ -109,6 +118,16 @@ export default function KanbanBoard() {
 
   // ===================== helpers =====================
 
+  const _parseEnvVarRows = (raw: string | undefined): EnvVarRow[] => {
+    if (!raw) return [];
+    try {
+      const obj = JSON.parse(raw) as Record<string, string>;
+      return Object.entries(obj).map(([key, value]) => ({ key, value }));
+    } catch {
+      return [];
+    }
+  };
+
   const setActiveProject = (id: number) => {
     setActiveProjectIdState(id);
     activeProjectIdRef.current = id;
@@ -120,6 +139,12 @@ export default function KanbanBoard() {
       setSelectedRepo(project.selected_repo || "");
       setSelectedBranch(project.selected_branch || "");
       setWorkspaceMode(project.workspace_mode as "github" | "local" | "none" | "");
+      setStartCommand(project.start_command || "");
+      setEnvVarRows(_parseEnvVarRows(project.project_env_vars));
+      setEnvFile(project.env_file || "");
+      setCookieFile(project.cookie_file || "");
+      setTestUser(project.test_user || "");
+      setTestPassword(project.test_password || "");
     }
   };
 
@@ -158,6 +183,12 @@ export default function KanbanBoard() {
       setSelectedRepo(project.selected_repo || "");
       setSelectedBranch(project.selected_branch || "");
       setWorkspaceMode(project.workspace_mode as "github" | "local" | "none" | "");
+      setStartCommand(project.start_command || "");
+      setEnvVarRows(_parseEnvVarRows(project.project_env_vars));
+      setEnvFile(project.env_file || "");
+      setCookieFile(project.cookie_file || "");
+      setTestUser(project.test_user || "");
+      setTestPassword(project.test_password || "");
     };
 
     const stored = localStorage.getItem("talon_active_project");
@@ -436,6 +467,12 @@ export default function KanbanBoard() {
         setSelectedRepo(active.selected_repo || "");
         setSelectedBranch(active.selected_branch || "");
         setWorkspaceMode(active.workspace_mode as "github" | "local" | "none" | "");
+        setStartCommand(active.start_command || "");
+        setEnvVarRows(_parseEnvVarRows(active.project_env_vars));
+        setEnvFile(active.env_file || "");
+        setCookieFile(active.cookie_file || "");
+        setTestUser(active.test_user || "");
+        setTestPassword(active.test_password || "");
       }
     };
     window.addEventListener("focus", handleFocus);
@@ -691,6 +728,29 @@ export default function KanbanBoard() {
       }),
     });
     await fetchSettings();
+    setSavingSettings(false);
+  };
+
+  const saveEnvironment = async () => {
+    if (!activeProjectId) return;
+    setSavingSettings(true);
+    const envObj: Record<string, string> = {};
+    envVarRows.forEach(({ key, value }) => {
+      if (key.trim()) envObj[key.trim()] = value;
+    });
+    await fetch(apiUrl(`/api/projects/${activeProjectId}`), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        start_command: startCommand || null,
+        project_env_vars: Object.keys(envObj).length ? JSON.stringify(envObj) : null,
+        env_file: envFile || null,
+        cookie_file: cookieFile || null,
+        test_user: testUser || null,
+        test_password: testPassword || null,
+      }),
+    });
+    await fetchProjects();
     setSavingSettings(false);
   };
 
@@ -1167,7 +1227,20 @@ export default function KanbanBoard() {
           activeProject={activeProject}
           editLocalDirectly={editLocalDirectly}
           pushOnPass={pushOnPass}
+          startCommand={startCommand}
+          setStartCommand={setStartCommand}
+          envVarRows={envVarRows}
+          setEnvVarRows={setEnvVarRows}
+          envFile={envFile}
+          setEnvFile={setEnvFile}
+          cookieFile={cookieFile}
+          setCookieFile={setCookieFile}
+          testUser={testUser}
+          setTestUser={setTestUser}
+          testPassword={testPassword}
+          setTestPassword={setTestPassword}
           onSave={saveSettings}
+          onSaveEnvironment={saveEnvironment}
           onClose={() => setSettingsOpen(false)}
           onConfigureWorkspace={() => {
             setSettingsOpen(false);

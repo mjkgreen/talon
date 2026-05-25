@@ -80,6 +80,7 @@ class TestResolutionSource:
 class TestSummary:
     def test_all_roles_present(self, monkeypatch):
         import talon.config
+
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
         summary = talon.config.model_config_summary()
         assert set(summary.keys()) == {"orchestrator", "planner", "subagent", "reviewer", "refiner"}

@@ -1251,24 +1251,33 @@ export function IssueDetailModal({
               )}
 
               {/* Case 4: browser validation ran — full results */}
-              {(activeRunState.browser_result || activeRunState.video_path) && (
+              {(activeRunState.browser_result || activeRunState.video_path) && (() => {
+                const br = activeRunState.browser_result;
+                const isRunning = br && br.summary?.startsWith("Testing…");
+                return (
                 <>
                   {/* Summary header */}
-                  {activeRunState.browser_result && (
-                    <div className="bg-neutral-950 border border-neutral-800 rounded-xl p-4 space-y-2">
+                  {br && (
+                    <div className={`border rounded-xl p-4 space-y-2 ${isRunning ? "bg-blue-500/5 border-blue-500/20" : br.passed ? "bg-green-500/5 border-green-500/20" : "bg-neutral-950 border-neutral-800"}`}>
                       <div className="flex items-center justify-between">
                         <div>
                           <p className="text-sm text-neutral-400 mb-1">Browser Test</p>
-                          <p className="text-sm text-neutral-200">{activeRunState.browser_result.summary}</p>
+                          <p className="text-sm text-neutral-200">{br.summary}</p>
                         </div>
                         <div className="flex items-center gap-3 shrink-0 ml-4">
-                          <span className="text-xs text-neutral-500">
-                            {Math.round(activeRunState.browser_result.score * 100)}%
-                          </span>
+                          {!isRunning && (
+                            <span className="text-xs text-neutral-500">
+                              {Math.round(br.score * 100)}%
+                            </span>
+                          )}
                           <span className="text-xs text-neutral-600">
-                            {activeRunState.browser_result.steps} steps
+                            {br.steps} steps
                           </span>
-                          {activeRunState.browser_result.passed ? (
+                          {isRunning ? (
+                            <span className="flex items-center gap-1 text-xs text-blue-400 bg-blue-400/10 border border-blue-400/20 px-2 py-1 rounded-full">
+                              <RefreshCw size={12} className="animate-spin" /> Running
+                            </span>
+                          ) : br.passed ? (
                             <span className="flex items-center gap-1 text-xs text-green-400 bg-green-400/10 border border-green-400/20 px-2 py-1 rounded-full">
                               <CheckCircle2 size={12} /> Passed
                             </span>
@@ -1279,9 +1288,9 @@ export function IssueDetailModal({
                           )}
                         </div>
                       </div>
-                      {activeRunState.browser_result.error && (
+                      {!isRunning && br.error && (
                         <p className="text-xs text-amber-400 bg-amber-400/10 border border-amber-400/20 rounded-lg px-3 py-2">
-                          {activeRunState.browser_result.error}
+                          {br.error}
                         </p>
                       )}
                     </div>
@@ -1368,7 +1377,8 @@ export function IssueDetailModal({
                     </div>
                   )}
                 </>
-              )}
+              );
+              })()}
 
             </div>
           )}

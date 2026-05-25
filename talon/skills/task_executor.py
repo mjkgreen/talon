@@ -18,6 +18,7 @@ from typing import Awaitable, Callable
 import litellm
 from rich.console import Console
 
+
 def _is_pause_requested(run_id: str | None) -> bool:
     if not run_id:
         return False
@@ -25,12 +26,16 @@ def _is_pause_requested(run_id: str | None) -> bool:
     sentinel = Path(runs_dir) / run_id / "pause.signal"
     return sentinel.exists()
 
+
 _subagent_sem = None
+
+
 def _get_subagent_sem():
     global _subagent_sem
     if _subagent_sem is None:
         _subagent_sem = asyncio.Semaphore(int(os.getenv("TALON_SUBAGENT_CONCURRENCY", "4")))
     return _subagent_sem
+
 
 from talon.providers import get_provider
 from talon.providers.base import ToolResult
@@ -242,9 +247,7 @@ async def _run_subagent_with_retry(
                     await on_log(
                         f"-> Sub-agent [{subtask.id}] timeout, retrying in {retry_delay:.0f}s..."
                     )
-                console.print(
-                    f"  [yellow]Sub-agent [{subtask.id}] timeout — retrying[/yellow]"
-                )
+                console.print(f"  [yellow]Sub-agent [{subtask.id}] timeout — retrying[/yellow]")
                 await asyncio.sleep(retry_delay)
             else:
                 raise
@@ -284,7 +287,9 @@ async def _execute_phase(
 
     raw_results = await asyncio.gather(
         *[
-            _run_subagent_with_retry(st, goal, working_dir, phase.name, phase_context, on_log, run_id=run_id)
+            _run_subagent_with_retry(
+                st, goal, working_dir, phase.name, phase_context, on_log, run_id=run_id
+            )
             for st in subtasks
         ],
         return_exceptions=True,

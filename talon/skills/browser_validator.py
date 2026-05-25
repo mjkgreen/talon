@@ -15,10 +15,9 @@ import json
 import os
 import re
 from pathlib import Path
+from typing import Awaitable, Callable
 
 from rich.console import Console
-
-from typing import Awaitable, Callable
 
 from talon.providers import get_provider
 from talon.providers.base import ToolResult
@@ -314,6 +313,9 @@ async def run(
     app_url: str,
     runs_dir: str,
     on_progress: Callable[[BrowserTestResult], Awaitable[None]] | None = None,
+    cookie_file: str | None = None,
+    test_user: str | None = None,
+    test_password: str | None = None,
 ) -> BrowserTestResult | None:
     """
     Run an LLM-driven browser test session against app_url.
@@ -356,7 +358,14 @@ async def run(
     files_str = ", ".join(sorted(list(all_files_modified))) if all_files_modified else "(none)"
     outputs_str = "\n---\n".join(aggregated_outputs) if aggregated_outputs else "(none)"
 
-    system = _BROWSER_AGENT_SYSTEM.format(max_steps=MAX_STEPS)
+    creds_hint = ""
+    if test_user or test_password:
+        creds_hint = (
+            f"\n\nTest account credentials (use these to log in if prompted):\n"
+            f"  Username / Email: {test_user or '(not set)'}\n"
+            f"  Password: {test_password or '(not set)'}"
+        )
+    system = _BROWSER_AGENT_SYSTEM.format(max_steps=MAX_STEPS) + creds_hint
     messages: list[dict] = [
         {
             "role": "user",
@@ -387,6 +396,16 @@ async def run(
             record_video_dir=str(video_dir),
             record_video_size={"width": 1280, "height": 720},
         )
+        if cookie_file:
+            try:
+                raw_cookies = json.loads(Path(cookie_file).read_text(encoding="utf-8"))
+                await context.add_cookies(raw_cookies)
+                console.print(f"  [dim]browser-validator[/dim] loaded cookies from {cookie_file}")
+            except Exception as _ce:
+                console.print(
+                    f"  [yellow]browser-validator[/yellow] "
+                    f"failed to load cookies from {cookie_file}: {_ce}"
+                )
         page = await context.new_page()
 
         try:

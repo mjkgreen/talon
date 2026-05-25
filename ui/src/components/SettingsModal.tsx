@@ -1,11 +1,16 @@
 import React from "react";
-import { Check, ChevronDown, ChevronRight, Folder, RefreshCw, Settings as SettingsIcon, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Folder, Plus, RefreshCw, Settings as SettingsIcon, Trash2, X } from "lucide-react";
 import { GithubLogo, API_KEY_PROVIDERS, MODEL_ROLES } from "../constants";
 import type { Project } from "../types";
 
+export interface EnvVarRow {
+  key: string;
+  value: string;
+}
+
 interface SettingsModalProps {
-  settingsTab: "ai" | "model" | "workspace" | "limits";
-  setSettingsTab: (v: "ai" | "model" | "workspace" | "limits") => void;
+  settingsTab: "ai" | "model" | "workspace" | "environment" | "limits";
+  setSettingsTab: (v: "ai" | "model" | "workspace" | "environment" | "limits") => void;
   keyDrafts: Record<string, string>;
   setKeyDrafts: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   modelDrafts: Record<string, string>;
@@ -26,7 +31,20 @@ interface SettingsModalProps {
   activeProject: Project | undefined;
   editLocalDirectly: boolean;
   pushOnPass: boolean;
+  startCommand: string;
+  setStartCommand: (v: string) => void;
+  envVarRows: EnvVarRow[];
+  setEnvVarRows: React.Dispatch<React.SetStateAction<EnvVarRow[]>>;
+  envFile: string;
+  setEnvFile: (v: string) => void;
+  cookieFile: string;
+  setCookieFile: (v: string) => void;
+  testUser: string;
+  setTestUser: (v: string) => void;
+  testPassword: string;
+  setTestPassword: (v: string) => void;
   onSave: () => void;
+  onSaveEnvironment: () => void;
   onClose: () => void;
   onConfigureWorkspace: () => void;
   onToggleEditLocal: (v: boolean) => void;
@@ -37,6 +55,7 @@ const TAB_LABELS: Record<string, string> = {
   ai: "AI Provider",
   model: "Model",
   workspace: "Workspace",
+  environment: "Environment",
   limits: "Limits",
 };
 
@@ -77,7 +96,20 @@ export function SettingsModal({
   activeProject,
   editLocalDirectly,
   pushOnPass,
+  startCommand,
+  setStartCommand,
+  envVarRows,
+  setEnvVarRows,
+  envFile,
+  setEnvFile,
+  cookieFile,
+  setCookieFile,
+  testUser,
+  setTestUser,
+  testPassword,
+  setTestPassword,
   onSave,
+  onSaveEnvironment,
   onClose,
   onConfigureWorkspace,
   onToggleEditLocal,
@@ -98,8 +130,8 @@ export function SettingsModal({
           </button>
         </div>
 
-        <div className="flex border-b border-neutral-800">
-          {(["ai", "model", "workspace", "limits"] as const).map((tab) => (
+        <div className="flex border-b border-neutral-800 overflow-x-auto">
+          {(["ai", "model", "workspace", "environment", "limits"] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setSettingsTab(tab)}
@@ -264,6 +296,170 @@ export function SettingsModal({
             </div>
           )}
 
+          {settingsTab === "environment" && (
+            <div className="space-y-5">
+              {!activeProject ? (
+                <p className="text-sm text-neutral-500">No active project selected.</p>
+              ) : (
+                <>
+                  <p className="text-xs text-neutral-500">
+                    These settings are saved per-project and injected when Talon auto-starts your
+                    dev server during browser validation.
+                  </p>
+
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-300 mb-1">
+                      Start command
+                    </label>
+                    <input
+                      type="text"
+                      value={startCommand}
+                      onChange={(e) => setStartCommand(e.target.value)}
+                      placeholder="Auto-detect (leave blank)"
+                      className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+                    />
+                    <p className="text-xs text-neutral-600 mt-1">
+                      Override auto-detection. Example: <code>npm run custom-dev</code>
+                    </p>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-sm font-medium text-neutral-300">
+                        Environment variables
+                      </label>
+                      <button
+                        onClick={() =>
+                          setEnvVarRows((prev) => [...prev, { key: "", value: "" }])
+                        }
+                        className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                      >
+                        <Plus size={12} /> Add variable
+                      </button>
+                    </div>
+                    {envVarRows.length === 0 ? (
+                      <p className="text-xs text-neutral-600 italic">
+                        No variables — injected into the dev server subprocess on startup.
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {envVarRows.map((row, i) => (
+                          <div key={i} className="flex gap-2 items-center">
+                            <input
+                              type="text"
+                              value={row.key}
+                              onChange={(e) =>
+                                setEnvVarRows((prev) =>
+                                  prev.map((r, idx) =>
+                                    idx === i ? { ...r, key: e.target.value } : r
+                                  )
+                                )
+                              }
+                              placeholder="KEY"
+                              className="flex-1 bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none focus:border-blue-500 transition-all"
+                            />
+                            <span className="text-neutral-600 text-xs">=</span>
+                            <input
+                              type="text"
+                              value={row.value}
+                              onChange={(e) =>
+                                setEnvVarRows((prev) =>
+                                  prev.map((r, idx) =>
+                                    idx === i ? { ...r, value: e.target.value } : r
+                                  )
+                                )
+                              }
+                              placeholder="value"
+                              className="flex-1 bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none focus:border-blue-500 transition-all"
+                            />
+                            <button
+                              onClick={() =>
+                                setEnvVarRows((prev) => prev.filter((_, idx) => idx !== i))
+                              }
+                              className="text-neutral-600 hover:text-red-400 transition-colors"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <p className="text-xs text-neutral-600 mt-2">
+                      Use <code>NODE_ENV=test</code> or <code>MOCK_AUTH=true</code> to bypass
+                      auth screens during validation.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-300 mb-1">
+                      .env file path
+                    </label>
+                    <input
+                      type="text"
+                      value={envFile}
+                      onChange={(e) => setEnvFile(e.target.value)}
+                      placeholder="/path/to/.env (optional)"
+                      className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+                    />
+                    <p className="text-xs text-neutral-600 mt-1">
+                      Load a <code>.env</code> file into the dev server subprocess. Variables
+                      set above override values in this file.
+                    </p>
+                  </div>
+
+                  <div className="pt-2 border-t border-neutral-800 space-y-3">
+                    <div className="text-sm font-medium text-neutral-300">Test account credentials</div>
+                    <p className="text-xs text-neutral-500">
+                      If the app has a login screen, the browser agent will use these to sign in
+                      automatically.
+                    </p>
+                    <div>
+                      <label className="block text-xs font-medium text-neutral-400 mb-1">
+                        Username / Email
+                      </label>
+                      <input
+                        type="text"
+                        value={testUser}
+                        onChange={(e) => setTestUser(e.target.value)}
+                        placeholder="test@example.com"
+                        className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-neutral-400 mb-1">
+                        Password
+                      </label>
+                      <input
+                        type="password"
+                        value={testPassword}
+                        onChange={(e) => setTestPassword(e.target.value)}
+                        placeholder="••••••••"
+                        className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-300 mb-1">
+                      Auth cookie file
+                    </label>
+                    <input
+                      type="text"
+                      value={cookieFile}
+                      onChange={(e) => setCookieFile(e.target.value)}
+                      placeholder="/path/to/cookies.json (optional)"
+                      className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+                    />
+                    <p className="text-xs text-neutral-600 mt-1">
+                      Path to a Netscape/JSON cookie file. Loaded into Playwright before
+                      navigating, bypassing login screens.
+                    </p>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
           {settingsTab === "limits" && (
             <div className="space-y-4">
               <div>
@@ -329,12 +525,12 @@ export function SettingsModal({
           </button>
           {settingsTab !== "workspace" && (
             <button
-              onClick={onSave}
+              onClick={settingsTab === "environment" ? onSaveEnvironment : onSave}
               disabled={savingSettings}
               className="px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
             >
               {savingSettings ? <RefreshCw size={14} className="animate-spin" /> : <Check size={14} />}
-              Save settings
+              {settingsTab === "environment" ? "Save environment" : "Save settings"}
             </button>
           )}
         </div>

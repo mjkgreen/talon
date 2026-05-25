@@ -50,6 +50,12 @@ export interface Project {
   selected_repo?: string;
   selected_branch?: string;
   local_path?: string;
+  start_command?: string;
+  project_env_vars?: string;
+  env_file?: string;
+  cookie_file?: string;
+  test_user?: string;
+  test_password?: string;
   created_at: string;
   updated_at: string;
 }
