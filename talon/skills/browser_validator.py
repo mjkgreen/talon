@@ -182,10 +182,13 @@ _BROWSER_AGENT_SYSTEM = (
     "Rules:\n"
     "- Always navigate before asserting.\n"
     "- Use get_page_content to orient yourself when page structure is unclear.\n"
+    "- Intelligently find and test the specific changes/features added in this run based on the list of modified files and summary.\n"
     "- Prefer specific selectors (id, data-testid, aria-label) over generic ones.\n"
     "- If a selector fails, try an alternative before recording a failure.\n"
-    "- If the app is unreachable, immediately call mark_done(passed=false).\n"
-    "- You have a budget of {max_steps} tool calls. Use them efficiently.\n"
+    "- Avoid getting stuck in retry loops. If an action repeatedly fails, inspect the page layout, record a failed assertion with assert_element/assert_url detailing the bug, and call mark_done.\n"
+    "- Take screenshots at major transition states and also if/when an action fails to document behavior.\n"
+    "- If the app is unreachable, immediately call mark_done(passed=false, summary='App is unreachable').\n"
+    "- You have a strict budget of {max_steps} tool calls. You MUST call mark_done to finish. If you reach step 17 or above out of {max_steps}, immediately make your final assertions and call mark_done with your verdict. Do not let the step limit expire.\n"
     "- Every action must be a tool call — no prose output."
 )
 
@@ -204,7 +207,19 @@ async def _dispatch_browser_tool(
         if tool_name == "navigate":
             url = tool_input["url"]
             await page.goto(url, timeout=ACTION_TIMEOUT)
-            await page.wait_for_load_state("networkidle", timeout=ACTION_TIMEOUT)
+            await page.wait_for_load_state("load", timeout=ACTION_TIMEOUT)
+
+            # Smart initial wait for dev server compilation/bundling
+            try:
+                for _attempt in range(30):
+                    body_text = (await page.inner_text("body") or "").strip().lower()
+                    if not body_text or any(kw in body_text for kw in ["bundling", "compiling", "loading", "webpack", "metro", "please wait"]):
+                        await asyncio.sleep(1.0)
+                    else:
+                        break
+            except Exception:
+                pass
+
             title = await page.title()
             final_url = page.url
             return json.dumps({"title": title, "url": final_url}), False
@@ -213,7 +228,7 @@ async def _dispatch_browser_tool(
             selector = tool_input["selector"]
             timeout = tool_input.get("timeout_ms", ACTION_TIMEOUT)
             await page.click(selector, timeout=timeout)
-            await page.wait_for_load_state("networkidle", timeout=ACTION_TIMEOUT)
+            await page.wait_for_load_state("load", timeout=ACTION_TIMEOUT)
             return json.dumps({"clicked": selector}), False
 
         elif tool_name == "fill":
@@ -358,6 +373,17 @@ async def run(
     files_str = ", ".join(sorted(list(all_files_modified))) if all_files_modified else "(none)"
     outputs_str = "\n---\n".join(aggregated_outputs) if aggregated_outputs else "(none)"
 
+    planned_assertions: list[str] = []
+    if state.plan_result and state.plan_result.success_criteria:
+        planned_assertions = list(state.plan_result.success_criteria)
+
+    planned_assertions_str = ""
+    if planned_assertions:
+        planned_assertions_str = (
+            "Planned Assertions / Success Criteria to Verify:\n" +
+            "\n".join(f"- {c}" for c in planned_assertions) + "\n\n"
+        )
+
     creds_hint = ""
     if test_user or test_password:
         creds_hint = (
@@ -374,9 +400,12 @@ async def run(
                 f"App URL: {app_url}\n\n"
                 f"Files Modified During Execution:\n{files_str}\n\n"
                 f"Actions / Execution Results Summary:\n{outputs_str}\n\n"
+                f"{planned_assertions_str}"
                 "Your job is to test and verify the relevant changes that were made in this run.\n"
                 "Using the browser tools, navigate the application and work through the flows of the changed files/features "
-                "to prove they work, taking screenshots of major states as visual proof.\n"
+                "to prove they work, specifically aiming to verify each of the Planned Assertions / Success Criteria listed above.\n"
+                "Formally record passing/failing assertions with `assert_element` or `assert_url` using clear and descriptive titles.\n"
+                "Take screenshots of major states as visual proof.\n"
                 "Call mark_done with your overall verdict when done."
             ),
         }
@@ -390,9 +419,24 @@ async def run(
     mark_done_called = False
     steps = 0
 
+    if on_progress:
+        await on_progress(
+            BrowserTestResult(
+                passed=False,
+                score=0.0,
+                summary="Initializing browser verification...",
+                assertions=[],
+                planned_assertions=planned_assertions,
+                screenshots=[],
+                video_path=video_path,
+                steps=0,
+            )
+        )
+
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch()
+        browser = await pw.chromium.launch(args=["--disable-gpu"])
         context = await browser.new_context(
+            viewport={"width": 1280, "height": 720},
             record_video_dir=str(video_dir),
             record_video_size={"width": 1280, "height": 720},
         )
@@ -410,10 +454,15 @@ async def run(
 
         try:
             for _turn in range(MAX_STEPS):
+                # Restrict tools to ONLY mark_done on the last step to force the agent to complete
+                current_tools = BROWSER_TOOL_DEFINITIONS
+                if _turn == MAX_STEPS - 1:
+                    current_tools = [t for t in BROWSER_TOOL_DEFINITIONS if t["name"] == "mark_done"]
+
                 response = await provider.chat(
                     system=system,
                     messages=messages,
-                    tools=BROWSER_TOOL_DEFINITIONS,
+                    tools=current_tools,
                     max_tokens=MAX_TOKENS,
                 )
                 provider.append_assistant(messages, response)
@@ -463,14 +512,38 @@ async def run(
                             score=partial_score,
                             summary=f"Testing… ({steps} steps, {len(assertions)} assertions)",
                             assertions=list(assertions),
+                            planned_assertions=planned_assertions,
                             screenshots=list(screenshots),
                             video_path=video_path,
                             steps=steps,
                         )
                     )
+
+            if not mark_done_called and steps >= MAX_STEPS:
+                final_passed = all(a.passed for a in assertions) if assertions else False
+                status_str = "passed" if final_passed else "failed"
+                final_summary = f"Auto-completed: reached step limit. {len(assertions)} assertions recorded, {status_str}."
+                mark_done_called = True
         finally:
             await context.close()
             await browser.close()
+
+            # Locate the recorded video and rename it to proof.webm
+            try:
+                webm_files = list(video_dir.glob("*.webm"))
+                webm_files = [f for f in webm_files if f.name != "proof.webm"]
+                if webm_files:
+                    # Sort by size descending so we pick the main active video (with pixel changes)
+                    # rather than any tiny empty or blank tab videos.
+                    webm_files.sort(key=lambda f: f.stat().st_size, reverse=True)
+                    recorded_video = webm_files[0]
+                    target_path = video_dir / "proof.webm"
+                    if target_path.exists():
+                        target_path.unlink()
+                    recorded_video.rename(target_path)
+                    console.print(f"  [dim]browser-validator[/dim] saved video to {target_path}")
+            except Exception as _ve:
+                console.print(f"  [yellow]browser-validator[/yellow] failed to rename video: {_ve}")
 
     if not assertions:
         score = 1.0 if final_passed else 0.0
@@ -488,6 +561,7 @@ async def run(
         score=score,
         summary=final_summary,
         assertions=assertions,
+        planned_assertions=planned_assertions,
         screenshots=screenshots,
         video_path=video_path,
         steps=steps,

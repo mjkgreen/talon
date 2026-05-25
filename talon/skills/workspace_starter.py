@@ -159,9 +159,23 @@ def detect_start_command(workspace_dir: str) -> str | None:
 
 
 def _is_port_in_use(port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(0.1)
-        return s.connect_ex(("127.0.0.1", port)) == 0
+    # Check IPv4
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.1)
+            if s.connect_ex(("127.0.0.1", port)) == 0:
+                return True
+    except Exception:
+        pass
+    # Check IPv6
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as s:
+            s.settimeout(0.1)
+            if s.connect_ex(("::1", port)) == 0:
+                return True
+    except Exception:
+        pass
+    return False
 
 
 async def _claim_port(preferred: list[int]) -> int:
@@ -185,71 +199,69 @@ async def _release_port(port: int) -> None:
         _claimed_ports.discard(port)
 
 
-async def _scan_logs_for_url(proc: asyncio.subprocess.Process, timeout: float) -> str | None:
-    """Read stdout and return the first localhost URL line found."""
+async def _read_and_drain_logs(proc: asyncio.subprocess.Process, url_future: asyncio.Future[str]) -> None:
     pattern = re.compile(r"https?://(?:localhost|127\.0\.0\.1):\d+", re.IGNORECASE)
-    loop = asyncio.get_event_loop()
-    deadline = loop.time() + timeout
-    while loop.time() < deadline:
-        try:
-            remaining = deadline - loop.time()
-            line_bytes = await asyncio.wait_for(
-                proc.stdout.readline(),  # type: ignore[union-attr]
-                timeout=min(remaining, 2.0),
-            )
+    try:
+        while True:
+            line_bytes = await proc.stdout.readline()  # type: ignore[union-attr]
+            if not line_bytes:
+                break
             line = line_bytes.decode(errors="replace")
+            # Log the output cleanly so developers can diagnose server issues
+            console.print(f"  [dim][dev-server][/dim] {line.strip()}")
             match = pattern.search(line)
-            if match:
-                return match.group(0)
-        except asyncio.TimeoutError:
-            continue
-        except Exception:
-            break
-    return None
-
-
-async def _poll_port(port: int, timeout: float) -> bool:
-    loop = asyncio.get_event_loop()
-    deadline = loop.time() + timeout
-    while loop.time() < deadline:
-        if _is_port_in_use(port):
-            return True
-        await asyncio.sleep(0.5)
-    return False
+            if match and not url_future.done():
+                url_future.set_result(match.group(0))
+    except Exception as e:
+        if not url_future.done():
+            url_future.set_exception(e)
 
 
 async def _resolve_url(proc: asyncio.subprocess.Process, port: int, startup_timeout: float) -> str:
-    """Race log scanning against port polling; return the resolved URL."""
-    log_task = asyncio.create_task(_scan_logs_for_url(proc, startup_timeout))
-    poll_task = asyncio.create_task(_poll_port(port, startup_timeout))
+    """Race log scanning against port polling; return the resolved URL and continuously drain logs."""
+    loop = asyncio.get_event_loop()
+    url_future: asyncio.Future[str] = loop.create_future()
 
-    done, pending = await asyncio.wait(
-        {log_task, poll_task},
-        timeout=startup_timeout,
-        return_when=asyncio.FIRST_COMPLETED,
-    )
+    # Start the continuous background log reader and drainer task.
+    # This prevents the OS pipe buffer from filling up and stalling the server.
+    asyncio.create_task(_read_and_drain_logs(proc, url_future))
 
-    for t in pending:
-        t.cancel()
-        try:
-            await t
-        except (asyncio.CancelledError, Exception):
-            pass
-
-    if log_task in done:
-        try:
-            url = log_task.result()
-            if url:
-                return url
-        except Exception:
-            pass
-
-    if poll_task in done:
-        try:
-            if poll_task.result():
+    # Port poller task
+    async def poll_port_task() -> str:
+        deadline = loop.time() + startup_timeout
+        while loop.time() < deadline:
+            if _is_port_in_use(port):
                 return f"http://localhost:{port}"
-        except Exception:
-            pass
+            await asyncio.sleep(0.5)
+        raise StartupTimeoutError(f"Dev server did not start within {startup_timeout}s on port {port}")
+
+    poll_task = asyncio.create_task(poll_port_task())
+
+    try:
+        done, pending = await asyncio.wait(
+            {url_future, poll_task},
+            timeout=startup_timeout,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        for t in pending:
+            t.cancel()
+            try:
+                await t
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        if url_future.done() and not url_future.cancelled():
+            try:
+                return url_future.result()
+            except Exception:
+                pass
+
+        if poll_task.done() and not poll_task.cancelled():
+            return poll_task.result()
+
+    except Exception:
+        pass
 
     raise StartupTimeoutError(f"Dev server did not start within {startup_timeout}s on port {port}")
 
@@ -301,7 +313,18 @@ async def start_workspace_server(
 
     port = await _claim_port(_DEFAULT_PROBE_PORTS)
     file_env = _parse_env_text(env_content) if env_content else {}
-    env = {**os.environ, **file_env, "PORT": str(port), **(extra_env or {})}
+    env = {
+        **os.environ,
+        **file_env,
+        "PORT": str(port),
+        "EXPO_PORT": str(port),
+        "EXPO_PACKAGER_PORT": str(port),
+        "RCT_METRO_PORT": str(port),
+        "EXPO_WEBPACK_PORT": str(port),
+        "BROWSER": "none",
+        "EXPO_NO_BROWSER": "1",
+        **(extra_env or {})
+    }
 
     # Install npm dependencies if node_modules is missing (worktrees/copies exclude them).
     ws_path = Path(workspace_dir)
@@ -373,11 +396,20 @@ async def start_workspace_server(
 async def stop_workspace_server(proc: asyncio.subprocess.Process, port: int) -> None:
     """Terminate the dev server subprocess and release its port."""
     if proc.returncode is None:
-        proc.terminate()
+        import sys
+        if sys.platform == "win32":
+            import subprocess
+            try:
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
+            except Exception:
+                pass
+        else:
+            proc.terminate()
         try:
             await asyncio.wait_for(proc.wait(), timeout=5.0)
         except asyncio.TimeoutError:
-            proc.kill()
+            if sys.platform != "win32":
+                proc.kill()
             await proc.wait()
     await _release_port(port)
     console.print("[dim]workspace-starter: server stopped[/dim]")

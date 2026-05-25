@@ -1343,35 +1343,88 @@ export function IssueDetailModal({
                   )}
 
                   {/* Assertions list */}
-                  {activeRunState.browser_result?.assertions?.length > 0 && (
-                    <div className="bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden">
-                      <div className="bg-neutral-900 border-b border-neutral-800 p-4">
-                        <h3 className="text-sm font-medium text-neutral-300">
-                          Assertions ({activeRunState.browser_result.assertions.filter((a: BrowserAssertion) => a.passed).length}/
-                          {activeRunState.browser_result.assertions.length} passed)
-                        </h3>
-                      </div>
-                      <div className="divide-y divide-neutral-800">
-                        {activeRunState.browser_result.assertions.map((assertion: BrowserAssertion, i: number) => (
-                          <div key={i} className="flex items-start gap-3 p-3">
-                            {assertion.passed ? (
-                              <CheckCircle2 size={14} className="text-green-400 mt-0.5 shrink-0" />
-                            ) : (
-                              <AlertCircle size={14} className="text-red-400 mt-0.5 shrink-0" />
-                            )}
-                            <div className="min-w-0">
-                              <p className="text-sm text-neutral-200">{assertion.description}</p>
-                              {assertion.selector && (
-                                <p className="text-xs text-neutral-500 font-mono mt-0.5">{assertion.selector}</p>
-                              )}
-                              {!assertion.passed && assertion.actual && (
-                                <p className="text-xs text-red-400 mt-0.5">actual: {assertion.actual}</p>
-                              )}
-                            </div>
+                  {((activeRunState.browser_result?.assertions?.length || 0) > 0 || (activeRunState.browser_result?.planned_assertions?.length || 0) > 0) && (
+                    (() => {
+                      const planned = activeRunState.browser_result?.planned_assertions || [];
+                      const executed = activeRunState.browser_result?.assertions || [];
+
+                      // Map each planned assertion to an executed one if available, otherwise mark as pending
+                      const items = planned.map((pDesc: string) => {
+                        const match = executed.find(
+                          (e: BrowserAssertion) =>
+                            e.description.toLowerCase().includes(pDesc.toLowerCase()) || 
+                            pDesc.toLowerCase().includes(e.description.toLowerCase())
+                        );
+                        return {
+                          description: pDesc,
+                          status: match ? (match.passed ? "passed" : "failed") : "pending",
+                          selector: match?.selector || null,
+                          actual: match?.actual || null,
+                        };
+                      });
+
+                      // Find executed assertions that don't match any planned assertion
+                      const unmatchedExecuted = executed.filter(
+                        (e: BrowserAssertion) =>
+                          !planned.some(
+                            (pDesc: string) =>
+                              e.description.toLowerCase().includes(pDesc.toLowerCase()) ||
+                              pDesc.toLowerCase().includes(e.description.toLowerCase())
+                          )
+                      );
+
+                      const displayItems = [
+                        ...items,
+                        ...unmatchedExecuted.map((e: BrowserAssertion) => ({
+                          description: e.description,
+                          status: e.passed ? ("passed" as const) : ("failed" as const),
+                          selector: e.selector,
+                          actual: e.actual,
+                        })),
+                      ];
+
+                      const totalPassed = displayItems.filter((item) => item.status === "passed").length;
+                      const totalCount = displayItems.length;
+
+                      return (
+                        <div className="bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden">
+                          <div className="bg-neutral-900 border-b border-neutral-800 p-4">
+                            <h3 className="text-sm font-medium text-neutral-300">
+                              Assertions ({totalPassed}/{totalCount} passed)
+                            </h3>
                           </div>
-                        ))}
-                      </div>
-                    </div>
+                          <div className="divide-y divide-neutral-800">
+                            {displayItems.map((item, i) => (
+                              <div key={i} className="flex items-start gap-3 p-3">
+                                {item.status === "passed" && (
+                                  <CheckCircle2 size={14} className="text-green-400 mt-0.5 shrink-0" />
+                                )}
+                                {item.status === "failed" && (
+                                  <AlertCircle size={14} className="text-red-400 mt-0.5 shrink-0" />
+                                )}
+                                {item.status === "pending" && (
+                                  <Circle size={14} className="text-neutral-500 mt-0.5 shrink-0" />
+                                )}
+                                <div className="min-w-0">
+                                  <p className={`text-sm ${item.status === "pending" ? "text-neutral-500" : "text-neutral-200"}`}>
+                                    {item.description}
+                                  </p>
+                                  {item.selector && (
+                                    <p className="text-xs text-neutral-500 font-mono mt-0.5">{item.selector}</p>
+                                  )}
+                                  {item.status === "failed" && item.actual && (
+                                    <p className="text-xs text-red-400 mt-0.5">actual: {item.actual}</p>
+                                  )}
+                                  {item.status === "pending" && (
+                                    <p className="text-xs text-neutral-600 italic mt-0.5">pending verification...</p>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()
                   )}
 
                   {/* Video player */}

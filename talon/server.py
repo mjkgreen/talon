@@ -141,6 +141,8 @@ def _reset_stalled_verifications() -> None:
                 state_file = os.path.join(run_dir, "state.json")
                 if os.path.exists(state_file):
                     try:
+                        if os.path.getsize(state_file) == 0:
+                            continue
                         with open(state_file, "r", encoding="utf-8") as f:
                             data = json.load(f)
                         if isinstance(data, dict) and data.get("verification_running"):
@@ -148,6 +150,9 @@ def _reset_stalled_verifications() -> None:
                             data["verification_running"] = False
                             with open(state_file, "w", encoding="utf-8") as f:
                                 json.dump(data, f, indent=2)
+                    except json.JSONDecodeError:
+                        # Skip empty or corrupted JSON files cleanly
+                        continue
                     except Exception as e:
                         console.print(f"[red]Error resetting stalled verification run {run_id}: {e}[/red]")
 

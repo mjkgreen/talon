@@ -126,6 +126,7 @@ class BrowserTestResult(BaseModel):
     score: float
     summary: str
     assertions: list[BrowserAssertion] = []
+    planned_assertions: list[str] = []
     screenshots: list[str] = []
     video_path: Optional[str] = None
     steps: int = 0

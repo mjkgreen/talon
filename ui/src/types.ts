@@ -24,6 +24,7 @@ export interface BrowserTestResult {
   score: number;
   summary: string;
   assertions: BrowserAssertion[];
+  planned_assertions?: string[];
   screenshots: string[];
   video_path: string | null;
   steps: number;
