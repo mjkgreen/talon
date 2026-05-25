@@ -304,6 +304,7 @@ async def run(
                 plan=plan,
                 on_log=on_log,
                 on_phase_complete=on_phase_complete,
+                run_id=state.run_id,
             )
             # Replace the in-progress entry with the final result
             if state.executor_results and state.executor_results[-1].iteration == i:
@@ -439,11 +440,6 @@ async def resume(
 
     if state.status == RunStatus.PASSED:
         raise RuntimeError(f"Run {run_id} already passed — nothing to resume.")
-    if state.status == RunStatus.RUNNING:
-        raise RuntimeError(
-            f"Run {run_id} status is 'running'. If the process crashed, "
-            "edit state.json to set status to 'failed' first."
-        )
 
     _clear_pause_sentinel(run_id)
     state.status = RunStatus.RUNNING

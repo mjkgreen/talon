@@ -12,10 +12,18 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from pathlib import Path
 from typing import Awaitable, Callable
 
 import litellm
 from rich.console import Console
+
+def _is_pause_requested(run_id: str | None) -> bool:
+    if not run_id:
+        return False
+    runs_dir = os.getenv("RUNS_DIR", "./runs")
+    sentinel = Path(runs_dir) / run_id / "pause.signal"
+    return sentinel.exists()
 
 _subagent_sem = None
 def _get_subagent_sem():
@@ -130,6 +138,7 @@ async def _run_subagent(
     phase_name: str,
     phase_context: str,
     on_log: Callable[[str], Awaitable[None]] | None = None,
+    run_id: str | None = None,
 ) -> SubtaskResult:
     console.print(f"  [cyan]-> Sub-agent[/cyan] [{subtask.id}] {subtask.description}")
     if on_log:
@@ -157,6 +166,8 @@ async def _run_subagent(
     final_output = ""
 
     for _turn in range(20):
+        if _is_pause_requested(run_id):
+            raise RuntimeError("Agent paused by user")
         response = await provider.chat(
             system=_SUBAGENT_SYSTEM,
             messages=messages,
@@ -214,13 +225,16 @@ async def _run_subagent_with_retry(
     on_log: Callable[[str], Awaitable[None]] | None,
     max_retries: int = 1,
     retry_delay: float = 5.0,
+    run_id: str | None = None,
 ) -> SubtaskResult:
     sem = _get_subagent_sem()
     for attempt in range(max_retries + 1):
+        if _is_pause_requested(run_id):
+            raise RuntimeError("Agent paused by user")
         try:
             async with sem:
                 return await _run_subagent(
-                    subtask, goal, working_dir, phase_name, phase_context, on_log
+                    subtask, goal, working_dir, phase_name, phase_context, on_log, run_id=run_id
                 )
         except litellm.Timeout:
             if attempt < max_retries:
@@ -246,7 +260,10 @@ async def _execute_phase(
     max_subagents: int,
     on_log: Callable[[str], Awaitable[None]] | None,
     on_phase_complete: Callable[[PhaseResult], Awaitable[None]] | None,
+    run_id: str | None = None,
 ) -> PhaseResult:
+    if _is_pause_requested(run_id):
+        raise RuntimeError("Agent paused by user")
     completed_outputs = [p.aggregated_output for p in completed_phases]
     subtasks = await _decompose_phase(
         phase, phase_index, goal, completed_outputs, refinement, max_subagents
@@ -267,7 +284,7 @@ async def _execute_phase(
 
     raw_results = await asyncio.gather(
         *[
-            _run_subagent_with_retry(st, goal, working_dir, phase.name, phase_context, on_log)
+            _run_subagent_with_retry(st, goal, working_dir, phase.name, phase_context, on_log, run_id=run_id)
             for st in subtasks
         ],
         return_exceptions=True,
@@ -319,6 +336,7 @@ async def run(
     plan: PlanResult | None = None,
     on_log: Callable[[str], Awaitable[None]] | None = None,
     on_phase_complete: Callable[[PhaseResult], Awaitable[None]] | None = None,
+    run_id: str | None = None,
 ) -> ExecutorResult:
     refinement_text = refinement.refined_instructions if refinement else None
 
@@ -331,6 +349,8 @@ async def run(
 
     completed: list[PhaseResult] = []
     for idx, phase in enumerate(phases_to_run):
+        if _is_pause_requested(run_id):
+            raise RuntimeError("Agent paused by user")
         console.print(f"  [blue]Phase {idx + 1}/{len(phases_to_run)}:[/blue] {phase.name}")
         result = await _execute_phase(
             phase=phase,
@@ -342,6 +362,7 @@ async def run(
             max_subagents=MAX_SUBAGENTS,
             on_log=on_log,
             on_phase_complete=on_phase_complete,
+            run_id=run_id,
         )
         completed.append(result)
 

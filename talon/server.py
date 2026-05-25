@@ -42,7 +42,7 @@ console = Console()
 WEBHOOK_LABEL = os.getenv("WEBHOOK_LABEL", "agent-task")
 LINEAR_SECRET = os.getenv("LINEAR_WEBHOOK_SECRET", "")
 GITHUB_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET", "")
-MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT_RUNS", "3"))
+MAX_CONCURRENT_DEFAULT = 3
 GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "")
 GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "")
 
@@ -61,6 +61,7 @@ _DB_TO_ENV: dict[str, str] = {
     "max_iterations": "MAX_ITERATIONS",
     "agent_max_tokens": "AGENT_MAX_TOKENS",
     "reviewer_max_tool_turns": "REVIEWER_MAX_TOOL_TURNS",
+    "max_concurrent_runs": "MAX_CONCURRENT_RUNS",
 }
 
 _API_KEY_SETTINGS = {
@@ -88,7 +89,8 @@ _semaphore: asyncio.Semaphore | None = None
 def _get_semaphore() -> asyncio.Semaphore:
     global _semaphore
     if _semaphore is None:
-        _semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+        limit = int(os.getenv("MAX_CONCURRENT_RUNS", str(MAX_CONCURRENT_DEFAULT)))
+        _semaphore = asyncio.Semaphore(limit)
     return _semaphore
 
 
@@ -448,7 +450,7 @@ async def _run_loop(
                 if state.status == "passed":
                     final_status = "Done"
                 elif state.status == "paused":
-                    final_status = "In Progress"
+                    final_status = "Paused"
                 else:
                     final_status = "Failed"
                 await db.update_issue(
@@ -1003,7 +1005,7 @@ async def _resume_loop(issue_id: int, run_id: str) -> None:
             if state.status == "passed":
                 final_status = "Done"
             elif state.status == "paused":
-                final_status = "In Progress"
+                final_status = "Paused"
             else:
                 final_status = "Failed"
             await db.update_issue(

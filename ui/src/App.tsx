@@ -94,6 +94,7 @@ export default function KanbanBoard() {
   const [maxIterations, setMaxIterations] = useState("5");
   const [maxTokens, setMaxTokens] = useState("");
   const [reviewerMaxToolTurns, setReviewerMaxToolTurns] = useState("50");
+  const [maxConcurrentRuns, setMaxConcurrentRuns] = useState("3");
   const [editLocalDirectly, setEditLocalDirectly] = useState(false);
   const [pushOnPass, setPushOnPass] = useState(true);
 
@@ -209,6 +210,7 @@ export default function KanbanBoard() {
       setMaxIterations(data.max_iterations || "5");
       setMaxTokens(data.agent_max_tokens || "");
       setReviewerMaxToolTurns(data.reviewer_max_tool_turns || "50");
+      setMaxConcurrentRuns(data.max_concurrent_runs || "3");
       setEditLocalDirectly(data.edit_local_directly === "true");
       setPushOnPass(data.push_on_pass !== "false");
 
@@ -685,6 +687,7 @@ export default function KanbanBoard() {
         max_iterations: maxIterations,
         agent_max_tokens: maxTokens,
         reviewer_max_tool_turns: reviewerMaxToolTurns,
+        max_concurrent_runs: maxConcurrentRuns,
       }),
     });
     await fetchSettings();
@@ -1154,6 +1157,8 @@ export default function KanbanBoard() {
           setMaxTokens={setMaxTokens}
           reviewerMaxToolTurns={reviewerMaxToolTurns}
           setReviewerMaxToolTurns={setReviewerMaxToolTurns}
+          maxConcurrentRuns={maxConcurrentRuns}
+          setMaxConcurrentRuns={setMaxConcurrentRuns}
           advancedModelOpen={advancedModelOpen}
           setAdvancedModelOpen={setAdvancedModelOpen}
           savingSettings={savingSettings}
