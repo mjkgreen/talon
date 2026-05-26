@@ -2,7 +2,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from talon.providers.litellm_p import LiteLLMProvider, _to_litellm_tools
+from talon.providers.litellm_p import (
+    LiteLLMProvider,
+    _make_system_message,
+    _run_accumulator,
+    _to_litellm_tools,
+)
 from talon.tools import TOOL_DEFINITIONS
 
 
@@ -32,6 +37,93 @@ class TestToolSchemaConversion:
 
     def test_empty_list(self):
         assert _to_litellm_tools([]) == []
+
+    def test_cache_last_adds_cache_control_to_last_tool(self):
+        converted = _to_litellm_tools(TOOL_DEFINITIONS, cache_last=True)
+        assert converted[-1].get("cache_control") == {"type": "ephemeral"}
+        for tool in converted[:-1]:
+            assert "cache_control" not in tool
+
+    def test_cache_last_false_adds_no_cache_control(self):
+        converted = _to_litellm_tools(TOOL_DEFINITIONS, cache_last=False)
+        for tool in converted:
+            assert "cache_control" not in tool
+
+    def test_cache_last_empty_list_safe(self):
+        assert _to_litellm_tools([], cache_last=True) == []
+
+
+class TestMakeSystemMessage:
+    def test_plain_format_for_non_anthropic(self):
+        msg = _make_system_message("Be helpful.", cache=False)
+        assert msg["role"] == "system"
+        assert msg["content"] == "Be helpful."
+
+    def test_cached_format_is_content_block_list(self):
+        msg = _make_system_message("Be helpful.", cache=True)
+        assert msg["role"] == "system"
+        assert isinstance(msg["content"], list)
+        assert len(msg["content"]) == 1
+        block = msg["content"][0]
+        assert block["type"] == "text"
+        assert block["text"] == "Be helpful."
+        assert block["cache_control"] == {"type": "ephemeral"}
+
+
+class TestRunAccumulator:
+    @pytest.mark.asyncio
+    async def test_accumulates_usage_across_calls(self):
+        acc: dict = {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0,
+                     "cache_created_tokens": 0, "cost_usd": 0.0}
+        token = _run_accumulator.set(acc)
+        try:
+            provider = LiteLLMProvider("anthropic/claude-haiku-4-5-20251001")
+
+            mock_usage = MagicMock()
+            mock_usage.prompt_tokens = 100
+            mock_usage.completion_tokens = 50
+            mock_usage.cache_read_input_tokens = 80
+            mock_usage.cache_creation_input_tokens = 20
+
+            mock_response = MagicMock()
+            mock_response.choices = [MagicMock()]
+            mock_response.choices[0].message.content = "Done"
+            mock_response.choices[0].message.tool_calls = None
+            mock_response.usage = mock_usage
+
+            with patch("litellm.acompletion", new_callable=AsyncMock, return_value=mock_response):
+                with patch("litellm.completion_cost", return_value=0.005):
+                    await provider.chat("sys", [{"role": "user", "content": "hi"}], tools=[])
+                    await provider.chat("sys", [{"role": "user", "content": "hi"}], tools=[])
+
+            assert acc["input_tokens"] == 200
+            assert acc["output_tokens"] == 100
+            assert acc["cache_read_tokens"] == 160
+            assert abs(acc["cost_usd"] - 0.01) < 1e-9
+        finally:
+            _run_accumulator.reset(token)
+
+    @pytest.mark.asyncio
+    async def test_no_accumulation_without_active_context(self):
+        # With no active accumulator, chat() should still work normally
+        provider = LiteLLMProvider("anthropic/claude-haiku-4-5-20251001")
+
+        mock_usage = MagicMock()
+        mock_usage.prompt_tokens = 50
+        mock_usage.completion_tokens = 25
+        mock_usage.cache_read_input_tokens = 0
+        mock_usage.cache_creation_input_tokens = 0
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "OK"
+        mock_response.choices[0].message.tool_calls = None
+        mock_response.usage = mock_usage
+
+        with patch("litellm.acompletion", new_callable=AsyncMock, return_value=mock_response):
+            with patch("litellm.completion_cost", return_value=0.001):
+                resp = await provider.chat("sys", [{"role": "user", "content": "hi"}], tools=[])
+        assert resp.text == "OK"
 
 
 class TestLiteLLMProviderPruning:

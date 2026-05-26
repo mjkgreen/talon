@@ -136,6 +136,11 @@ class RunState(BaseModel):
     browser_result: Optional[BrowserValidationResult] = None
     pr_url: Optional[str] = None
     board_url: Optional[str] = None
+    # Token usage and cost (accumulated across all LLM calls for this run)
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    total_cache_read_tokens: int = 0
+    total_cost_usd: float = 0.0
     started_at: datetime = Field(default_factory=datetime.utcnow)
     finished_at: Optional[datetime] = None
     error: Optional[str] = None

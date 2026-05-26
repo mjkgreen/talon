@@ -962,7 +962,25 @@ export function IssueDetailModal({
                       </span>
                     )}
                   </h3>
-                  <span className="text-xs text-neutral-500 font-mono">Run: {activeRunState.run_id}</span>
+                  <div className="flex items-center gap-3">
+                    {(() => {
+                      const inTok = activeRunState.total_input_tokens ?? 0;
+                      const outTok = activeRunState.total_output_tokens ?? 0;
+                      const cacheRead = activeRunState.total_cache_read_tokens ?? 0;
+                      const cost = activeRunState.total_cost_usd ?? 0;
+                      const totalTok = inTok + outTok;
+                      const cachePct = inTok > 0 ? Math.round(cacheRead / inTok * 100) : 0;
+                      if (totalTok === 0) return null;
+                      return (
+                        <div className="flex items-center gap-2 text-xs text-neutral-500 font-mono">
+                          <span title="Total tokens">{totalTok >= 1000 ? `${(totalTok / 1000).toFixed(1)}k` : totalTok} tok</span>
+                          {cachePct > 0 && <span title="Cache hit rate" className="text-green-600">{cachePct}% cached</span>}
+                          {cost > 0 && <span title="Estimated cost" className="text-yellow-600">${cost.toFixed(4)}</span>}
+                        </div>
+                      );
+                    })()}
+                    <span className="text-xs text-neutral-500 font-mono">Run: {activeRunState.run_id}</span>
+                  </div>
                   </div>
 
                 {tabCount > 0 && (

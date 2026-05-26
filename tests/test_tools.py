@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from talon.tools import TOOL_DEFINITIONS, dispatch_tool
+from talon.tools import TOOL_DEFINITIONS, clear_file_cache, dispatch_tool
 
 
 @pytest.fixture
@@ -102,3 +102,36 @@ class TestToolDefinitions:
         for tool in TOOL_DEFINITIONS:
             assert "input_schema" in tool
             assert "properties" in tool["input_schema"]
+
+
+class TestFileCache:
+    def setup_method(self):
+        clear_file_cache()
+
+    def teardown_method(self):
+        clear_file_cache()
+
+    def test_second_read_hits_cache(self, wd, monkeypatch):
+        dispatch_tool("write_file", {"path": "cached.txt", "content": "original"}, wd)
+        dispatch_tool("read_file", {"path": "cached.txt"}, wd)
+
+        # Corrupt the file on disk — a cache hit should return the original
+        Path(wd, "cached.txt").write_text("corrupted")
+        r = json.loads(dispatch_tool("read_file", {"path": "cached.txt"}, wd))
+        assert r["content"] == "original"
+
+    def test_write_invalidates_cache(self, wd):
+        dispatch_tool("write_file", {"path": "f.txt", "content": "v1"}, wd)
+        dispatch_tool("read_file", {"path": "f.txt"}, wd)
+        # Overwrite via dispatch — should invalidate cache
+        dispatch_tool("write_file", {"path": "f.txt", "content": "v2"}, wd)
+        r = json.loads(dispatch_tool("read_file", {"path": "f.txt"}, wd))
+        assert r["content"] == "v2"
+
+    def test_clear_file_cache_forces_fresh_read(self, wd):
+        dispatch_tool("write_file", {"path": "g.txt", "content": "a"}, wd)
+        dispatch_tool("read_file", {"path": "g.txt"}, wd)
+        Path(wd, "g.txt").write_text("b")
+        clear_file_cache()
+        r = json.loads(dispatch_tool("read_file", {"path": "g.txt"}, wd))
+        assert r["content"] == "b"

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+from contextvars import ContextVar
 
 # Optimize LiteLLM import/startup performance
 # (disables slow AWS/Boto3 stream shape checks and telemetry)
@@ -46,6 +47,11 @@ _DEFAULT_MAX_TOKENS = 8096
 # Set AGENT_LLM_RATE_LIMIT=N to cap at N LLM calls/second (0 = disabled).
 _RATE_LIMIT = int(os.getenv("AGENT_LLM_RATE_LIMIT", "0"))
 _THROTTLER: Throttler | None = Throttler(rate_limit=_RATE_LIMIT, period=1) if _RATE_LIMIT > 0 else None
+
+# Per-run token/cost accumulator. Set to a dict at the start of each run loop
+# iteration and reset to None when the iteration completes. Each chat() call
+# adds its usage to the dict so totals can be synced into RunState.
+_run_accumulator: ContextVar[dict | None] = ContextVar("_run_accumulator", default=None)
 
 
 def _to_litellm_tools(tools: list[dict], cache_last: bool = False) -> list[dict]:
@@ -172,6 +178,12 @@ class LiteLLMProvider:
 
         msg = raw.choices[0].message
         usage_data = _extract_usage(raw)
+
+        acc = _run_accumulator.get()
+        if acc is not None and usage_data:
+            for key in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_created_tokens"):
+                acc[key] = acc.get(key, 0) + (usage_data.get(key) or 0)
+            acc["cost_usd"] = acc.get("cost_usd", 0.0) + (usage_data.get("cost_usd") or 0.0)
 
         text: str | None = msg.content or None
         tool_calls: list[ToolCall] = []
