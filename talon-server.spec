@@ -32,15 +32,21 @@ _ant_d,  _ant_b,  _ant_h  = collect_all("anthropic")
 _tik_d,  _tik_b,  _tik_h  = collect_all("tiktoken")
 _tikx_d, _tikx_b, _tikx_h = collect_all("tiktoken_ext")  # separate pkg with encoding defs (cl100k_base etc.)
 _ws_d,   _ws_b,   _ws_h   = collect_all("websockets")    # websockets C extension for uvicorn WebSocket support
+# playwright: bundles the Python package + driver binary so the app can call
+# `playwright install chromium` at first launch to download the browser.
+# The ~300 MB Chromium binary itself is NOT bundled — it is downloaded once
+# into the user's data directory (ms-playwright) on first run.
+_pw_d,   _pw_b,   _pw_h   = collect_all("playwright")
+_bu_d,   _bu_b,   _bu_h   = collect_all("browser_use")
 CERTIFI_DATAS = collect_data_files("certifi")  # CA bundle for HTTPS calls
 
 # tiktoken >=0.13 registers encodings (cl100k_base etc.) via importlib.metadata
 # entry_points — the .dist-info directory must be in the bundle for lookups to work.
 TIKTOKEN_METADATA = copy_metadata("tiktoken")
 
-EXTRA_DATAS    = _lit_d  + _oai_d  + _ant_d  + _tik_d  + _tikx_d + _ws_d  + CERTIFI_DATAS + TIKTOKEN_METADATA
-EXTRA_BINARIES = _lit_b  + _oai_b  + _ant_b  + _tik_b  + _tikx_b + _ws_b
-EXTRA_HIDDEN   = _lit_h  + _oai_h  + _ant_h  + _tik_h  + _tikx_h + _ws_h
+EXTRA_DATAS    = _lit_d  + _oai_d  + _ant_d  + _tik_d  + _tikx_d + _ws_d  + _pw_d  + _bu_d  + CERTIFI_DATAS + TIKTOKEN_METADATA
+EXTRA_BINARIES = _lit_b  + _oai_b  + _ant_b  + _tik_b  + _tikx_b + _ws_b  + _pw_b  + _bu_b
+EXTRA_HIDDEN   = _lit_h  + _oai_h  + _ant_h  + _tik_h  + _tikx_h + _ws_h  + _pw_h  + _bu_h
 
 # ---------------------------------------------------------------------------
 # Hidden imports
@@ -104,6 +110,16 @@ HIDDEN_IMPORTS = [
     "asyncio",
     "email.mime.text",
     "email.mime.multipart",
+    # playwright — Python package + driver bundled; Chromium downloaded on first run
+    "playwright",
+    "playwright.async_api",
+    "playwright.sync_api",
+    "playwright._impl._driver",
+    "playwright._impl._browser_type",
+    # browser_use
+    "browser_use",
+    "browser_use.agent",
+    "browser_use.llm.litellm",
 ]
 
 a = Analysis(
@@ -117,9 +133,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    # Playwright browser binaries are huge — exclude them. Users who need
-    # browser validation should install playwright separately via pip.
-    excludes=["playwright"],
+    excludes=[],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,

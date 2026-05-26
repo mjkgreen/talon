@@ -22,6 +22,8 @@ _DB_TO_ENV: dict[str, str] = {
     "max_iterations": "MAX_ITERATIONS",
     "agent_max_tokens": "AGENT_MAX_TOKENS",
     "reviewer_max_tool_turns": "REVIEWER_MAX_TOOL_TURNS",
+    "max_concurrent_runs": "MAX_CONCURRENT_RUNS",
+    "browser_test_max_steps": "BROWSER_TEST_MAX_STEPS",
 }
 
 _API_KEY_SETTINGS = {

@@ -7,7 +7,7 @@ The agent reads the plan's success criteria and navigates + interacts with
 the app to verify each one. Produces a GIF walkthrough and video.
 
 Setup:
-  pip install talon-agent[browser]   # installs browser-use + pillow
+  pip install -e .
   playwright install chromium
 
 Enable:
@@ -178,7 +178,7 @@ async def run(
     if not _BROWSER_USE_AVAILABLE:
         console.print(
             "\n[yellow]browser-validator[/yellow] browser-use not installed. "
-            "Run: pip install 'talon-agent[browser]' && playwright install chromium"
+            "Run: pip install -e . && playwright install chromium"
         )
         return None
 

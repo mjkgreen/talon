@@ -7,6 +7,7 @@ Start:
 
 from __future__ import annotations
 
+import asyncio
 import os
 from datetime import datetime
 
@@ -18,6 +19,7 @@ from rich.console import Console
 
 from talon import db
 from talon.background import _reset_stalled_verifications
+from talon.browser_setup import ensure_chromium
 from talon.routers import auth, github, issues, projects, runs, settings, webhooks, websocket
 from talon.routers.settings import apply_db_settings_to_env
 from talon.routers.websocket import broadcast_issue_update
@@ -53,6 +55,7 @@ async def startup_event():
     stalled = await db.reset_stalled_issues()
     for issue_id in stalled:
         await broadcast_issue_update(issue_id)
+    asyncio.ensure_future(ensure_chromium())
 
 
 @app.get("/health")
