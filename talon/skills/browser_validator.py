@@ -178,7 +178,7 @@ async def run(
     if not _BROWSER_USE_AVAILABLE:
         console.print(
             "\n[yellow]browser-validator[/yellow] browser-use not installed. "
-            "Run: pip install 'talon-agent[browser]' && playwright install chromium"
+            r"Run: pip install 'talon-agent\[browser]' && playwright install chromium"
         )
         return None
 
