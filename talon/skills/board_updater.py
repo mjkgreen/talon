@@ -34,40 +34,62 @@ def _get_github_token() -> str:
     return sync_get_setting("github_token") or os.getenv("GITHUB_TOKEN", "")
 
 
-def _format_payload(state: RunState, video_url: str | None, pr_url: str | None) -> dict:
+def _gif_url(state: RunState) -> str | None:
+    """Return a public URL for the browser-validation GIF, if available."""
+    public_base = os.getenv("TALON_PUBLIC_URL", "").rstrip("/")
+    if public_base and state.browser_result and state.browser_result.gif_path:
+        return f"{public_base}/api/runs/{state.run_id}/gif"
+    return None
+
+
+def _build_body(state: RunState) -> str:
     last_review = state.review_results[-1] if state.review_results else None
-    return {
-        "run_id": state.run_id,
-        "goal": state.goal,
-        "status": state.status,
-        "iterations": state.iteration,
-        "score": last_review.score if last_review else None,
-        "verdict": last_review.verdict if last_review else None,
-        "video_url": video_url,
-        "pr_url": pr_url,
-        "timestamp": datetime.utcnow().isoformat(),
-    }
+    score_str = f"{last_review.score:.0%}" if last_review else "N/A"
 
-
-def _build_body(payload: dict) -> str:
-    lines = [
-        f"**Run ID:** `{payload['run_id']}`",
-        f"**Score:** {payload['score']}",
-        f"**Iterations:** {payload['iterations']}",
+    lines: list[str] = [
+        f"**Run ID:** `{state.run_id}`",
+        f"**Status:** {state.status}",
+        f"**Score:** {score_str}  |  **Iterations:** {state.iteration}",
     ]
-    if payload["pr_url"]:
-        lines.append(f"**PR:** {payload['pr_url']}")
-    if payload["video_url"]:
-        lines.append(f"**Video:** {payload['video_url']}")
+
+    if state.total_cost_usd:
+        total_tok = state.total_input_tokens + state.total_output_tokens
+        cache_pct = (
+            round(state.total_cache_read_tokens / state.total_input_tokens * 100)
+            if state.total_input_tokens > 0 else 0
+        )
+        tok_str = f"{total_tok / 1000:.1f}k" if total_tok >= 1000 else str(total_tok)
+        lines.append(
+            f"**Tokens:** {tok_str}  |  **Cache hit:** {cache_pct}%  |  **Cost:** ${state.total_cost_usd:.4f}"
+        )
+
+    if state.pr_url:
+        lines.append(f"**PR:** {state.pr_url}")
+
+    if state.browser_result:
+        br = state.browser_result
+        if br.verified_criteria:
+            lines.append("\n**Verified:**")
+            lines.extend(f"- ✅ {c}" for c in br.verified_criteria)
+        if br.failed_criteria:
+            lines.append("\n**Failed:**")
+            lines.extend(f"- ❌ {c}" for c in br.failed_criteria)
+        gif = _gif_url(state)
+        if gif:
+            lines.append(f"\n![Browser validation]({gif})")
+        elif br.summary:
+            lines.append(f"\n**Validation:** {br.summary}")
+
     return "\n".join(lines)
 
 
-async def _post_to_linear(payload: dict) -> str | None:
+async def _post_to_linear(state: RunState) -> str | None:
     if not LINEAR_API_KEY or not LINEAR_TEAM_ID:
         return None
     try:
-        title = f"[{payload['status'].upper()}] {payload['goal'][:60]}"
-        body_escaped = _build_body(payload).replace("\n", "\\n")
+        status_label = state.status.upper() if hasattr(state.status, "upper") else str(state.status).upper()
+        title = f"[{status_label}] {state.goal[:60]}"
+        body_escaped = _build_body(state).replace('"', '\\"').replace("\n", "\\n")
         mutation = (
             "mutation { issueCreate(input: {"
             f' teamId: "{LINEAR_TEAM_ID}"'
@@ -104,7 +126,7 @@ async def _graphql(query: str, variables: dict) -> dict:
         return resp.json()
 
 
-async def _post_to_github_projects(payload: dict) -> str | None:
+async def _post_to_github_projects(state: RunState) -> str | None:
     """Add a draft issue to GitHub Projects v2. Returns the project URL."""
     if not _get_github_token() or not GITHUB_REPO or not GITHUB_PROJECT_NUMBER:
         return None
@@ -129,7 +151,8 @@ async def _post_to_github_projects(payload: dict) -> str | None:
         project_id = project["id"]
         project_url = project["url"]
 
-        title = f"[{payload['status'].upper()}] {payload['goal'][:60]}"
+        status_label = state.status.upper() if hasattr(state.status, "upper") else str(state.status).upper()
+        title = f"[{status_label}] {state.goal[:60]}"
         await _graphql(
             """
             mutation($projectId: ID!, $title: String!, $body: String!) {
@@ -143,7 +166,7 @@ async def _post_to_github_projects(payload: dict) -> str | None:
             {
                 "projectId": project_id,
                 "title": title,
-                "body": _build_body(payload),
+                "body": _build_body(state),
             },
         )
         return project_url
@@ -153,35 +176,31 @@ async def _post_to_github_projects(payload: dict) -> str | None:
         return None
 
 
-async def run(
-    state: RunState,
-    video_path: str | None = None,
-    pr_url: str | None = None,
-) -> str | None:
+async def run(state: RunState) -> str | None:
     """
     Post run results to Linear and/or GitHub Projects.
     Returns the first board item URL obtained, or None if nothing is configured.
     """
-    video_url = f"file://{video_path}" if video_path else None
-    payload = _format_payload(state, video_url, pr_url)
+    last_review = state.review_results[-1] if state.review_results else None
+    score = last_review.score if last_review else None
 
     status_color = "green" if state.status == RunStatus.PASSED else "red"
     console.print(
         f"\n[bold blue]board-updater[/bold blue] "
         f"[{status_color}]{state.status}[/{status_color}] "
-        f"score={payload['score']}"
+        f"score={score}"
     )
 
     board_url: str | None = None
 
     if LINEAR_API_KEY:
-        url = await _post_to_linear(payload)
+        url = await _post_to_linear(state)
         if url:
             console.print(f"  [green]Linear: {url}[/green]")
             board_url = board_url or url
 
     if _get_github_token() and GITHUB_PROJECT_NUMBER:
-        url = await _post_to_github_projects(payload)
+        url = await _post_to_github_projects(state)
         if url:
             console.print(f"  [green]GitHub Projects: {url}[/green]")
             board_url = board_url or url
@@ -193,3 +212,4 @@ async def run(
         )
 
     return board_url
+

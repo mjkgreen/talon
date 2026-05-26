@@ -300,7 +300,7 @@ async def run(
 
         # --- Step 6: Board update ---
         if not skip_board:
-            board_url = await board_updater.run(state, state.video_path, state.pr_url)
+            board_url = await board_updater.run(state)
             state.board_url = board_url
             _save_state(state)
         if on_step:

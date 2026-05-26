@@ -768,6 +768,20 @@ async def get_run_video(run_id: str):
     raise HTTPException(status_code=404, detail="Video not found")
 
 
+@app.get("/api/runs/{run_id}/gif")
+async def get_run_gif(run_id: str):
+    run_dir = os.path.join(os.getenv("RUNS_DIR", "./runs"), run_id)
+    state_file = os.path.join(run_dir, "state.json")
+    if os.path.exists(state_file):
+        with open(state_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            br = data.get("browser_result") or {}
+            gif_path = br.get("gif_path")
+            if gif_path and os.path.exists(gif_path):
+                return FileResponse(gif_path, media_type="image/gif")
+    raise HTTPException(status_code=404, detail="GIF not found")
+
+
 @app.post("/api/issues")
 async def create_issue(issue: db.IssueCreate, background_tasks: BackgroundTasks):
     new_issue = await db.create_issue(issue)
