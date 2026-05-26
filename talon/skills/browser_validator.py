@@ -35,6 +35,9 @@ try:
 
     _BROWSER_USE_AVAILABLE = True
 except ImportError:
+    Agent = None  # type: ignore[assignment,misc]
+    BrowserProfile = None  # type: ignore[assignment,misc]
+    ChatLiteLLM = None  # type: ignore[assignment,misc]
     _BROWSER_USE_AVAILABLE = False
 
 try:
@@ -42,6 +45,7 @@ try:
 
     _PLAYWRIGHT_AVAILABLE = True
 except ImportError:
+    async_playwright = None  # type: ignore[assignment,misc]
     _PLAYWRIGHT_AVAILABLE = False
 
 console = Console()
