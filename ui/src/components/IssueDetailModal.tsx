@@ -9,6 +9,7 @@ import {
   Circle,
   XCircle,
   Video,
+  Download,
   FileText,
   Lightbulb,
   MessageSquare,
@@ -868,7 +869,7 @@ export function IssueDetailModal({
           >
             Execution Trace
           </button>
-          {(activeRunState?.video_path) && (
+          {(activeRunState?.video_path || activeRunState?.browser_result?.gif_path) && (
             <button
               onClick={() => setMacroTab("video")}
               className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
@@ -1052,10 +1053,19 @@ export function IssueDetailModal({
 
           {macroTab === "video" && activeRunState?.video_path && (
             <div className="bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden">
-              <div className="bg-neutral-900 border-b border-neutral-800 p-4">
+              <div className="bg-neutral-900 border-b border-neutral-800 p-4 flex items-center justify-between">
                 <h3 className="text-sm font-medium text-neutral-300 flex items-center gap-2">
                   <Play size={16} className="text-blue-400" /> Video Verification
                 </h3>
+                {activeRunState?.browser_result?.gif_path && (
+                  <a
+                    href={apiUrl(`/api/runs/${activeRunState.run_id}/gif`)}
+                    download="browser-validation.gif"
+                    className="flex items-center gap-1.5 text-xs text-neutral-400 hover:text-white bg-neutral-800 hover:bg-neutral-700 px-3 py-1.5 rounded-lg transition-colors"
+                  >
+                    <Download size={13} /> Download GIF
+                  </a>
+                )}
               </div>
               <div className="p-4 flex justify-center bg-black">
                 <video
@@ -1065,6 +1075,30 @@ export function IssueDetailModal({
                 >
                   Your browser does not support the video tag.
                 </video>
+              </div>
+            </div>
+          )}
+
+          {macroTab === "video" && !activeRunState?.video_path && activeRunState?.browser_result?.gif_path && (
+            <div className="bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden">
+              <div className="bg-neutral-900 border-b border-neutral-800 p-4 flex items-center justify-between">
+                <h3 className="text-sm font-medium text-neutral-300 flex items-center gap-2">
+                  <Play size={16} className="text-blue-400" /> Browser Validation
+                </h3>
+                <a
+                  href={apiUrl(`/api/runs/${activeRunState.run_id}/gif`)}
+                  download="browser-validation.gif"
+                  className="flex items-center gap-1.5 text-xs text-neutral-400 hover:text-white bg-neutral-800 hover:bg-neutral-700 px-3 py-1.5 rounded-lg transition-colors"
+                >
+                  <Download size={13} /> Download GIF
+                </a>
+              </div>
+              <div className="p-4 flex justify-center bg-black">
+                <img
+                  src={apiUrl(`/api/runs/${activeRunState.run_id}/gif`)}
+                  alt="Browser validation recording"
+                  className="max-w-full max-h-[400px] rounded border border-neutral-800"
+                />
               </div>
             </div>
           )}
