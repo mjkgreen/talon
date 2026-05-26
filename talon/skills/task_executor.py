@@ -272,21 +272,50 @@ async def run(
     if not phases_to_run:
         phases_to_run = [PlanPhase(name="Execute goal", description=goal[:200], dependencies=[])]
 
-    completed: list[PhaseResult] = []
-    for idx, phase in enumerate(phases_to_run):
-        console.print(f"  [blue]Phase {idx + 1}/{len(phases_to_run)}:[/blue] {phase.name}")
-        result = await _execute_phase(
-            phase=phase,
-            phase_index=idx,
-            goal=goal,
-            completed_phases=completed,
-            refinement=refinement_text,
-            working_dir=working_dir,
-            max_subagents=MAX_SUBAGENTS,
-            on_log=on_log,
-            on_phase_complete=on_phase_complete,
+    # Execute phases using a dependency-aware DAG scheduler.
+    # Phases whose `dependencies` are all satisfied run concurrently.
+    # Phases with no dependencies all start in the first round.
+    n = len(phases_to_run)
+    completed_map: dict[int, PhaseResult] = {}
+
+    while len(completed_map) < n:
+        ready = [
+            i
+            for i in range(n)
+            if i not in completed_map
+            and all(d in completed_map for d in phases_to_run[i].dependencies)
+        ]
+        if not ready:
+            raise RuntimeError("Phase dependency cycle or unsatisfiable dependency detected")
+
+        prior = [completed_map[i] for i in sorted(completed_map)]
+        if len(ready) > 1:
+            names = ", ".join(f"'{phases_to_run[i].name}'" for i in ready)
+            console.print(f"  [blue]Phases (parallel):[/blue] {names}")
+        else:
+            idx = ready[0]
+            console.print(f"  [blue]Phase {idx + 1}/{n}:[/blue] {phases_to_run[idx].name}")
+
+        batch = await asyncio.gather(
+            *[
+                _execute_phase(
+                    phase=phases_to_run[i],
+                    phase_index=i,
+                    goal=goal,
+                    completed_phases=prior,
+                    refinement=refinement_text,
+                    working_dir=working_dir,
+                    max_subagents=MAX_SUBAGENTS,
+                    on_log=on_log,
+                    on_phase_complete=on_phase_complete,
+                )
+                for i in ready
+            ]
         )
-        completed.append(result)
+        for i, result in zip(ready, batch):
+            completed_map[i] = result
+
+    completed = [completed_map[i] for i in range(n)]
 
     aggregated = "\n\n".join(
         f"## Phase {ph.phase_index + 1}: {ph.phase_name}\n{ph.aggregated_output}"

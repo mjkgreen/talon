@@ -9,6 +9,16 @@ import json
 import subprocess
 from pathlib import Path
 
+# Module-level file read cache. Keyed by resolved absolute path.
+# Invalidated when write_file touches the same path.
+# CPython dict ops are GIL-protected, so this is thread-safe for asyncio.to_thread use.
+_file_cache: dict[str, str] = {}
+
+
+def clear_file_cache() -> None:
+    """Clear the in-process file read cache (called between runs or in tests)."""
+    _file_cache.clear()
+
 # ---------------------------------------------------------------------------
 # Tool schemas (passed to Anthropic messages.create as `tools=`)
 # ---------------------------------------------------------------------------
@@ -96,7 +106,10 @@ TOOL_DEFINITIONS = [
 
 
 def read_file(path: str, working_dir: str) -> dict:
-    full = Path(working_dir) / path
+    full = (Path(working_dir) / path).resolve()
+    cache_key = str(full)
+    if cache_key in _file_cache:
+        return {"content": _file_cache[cache_key], "path": cache_key}
     try:
         content = full.read_text()
         max_chars = 100000
@@ -106,7 +119,8 @@ def read_file(path: str, working_dir: str) -> dict:
                 + f"\n\n... [TRUNCATED {len(content) - max_chars} CHARACTERS] ...\n\n"
                 + content[-max_chars // 2 :]
             )
-        return {"content": content, "path": str(full)}
+        _file_cache[cache_key] = content
+        return {"content": content, "path": cache_key}
     except FileNotFoundError:
         return {"error": f"File not found: {path}"}
     except Exception as e:
@@ -114,7 +128,8 @@ def read_file(path: str, working_dir: str) -> dict:
 
 
 def write_file(path: str, content: str, working_dir: str) -> dict:
-    full = Path(working_dir) / path
+    full = (Path(working_dir) / path).resolve()
+    _file_cache.pop(str(full), None)  # invalidate stale cache entry
     try:
         full.parent.mkdir(parents=True, exist_ok=True)
         full.write_text(content)

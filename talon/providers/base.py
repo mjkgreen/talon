@@ -33,6 +33,7 @@ class ProviderResponse:
     tool_calls: list[ToolCall]  # populated when stop_reason == "tool_use"
     stop_reason: str  # "end_turn" | "tool_use" | "error"
     raw: Any = field(repr=False)  # original SDK response for debugging
+    usage: dict | None = None  # token counts and cost, if available
 
 
 @runtime_checkable
