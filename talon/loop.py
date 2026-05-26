@@ -20,6 +20,7 @@ from rich.rule import Rule
 
 from talon import workspace
 from talon.config import model_config_summary
+from talon.providers.litellm_p import _run_accumulator
 from talon.skills import (
     board_updater,
     browser_validator,
@@ -47,6 +48,12 @@ RUNS_DIR = os.getenv("RUNS_DIR", "./runs")
 
 
 def _save_state(state: RunState) -> None:
+    acc = _run_accumulator.get()
+    if acc is not None:
+        state.total_input_tokens = acc.get("input_tokens", 0)
+        state.total_output_tokens = acc.get("output_tokens", 0)
+        state.total_cache_read_tokens = acc.get("cache_read_tokens", 0)
+        state.total_cost_usd = round(acc.get("cost_usd", 0.0), 6)
     run_dir = Path(RUNS_DIR) / state.run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "state.json").write_text(state.model_dump_json(indent=2), encoding="utf-8")
@@ -159,10 +166,17 @@ def _detect_ui_changes(exec_results: list[ExecutorResult], workspace_dir: str) -
 def _print_footer(state: RunState) -> None:
     color = "green" if state.status == RunStatus.PASSED else "red"
     console.print(Rule(style=color))
+    total_tok = state.total_input_tokens + state.total_output_tokens
+    cache_pct = (
+        round(state.total_cache_read_tokens / state.total_input_tokens * 100)
+        if state.total_input_tokens > 0
+        else 0
+    )
     console.print(
         f"[{color}]Status: {state.status}[/{color}]  "
         f"Iterations: {state.iteration}/{MAX_ITERATIONS}  "
-        f"Duration: {(state.finished_at - state.started_at).total_seconds():.1f}s"
+        f"Duration: {(state.finished_at - state.started_at).total_seconds():.1f}s  "
+        f"[dim]Tokens: {total_tok:,}  Cache: {cache_pct}%  Cost: ${state.total_cost_usd:.4f}[/dim]"
     )
     if state.final_output:
         console.print(Panel(state.final_output[:500], title="Final output", border_style=color))
@@ -212,6 +226,17 @@ async def run(
         direct_workspace=direct_workspace,
     )
 
+    # Start a fresh token/cost accumulator for this run. All LLM calls made
+    # within this coroutine (and tasks that inherit this context) will add to it.
+    _acc: dict = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_created_tokens": 0,
+        "cost_usd": 0.0,
+    }
+    _acc_token = _run_accumulator.set(_acc)
+
     # Save and notify the frontend immediately so the UI transitions out of
     # "Agent is starting up" before workspace setup even begins.
     _save_state(state)
@@ -219,243 +244,248 @@ async def run(
         await on_step(state)
 
     try:
-        # --- Isolate workspace for this run ---
-        # Run in a thread so git/copytree never blocks the asyncio event loop.
-        # Blocking the loop freezes WebSocket heartbeats and drops connections.
-        run_workspace = await asyncio.to_thread(
-            workspace.setup,
-            state.run_id,
-            working_dir,
-            repo_url=repo_url,
-            repo_branch=repo_branch,
-            direct=direct_workspace,
-            goal=goal,
-        )
-        state.workspace = run_workspace
+        try:
+            # --- Isolate workspace for this run ---
+            # Run in a thread so git/copytree never blocks the asyncio event loop.
+            # Blocking the loop freezes WebSocket heartbeats and drops connections.
+            run_workspace = await asyncio.to_thread(
+                workspace.setup,
+                state.run_id,
+                working_dir,
+                repo_url=repo_url,
+                repo_branch=repo_branch,
+                direct=direct_workspace,
+                goal=goal,
+            )
+            state.workspace = run_workspace
 
-        _print_header(goal, state.run_id)
-        _save_state(state)
-    except Exception as e:
-        state.status = RunStatus.FAILED
-        state.error = str(e)
-        state.finished_at = datetime.utcnow()
-        _save_state(state)
-        if on_log:
-            await on_log(f"[FAILED] Run crashed: {e}")
-        raise
-
-    refinement = None
-
-    try:
-        # --- Step 0: Plan ---
-        if plan is None:
-            plan = await planner.run(goal=goal, working_dir=run_workspace)
-        else:
-            console.print("\n[bold blue]planner[/bold blue] (using pre-computed backlog plan)")
-        state.plan_result = plan
-        _save_state(state)
-        if on_step:
-            await on_step(state)
-
-        for i in range(1, MAX_ITERATIONS + 1):
-            if _is_pause_requested(state.run_id):
-                _clear_pause_sentinel(state.run_id)
-                state.status = RunStatus.PAUSED
-                _save_state(state)
-                if on_step:
-                    await on_step(state)
-                console.print(f"\n[yellow]Run {state.run_id} paused.[/yellow]")
-                return state
-
-            state.iteration = i
+            _print_header(goal, state.run_id)
             _save_state(state)
-            if on_step:
-                await on_step(state)
-            console.print(Rule(f"Iteration {i}/{MAX_ITERATIONS}", style="blue"))
+        except Exception as e:
+            state.status = RunStatus.FAILED
+            state.error = str(e)
+            state.finished_at = datetime.utcnow()
+            _save_state(state)
             if on_log:
-                await on_log(f"=== Iteration {i}/{MAX_ITERATIONS} ===")
+                await on_log(f"[FAILED] Run crashed: {e}")
+            raise
 
-            # --- Step 1: Execute ---
-            # Save partial state after each phase completes so the UI shows
-            # incremental progress without waiting for the full iteration.
-            in_progress_exec: ExecutorResult | None = None
+        refinement = None
 
-            async def on_phase_complete(phase_result: PhaseResult) -> None:
-                nonlocal in_progress_exec
-                prior_phases = in_progress_exec.phases if in_progress_exec else []
-                all_phases = prior_phases + [phase_result]
-                partial_aggregated = "\n\n".join(
-                    f"## Phase {ph.phase_index + 1}: {ph.phase_name}\n{ph.aggregated_output}"
-                    for ph in all_phases
-                )
-                in_progress_exec = ExecutorResult(
-                    goal=goal,
-                    phases=all_phases,
-                    aggregated_output=partial_aggregated,
-                    iteration=i,
-                )
-                if state.executor_results and state.executor_results[-1].iteration == i:
-                    state.executor_results[-1] = in_progress_exec
-                else:
-                    state.executor_results.append(in_progress_exec)
-                _save_state(state)
-                if on_step:
-                    await on_step(state)
-
-            exec_result = await task_executor.run(
-                goal=goal,
-                working_dir=run_workspace,
-                iteration=i,
-                refinement=refinement,
-                plan=plan,
-                on_log=on_log,
-                on_phase_complete=on_phase_complete,
-                run_id=state.run_id,
-            )
-            # Replace the in-progress entry with the final result
-            if state.executor_results and state.executor_results[-1].iteration == i:
-                state.executor_results[-1] = exec_result
+        try:
+            # --- Step 0: Plan ---
+            if plan is None:
+                plan = await planner.run(goal=goal, working_dir=run_workspace)
             else:
-                state.executor_results.append(exec_result)
+                console.print("\n[bold blue]planner[/bold blue] (using pre-computed backlog plan)")
+            state.plan_result = plan
             _save_state(state)
             if on_step:
                 await on_step(state)
 
-            # --- Step 2: Review ---
-            review = await self_reviewer.run(
-                goal=goal,
-                executor_result=exec_result,
-                working_dir=run_workspace,
-                plan=plan,
-            )
-            state.review_results.append(review)
-            state.completed_iterations.append(i)
-            _save_state(state)
-            if on_step:
-                await on_step(state)
+            for i in range(1, MAX_ITERATIONS + 1):
+                if _is_pause_requested(state.run_id):
+                    _clear_pause_sentinel(state.run_id)
+                    state.status = RunStatus.PAUSED
+                    _save_state(state)
+                    if on_step:
+                        await on_step(state)
+                    console.print(f"\n[yellow]Run {state.run_id} paused.[/yellow]")
+                    return state
 
-            if review.verdict == ReviewVerdict.PASS:
-                state.status = RunStatus.PASSED
-                state.final_output = exec_result.aggregated_output
-                break
+                state.iteration = i
+                _save_state(state)
+                if on_step:
+                    await on_step(state)
+                console.print(Rule(f"Iteration {i}/{MAX_ITERATIONS}", style="blue"))
+                if on_log:
+                    await on_log(f"=== Iteration {i}/{MAX_ITERATIONS} ===")
 
-            if i == MAX_ITERATIONS:
-                state.status = RunStatus.MAX_ITERATIONS
-                state.final_output = exec_result.aggregated_output
-                break
+                # --- Step 1: Execute ---
+                # Save partial state after each phase completes so the UI shows
+                # incremental progress without waiting for the full iteration.
+                in_progress_exec: ExecutorResult | None = None
 
-            # --- Step 3: Refine (only if more iterations remain) ---
-            refinement = await refiner.run(
-                goal=goal,
-                executor_result=exec_result,
-                feedback=review,
-            )
-            state.refinement_results.append(refinement)
-            _save_state(state)
-            if on_step:
-                await on_step(state)
+                async def on_phase_complete(phase_result: PhaseResult) -> None:
+                    nonlocal in_progress_exec
+                    prior_phases = in_progress_exec.phases if in_progress_exec else []
+                    all_phases = prior_phases + [phase_result]
+                    partial_aggregated = "\n\n".join(
+                        f"## Phase {ph.phase_index + 1}: {ph.phase_name}\n{ph.aggregated_output}"
+                        for ph in all_phases
+                    )
+                    in_progress_exec = ExecutorResult(
+                        goal=goal,
+                        phases=all_phases,
+                        aggregated_output=partial_aggregated,
+                        iteration=i,
+                    )
+                    if state.executor_results and state.executor_results[-1].iteration == i:
+                        state.executor_results[-1] = in_progress_exec
+                    else:
+                        state.executor_results.append(in_progress_exec)
+                    _save_state(state)
+                    if on_step:
+                        await on_step(state)
 
-    except Exception as e:
-        state.status = RunStatus.FAILED
-        state.error = str(e)
-        state.finished_at = datetime.utcnow()
-        _save_state(state)
-        if on_log:
-            await on_log(f"[FAILED] Run crashed: {e}")
-        raise
-
-    state.finished_at = datetime.utcnow()
-
-    # Keep workspace on pass (code is ready for review / PR creation).
-    # Remove on fail to avoid accumulating broken directories.
-    # Never tear down a direct workspace — those are real files on disk.
-    if state.status != RunStatus.PASSED and not direct_workspace:
-        await asyncio.to_thread(workspace.teardown, state.run_id, working_dir, run_workspace)
-        state.workspace = None
-
-    # --- Detect UI changes ---
-    if run_workspace:
-        state.ui_changes_detected = _detect_ui_changes(state.executor_results, run_workspace)
-        _save_state(state)
-        if on_step:
-            await on_step(state)
-
-    # --- Step 4: Browser validate (optional) ---
-    effective_url = app_url or (os.getenv("DEFAULT_APP_URL") if state.ui_changes_detected else None)
-    _server_proc: asyncio.subprocess.Process | None = None
-    _server_port: int | None = None
-    try:
-        if not effective_url and state.ui_changes_detected and run_workspace:
-            try:
-                from talon.skills import workspace_starter
-
-                (
-                    _server_proc,
-                    effective_url,
-                    _server_port,
-                ) = await workspace_starter.start_workspace_server(
-                    run_workspace,
-                    extra_env=project_env_vars,
-                    start_command=start_command,
-                    env_content=env_content,
+                exec_result = await task_executor.run(
+                    goal=goal,
+                    working_dir=run_workspace,
+                    iteration=i,
+                    refinement=refinement,
+                    plan=plan,
+                    on_log=on_log,
+                    on_phase_complete=on_phase_complete,
+                    run_id=state.run_id,
                 )
-            except Exception as _ws_err:
-                console.print(f"[yellow]workspace-starter: {_ws_err}[/yellow]")
-
-        if effective_url and state.status == RunStatus.PASSED:
-
-            async def _on_browser_progress(partial):
-                state.browser_result = partial
+                # Replace the in-progress entry with the final result
+                if state.executor_results and state.executor_results[-1].iteration == i:
+                    state.executor_results[-1] = exec_result
+                else:
+                    state.executor_results.append(exec_result)
                 _save_state(state)
                 if on_step:
                     await on_step(state)
 
-            browser_result = await browser_validator.run(
-                state,
-                effective_url,
-                RUNS_DIR,
-                on_progress=_on_browser_progress,
-                cookie_file=cookie_file,
-                test_user=test_user,
-                test_password=test_password,
-            )
-            if browser_result is not None:
-                state.browser_result = browser_result
-                state.video_path = browser_result.video_path
+                # --- Step 2: Review ---
+                review = await self_reviewer.run(
+                    goal=goal,
+                    executor_result=exec_result,
+                    working_dir=run_workspace,
+                    plan=plan,
+                )
+                state.review_results.append(review)
+                state.completed_iterations.append(i)
+                _save_state(state)
+                if on_step:
+                    await on_step(state)
+
+                if review.verdict == ReviewVerdict.PASS:
+                    state.status = RunStatus.PASSED
+                    state.final_output = exec_result.aggregated_output
+                    break
+
+                if i == MAX_ITERATIONS:
+                    state.status = RunStatus.MAX_ITERATIONS
+                    state.final_output = exec_result.aggregated_output
+                    break
+
+                # --- Step 3: Refine (only if more iterations remain) ---
+                refinement = await refiner.run(
+                    goal=goal,
+                    executor_result=exec_result,
+                    feedback=review,
+                )
+                state.refinement_results.append(refinement)
+                _save_state(state)
+                if on_step:
+                    await on_step(state)
+
+        except Exception as e:
+            state.status = RunStatus.FAILED
+            state.error = str(e)
+            state.finished_at = datetime.utcnow()
             _save_state(state)
-    finally:
-        if _server_proc is not None and _server_port is not None:
-            from talon.skills import workspace_starter as _ws_mod
+            if on_log:
+                await on_log(f"[FAILED] Run crashed: {e}")
+            raise
 
-            await _ws_mod.stop_workspace_server(_server_proc, _server_port)
-    if on_step:
-        await on_step(state)
+        state.finished_at = datetime.utcnow()
 
-    # --- Step 4.5: Clean up ---
-    if state.status == RunStatus.PASSED:
-        await workspace_cleaner.run(state)
-        _save_state(state)
+        # Keep workspace on pass (code is ready for review / PR creation).
+        # Remove on fail to avoid accumulating broken directories.
+        # Never tear down a direct workspace — those are real files on disk.
+        if state.status != RunStatus.PASSED and not direct_workspace:
+            await asyncio.to_thread(workspace.teardown, state.run_id, working_dir, run_workspace)
+            state.workspace = None
+
+        # --- Detect UI changes ---
+        if run_workspace:
+            state.ui_changes_detected = _detect_ui_changes(state.executor_results, run_workspace)
+            _save_state(state)
+            if on_step:
+                await on_step(state)
+
+        # --- Step 4: Browser validate (optional) ---
+        effective_url = app_url or (
+            os.getenv("DEFAULT_APP_URL") if state.ui_changes_detected else None
+        )
+        _server_proc: asyncio.subprocess.Process | None = None
+        _server_port: int | None = None
+        try:
+            if not effective_url and state.ui_changes_detected and run_workspace:
+                try:
+                    from talon.skills import workspace_starter
+
+                    (
+                        _server_proc,
+                        effective_url,
+                        _server_port,
+                    ) = await workspace_starter.start_workspace_server(
+                        run_workspace,
+                        extra_env=project_env_vars,
+                        start_command=start_command,
+                        env_content=env_content,
+                    )
+                except Exception as _ws_err:
+                    console.print(f"[yellow]workspace-starter: {_ws_err}[/yellow]")
+
+            if effective_url and state.status == RunStatus.PASSED:
+
+                async def _on_browser_progress(partial):
+                    state.browser_result = partial
+                    _save_state(state)
+                    if on_step:
+                        await on_step(state)
+
+                browser_result = await browser_validator.run(
+                    state,
+                    effective_url,
+                    RUNS_DIR,
+                    on_progress=_on_browser_progress,
+                    cookie_file=cookie_file,
+                    test_user=test_user,
+                    test_password=test_password,
+                )
+                if browser_result is not None:
+                    state.browser_result = browser_result
+                    state.video_path = browser_result.video_path
+                _save_state(state)
+        finally:
+            if _server_proc is not None and _server_port is not None:
+                from talon.skills import workspace_starter as _ws_mod
+
+                await _ws_mod.stop_workspace_server(_server_proc, _server_port)
         if on_step:
             await on_step(state)
 
-    # --- Step 5: Create PR ---
-    if state.status == RunStatus.PASSED and create_pr:
-        pr_url = await pr_creator.run(state, working_dir)
-        state.pr_url = pr_url
-        _save_state(state)
-    if on_step:
-        await on_step(state)
+        # --- Step 4.5: Clean up ---
+        if state.status == RunStatus.PASSED:
+            await workspace_cleaner.run(state)
+            _save_state(state)
+            if on_step:
+                await on_step(state)
 
-    # --- Step 6: Board update ---
-    if not skip_board:
-        board_url = await board_updater.run(state, state.video_path, state.pr_url)
-        state.board_url = board_url
-        _save_state(state)
-    if on_step:
-        await on_step(state)
+        # --- Step 5: Create PR ---
+        if state.status == RunStatus.PASSED and create_pr:
+            pr_url = await pr_creator.run(state, working_dir)
+            state.pr_url = pr_url
+            _save_state(state)
+        if on_step:
+            await on_step(state)
 
-    _print_footer(state)
-    return state
+        # --- Step 6: Board update ---
+        if not skip_board:
+            board_url = await board_updater.run(state)
+            state.board_url = board_url
+            _save_state(state)
+        if on_step:
+            await on_step(state)
+
+        _print_footer(state)
+        return state
+    finally:
+        _run_accumulator.reset(_acc_token)
 
 
 async def resume(
@@ -574,6 +604,7 @@ async def resume(
                 plan=plan,
                 on_log=on_log,
                 on_phase_complete=on_phase_complete,
+                run_id=run_id,
             )
             if state.executor_results and state.executor_results[-1].iteration == i:
                 state.executor_results[-1] = exec_result

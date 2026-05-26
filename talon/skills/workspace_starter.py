@@ -199,7 +199,9 @@ async def _release_port(port: int) -> None:
         _claimed_ports.discard(port)
 
 
-async def _read_and_drain_logs(proc: asyncio.subprocess.Process, url_future: asyncio.Future[str]) -> None:
+async def _read_and_drain_logs(
+    proc: asyncio.subprocess.Process, url_future: asyncio.Future[str]
+) -> None:
     pattern = re.compile(r"https?://(?:localhost|127\.0\.0\.1):\d+", re.IGNORECASE)
     try:
         while True:
@@ -218,7 +220,7 @@ async def _read_and_drain_logs(proc: asyncio.subprocess.Process, url_future: asy
 
 
 async def _resolve_url(proc: asyncio.subprocess.Process, port: int, startup_timeout: float) -> str:
-    """Race log scanning against port polling; return the resolved URL and continuously drain logs."""
+    """Race log scanning against port polling; return resolved URL and continuously drain logs."""
     loop = asyncio.get_event_loop()
     url_future: asyncio.Future[str] = loop.create_future()
 
@@ -233,7 +235,9 @@ async def _resolve_url(proc: asyncio.subprocess.Process, port: int, startup_time
             if _is_port_in_use(port):
                 return f"http://localhost:{port}"
             await asyncio.sleep(0.5)
-        raise StartupTimeoutError(f"Dev server did not start within {startup_timeout}s on port {port}")
+        raise StartupTimeoutError(
+            f"Dev server did not start within {startup_timeout}s on port {port}"
+        )
 
     poll_task = asyncio.create_task(poll_port_task())
 
@@ -323,7 +327,7 @@ async def start_workspace_server(
         "EXPO_WEBPACK_PORT": str(port),
         "BROWSER": "none",
         "EXPO_NO_BROWSER": "1",
-        **(extra_env or {})
+        **(extra_env or {}),
     }
 
     # Install npm dependencies if node_modules is missing (worktrees/copies exclude them).
@@ -397,8 +401,10 @@ async def stop_workspace_server(proc: asyncio.subprocess.Process, port: int) -> 
     """Terminate the dev server subprocess and release its port."""
     if proc.returncode is None:
         import sys
+
         if sys.platform == "win32":
             import subprocess
+
             try:
                 subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
             except Exception:

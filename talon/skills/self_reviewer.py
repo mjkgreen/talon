@@ -24,7 +24,7 @@ from talon.types import ExecutorResult, PlanResult, ReviewCriterion, ReviewFeedb
 console = Console()
 
 MAX_TOKENS = int(os.getenv("AGENT_MAX_TOKENS", "8096"))
-MAX_TOOL_TURNS = int(os.getenv("REVIEWER_MAX_TOOL_TURNS", "500"))
+MAX_TOOL_TURNS = int(os.getenv("REVIEWER_MAX_TOOL_TURNS", "50"))
 
 
 class _VerdictPayload(BaseModel):

@@ -11,6 +11,11 @@ Switch models by setting AGENT_MODEL in .env:
 LiteLLM reads each provider's API key from the standard env var automatically.
 Tool schemas are converted from Anthropic format (input_schema) to
 OpenAI/LiteLLM format (parameters) since that is the common wire format.
+
+Optimizations:
+  - Anthropic prompt caching on system prompt and tool schemas (cache_control)
+  - asyncio-throttle rate limiting (AGENT_LLM_RATE_LIMIT calls/sec, 0 = off)
+  - Per-call token/cost logging
 """
 
 from __future__ import annotations
@@ -19,10 +24,7 @@ import asyncio
 import json
 import os
 import random
-
-from asyncio_throttle import Throttler
-
-_GLOBAL_THROTTLER = Throttler(rate_limit=int(os.getenv("TALON_RPM_LIMIT", "300")), period=60.0)
+from contextvars import ContextVar
 
 # Optimize LiteLLM import/startup performance
 # (disables slow AWS/Boto3 stream shape checks and telemetry)
@@ -32,6 +34,7 @@ os.environ["DISABLE_LITELLM_TELEMETRY"] = "True"
 os.environ["LITELLM_MODE"] = "production"
 
 import litellm
+from asyncio_throttle import Throttler
 
 from talon.providers.base import ProviderResponse, ToolCall, ToolResult
 
@@ -42,10 +45,26 @@ litellm.turn_off_message_logging = True
 _DEFAULT_MODEL = "anthropic/claude-sonnet-4-6"
 _DEFAULT_MAX_TOKENS = 8096
 
+# Global rate throttler — 300 RPM (requests per minute) by default.
+# Override with TALON_RPM_LIMIT env var. Set to 0 to disable.
+_RPM_LIMIT = int(os.getenv("TALON_RPM_LIMIT", "300"))
+_GLOBAL_THROTTLER: Throttler | None = (
+    Throttler(rate_limit=_RPM_LIMIT, period=60.0) if _RPM_LIMIT > 0 else None
+)
 
-def _to_litellm_tools(tools: list[dict]) -> list[dict]:
-    """Convert Anthropic-format tool schemas to OpenAI/LiteLLM function format."""
-    return [
+# Per-run token/cost accumulator. Set to a dict at the start of each run loop
+# iteration and reset to None when the iteration completes. Each chat() call
+# adds its usage to the dict so totals can be synced into RunState.
+_run_accumulator: ContextVar[dict | None] = ContextVar("_run_accumulator", default=None)
+
+
+def _to_litellm_tools(tools: list[dict], cache_last: bool = False) -> list[dict]:
+    """Convert Anthropic-format tool schemas to OpenAI/LiteLLM function format.
+
+    When cache_last=True, marks the final tool with Anthropic cache_control so
+    the entire tool block is eligible for prompt caching.
+    """
+    converted = [
         {
             "type": "function",
             "function": {
@@ -56,6 +75,41 @@ def _to_litellm_tools(tools: list[dict]) -> list[dict]:
         }
         for t in tools
     ]
+    if cache_last and converted:
+        converted[-1]["cache_control"] = {"type": "ephemeral"}
+    return converted
+
+
+def _make_system_message(system: str, cache: bool) -> dict:
+    """Build the system entry for the messages list.
+
+    When cache=True (Anthropic models), wraps the text in a content-block list
+    with cache_control so the system prompt is eligible for prompt caching.
+    """
+    if cache:
+        return {
+            "role": "system",
+            "content": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+        }
+    return {"role": "system", "content": system}
+
+
+def _extract_usage(raw) -> dict | None:
+    """Pull token counts and estimated cost from a LiteLLM ModelResponse."""
+    usage = getattr(raw, "usage", None)
+    if not usage:
+        return None
+    result: dict = {
+        "input_tokens": getattr(usage, "prompt_tokens", 0),
+        "output_tokens": getattr(usage, "completion_tokens", 0),
+        "cache_read_tokens": getattr(usage, "cache_read_input_tokens", 0),
+        "cache_created_tokens": getattr(usage, "cache_creation_input_tokens", 0),
+    }
+    try:
+        result["cost_usd"] = litellm.completion_cost(raw)
+    except Exception:
+        result["cost_usd"] = None
+    return result
 
 
 class LiteLLMProvider:
@@ -77,10 +131,15 @@ class LiteLLMProvider:
             max_tokens = int(os.getenv("AGENT_MAX_TOKENS", str(_DEFAULT_MAX_TOKENS)))
         timeout = int(os.getenv("AGENT_LLM_TIMEOUT_SECS", "120"))
 
-        full_messages = [{"role": "system", "content": system}, *messages]
+        is_anthropic = model.startswith("anthropic/")
+        system_msg = _make_system_message(system, cache=is_anthropic)
+        full_messages = [system_msg, *messages]
+
+        tools_converted = _to_litellm_tools(tools, cache_last=is_anthropic) if tools else []
+
         kwargs: dict = dict(model=model, messages=full_messages, max_tokens=max_tokens)
-        if tools:
-            kwargs["tools"] = _to_litellm_tools(tools)
+        if tools_converted:
+            kwargs["tools"] = tools_converted
             kwargs["tool_choice"] = "auto"
         if response_format:
             kwargs["response_format"] = response_format
@@ -93,7 +152,10 @@ class LiteLLMProvider:
 
         for attempt in range(max_rate_limit_retries + 1):
             try:
-                async with _GLOBAL_THROTTLER:
+                if _GLOBAL_THROTTLER:
+                    async with _GLOBAL_THROTTLER:
+                        raw = await litellm.acompletion(**kwargs, timeout=timeout)
+                else:
                     raw = await litellm.acompletion(**kwargs, timeout=timeout)
                 break
             except Exception as e:
@@ -133,7 +195,8 @@ class LiteLLMProvider:
                         if retry_val and retry_val.isdigit():
                             delay = max(delay, int(retry_val))
                     print(
-                        f"[LiteLLM] Rate limited. Retrying in {delay:.1f}s... (Attempt {attempt + 1}/{max_rate_limit_retries})"
+                        f"[LiteLLM] Rate limited. Retrying in {delay:.1f}s..."
+                        f" (Attempt {attempt + 1}/{max_rate_limit_retries})"
                     )
                     await asyncio.sleep(delay)
                     continue
@@ -153,7 +216,7 @@ class LiteLLMProvider:
                                 "tool_call_id": messages[i].get("tool_call_id"),
                                 "content": "[Tool result truncated to save context window space]",
                             }
-                    full_messages = [{"role": "system", "content": system}, *messages]
+                    full_messages = [system_msg, *messages]
                     kwargs["messages"] = full_messages
                     context_pruned = True
                     continue
@@ -164,6 +227,18 @@ class LiteLLMProvider:
                 raise last_error
 
         msg = raw.choices[0].message
+        usage_data = _extract_usage(raw)
+
+        acc = _run_accumulator.get()
+        if acc is not None and usage_data:
+            for key in (
+                "input_tokens",
+                "output_tokens",
+                "cache_read_tokens",
+                "cache_created_tokens",
+            ):
+                acc[key] = acc.get(key, 0) + (usage_data.get(key) or 0)
+            acc["cost_usd"] = acc.get("cost_usd", 0.0) + (usage_data.get("cost_usd") or 0.0)
 
         text: str | None = msg.content or None
         tool_calls: list[ToolCall] = []
@@ -178,7 +253,13 @@ class LiteLLMProvider:
                 )
 
         stop_reason = "tool_use" if tool_calls else "end_turn"
-        return ProviderResponse(text=text, tool_calls=tool_calls, stop_reason=stop_reason, raw=raw)
+        return ProviderResponse(
+            text=text,
+            tool_calls=tool_calls,
+            stop_reason=stop_reason,
+            raw=raw,
+            usage=usage_data,
+        )
 
     def append_assistant(self, messages: list[dict], response: ProviderResponse) -> None:
         msg = response.raw.choices[0].message

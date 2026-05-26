@@ -32,6 +32,7 @@ console = Console()
 
 GITHUB_REPO = os.getenv("GITHUB_REPO", "")
 GITHUB_BASE_BRANCH = os.getenv("GITHUB_BASE_BRANCH", "main")
+TALON_PUBLIC_URL = os.getenv("TALON_PUBLIC_URL", "").rstrip("/")
 
 
 def _get_github_token() -> str:
@@ -149,8 +150,34 @@ def _create_github_pr(branch: str, state: RunState, repo: str) -> str | None:
         f"- **Iterations:** {state.iteration}",
         f"- **Review score:** {score_str}",
     ]
-    if state.video_path:
-        body_lines.append(f"- **Video:** `{state.video_path}`")
+
+    if state.total_cost_usd:
+        total_tok = state.total_input_tokens + state.total_output_tokens
+        tok_str = f"{total_tok / 1000:.1f}k" if total_tok >= 1000 else str(total_tok)
+        cache_pct = (
+            round(state.total_cache_read_tokens / state.total_input_tokens * 100)
+            if state.total_input_tokens > 0
+            else 0
+        )
+        body_lines.append(
+            f"- **Cost:** ${state.total_cost_usd:.4f}  ({tok_str} tokens, {cache_pct}% cached)"
+        )
+
+    if state.browser_result:
+        br = state.browser_result
+        body_lines += ["", "## Browser validation"]
+        if br.verified_criteria:
+            body_lines.append("")
+            body_lines.extend(f"- ✅ {c}" for c in br.verified_criteria)
+        if br.failed_criteria:
+            body_lines.append("")
+            body_lines.extend(f"- ❌ {c}" for c in br.failed_criteria)
+        if br.summary:
+            body_lines += ["", br.summary]
+        # Embed GIF inline if we have a public URL to serve it from
+        if TALON_PUBLIC_URL and br.gif_path:
+            gif_url = f"{TALON_PUBLIC_URL}/api/runs/{state.run_id}/gif"
+            body_lines += ["", f"![Browser validation]({gif_url})"]
 
     payload = json.dumps(
         {
