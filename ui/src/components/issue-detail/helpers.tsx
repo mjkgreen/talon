@@ -2,6 +2,7 @@ import React from "react";
 import { AlertCircle, CheckCircle2, Play } from "lucide-react";
 
 export function logLineClass(line: string): string {
+  if (line.includes("[FAILED]")) return "text-red-500";
   if (line.startsWith("===")) return "text-blue-500";
   if (line.startsWith("->")) return "text-cyan-500";
   if (line.startsWith("Files modified:")) return "text-green-500";

@@ -10,14 +10,18 @@ import {
   Trash2,
 } from "lucide-react";
 import { COLUMNS } from "../constants";
-import type { Issue } from "../types";
+import type { Issue, RunState } from "../types";
 
 interface KanbanBoardProps {
   issues: Issue[];
   planningIssues: Set<number>;
+  liveRunStates?: Record<number, RunState>;
   onDragEnd: (result: DropResult) => void;
   onDeleteIssue: (id: number) => void;
   onSelectIssue: (issue: Issue) => void;
+  onPauseIssue?: (id: number) => void;
+  onResumeIssue?: (id: number) => void;
+  onRestartIssue?: (id: number) => void;
 }
 
 export function KanbanBoard({

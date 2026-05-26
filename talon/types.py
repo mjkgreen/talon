@@ -96,6 +96,7 @@ class RunStatus(str, Enum):
     PASSED = "passed"
     FAILED = "failed"
     MAX_ITERATIONS = "max_iterations"
+    PAUSED = "paused"
 
 
 class PlanPhase(BaseModel):
@@ -112,13 +113,25 @@ class PlanResult(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
-class BrowserValidationResult(BaseModel):
-    verified_criteria: list[str] = []
-    failed_criteria: list[str] = []
-    summary: str = ""
+class BrowserAssertion(BaseModel):
+    description: str
+    selector: Optional[str] = None
+    expected: Optional[str] = None
+    actual: Optional[str] = None
+    passed: bool
+
+
+class BrowserTestResult(BaseModel):
+    passed: bool
+    score: float
+    summary: str
+    assertions: list[BrowserAssertion] = []
+    planned_assertions: list[str] = []
+    screenshots: list[str] = []
     video_path: Optional[str] = None
     gif_path: Optional[str] = None
-    screenshot_paths: list[str] = []
+    steps: int = 0
+    error: Optional[str] = None
 
 
 class RunState(BaseModel):
@@ -130,10 +143,13 @@ class RunState(BaseModel):
     executor_results: list[ExecutorResult] = []
     review_results: list[ReviewFeedback] = []
     refinement_results: list[RefinementResult] = []
+    completed_iterations: list[int] = []
     final_output: Optional[str] = None
     workspace: Optional[str] = None  # path to isolated run workspace
-    video_path: Optional[str] = None  # kept for backwards compat; prefer browser_result
-    browser_result: Optional[BrowserValidationResult] = None
+    video_path: Optional[str] = None
+    ui_changes_detected: Optional[bool] = None
+    browser_result: Optional[BrowserTestResult] = None
+    verification_running: bool = False
     pr_url: Optional[str] = None
     board_url: Optional[str] = None
     # Token usage and cost (accumulated across all LLM calls for this run)

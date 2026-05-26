@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -30,7 +31,15 @@ from talon.skills import (
     task_executor,
     workspace_cleaner,
 )
-from talon.types import ExecutorResult, PhaseResult, PlanResult, ReviewVerdict, RunState, RunStatus
+from talon.types import (
+    ExecutorResult,
+    PhaseResult,
+    PlanResult,
+    RefinementResult,
+    ReviewVerdict,
+    RunState,
+    RunStatus,
+)
 
 console = Console()
 
@@ -50,6 +59,35 @@ def _save_state(state: RunState) -> None:
     (run_dir / "state.json").write_text(state.model_dump_json(indent=2), encoding="utf-8")
 
 
+def _load_state(run_id: str) -> RunState:
+    state_file = Path(RUNS_DIR) / run_id / "state.json"
+    if not state_file.exists():
+        raise FileNotFoundError(f"No run found: {run_id}")
+    return RunState.model_validate_json(state_file.read_text(encoding="utf-8"))
+
+
+def _pause_sentinel(run_id: str) -> Path:
+    return Path(RUNS_DIR) / run_id / "pause.signal"
+
+
+def _is_pause_requested(run_id: str) -> bool:
+    return _pause_sentinel(run_id).exists()
+
+
+def _clear_pause_sentinel(run_id: str) -> None:
+    _pause_sentinel(run_id).unlink(missing_ok=True)
+
+
+def _derive_resume_point(
+    state: RunState,
+) -> tuple[bool, int, RefinementResult | None]:
+    """Returns (needs_planning, start_iteration, last_refinement)."""
+    needs_planning = state.plan_result is None
+    last_complete = max(state.completed_iterations, default=0)
+    last_refinement = state.refinement_results[-1] if state.refinement_results else None
+    return needs_planning, last_complete + 1, last_refinement
+
+
 def _print_header(goal: str, run_id: str) -> None:
     cfg = model_config_summary()
     model_lines = "\n".join(
@@ -63,6 +101,66 @@ def _print_header(goal: str, run_id: str) -> None:
             border_style="blue",
         )
     )
+
+
+_UI_EXTENSIONS = frozenset(
+    {
+        ".tsx",
+        ".jsx",
+        ".ts",
+        ".js",
+        ".html",
+        ".css",
+        ".scss",
+        ".less",
+        ".vue",
+        ".svelte",
+        ".astro",
+    }
+)
+_UI_PATH_FRAGMENTS = frozenset(
+    {
+        "ui/",
+        "frontend/",
+        "src/components/",
+        "src/pages/",
+        "src/views/",
+        "src/layouts/",
+        "public/",
+        "static/",
+        "templates/",
+    }
+)
+
+
+def _is_ui_file(fp: str) -> bool:
+    normalized = fp.replace("\\", "/").lower()
+    return Path(fp).suffix.lower() in _UI_EXTENSIONS or any(
+        frag in normalized for frag in _UI_PATH_FRAGMENTS
+    )
+
+
+def _detect_ui_changes(exec_results: list[ExecutorResult], workspace_dir: str) -> bool:
+    """Return True if any subtask modified a UI/frontend file."""
+    for exec_result in exec_results:
+        for sr in exec_result.subtask_results:
+            if any(_is_ui_file(fp) for fp in sr.files_modified):
+                return True
+
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD"],
+            cwd=workspace_dir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if any(_is_ui_file(fp) for fp in result.stdout.strip().splitlines() if fp):
+            return True
+    except Exception:
+        pass
+
+    return False
 
 
 def _print_footer(state: RunState) -> None:
@@ -96,6 +194,12 @@ async def run(
     plan: PlanResult | None = None,
     on_step: Callable[[RunState], Awaitable[None]] | None = None,
     on_log: Callable[[str], Awaitable[None]] | None = None,
+    start_command: str | None = None,
+    project_env_vars: dict[str, str] | None = None,
+    env_content: str | None = None,
+    cookie_file: str | None = None,
+    test_user: str | None = None,
+    test_password: str | None = None,
 ) -> RunState:
     """
     Run the full autonomous loop for the given goal.
@@ -114,7 +218,13 @@ async def run(
     Returns:
         RunState with full audit trail.
     """
-    state = RunState(goal=goal)
+    state = RunState(
+        goal=goal,
+        origin_dir=working_dir,
+        origin_repo_url=repo_url,
+        origin_repo_branch=repo_branch,
+        direct_workspace=direct_workspace,
+    )
 
     # Start a fresh token/cost accumulator for this run. All LLM calls made
     # within this coroutine (and tasks that inherit this context) will add to it.
@@ -156,6 +266,8 @@ async def run(
             state.error = str(e)
             state.finished_at = datetime.utcnow()
             _save_state(state)
+            if on_log:
+                await on_log(f"[FAILED] Run crashed: {e}")
             raise
 
         refinement = None
@@ -172,6 +284,15 @@ async def run(
                 await on_step(state)
 
             for i in range(1, MAX_ITERATIONS + 1):
+                if _is_pause_requested(state.run_id):
+                    _clear_pause_sentinel(state.run_id)
+                    state.status = RunStatus.PAUSED
+                    _save_state(state)
+                    if on_step:
+                        await on_step(state)
+                    console.print(f"\n[yellow]Run {state.run_id} paused.[/yellow]")
+                    return state
+
                 state.iteration = i
                 _save_state(state)
                 if on_step:
@@ -215,6 +336,7 @@ async def run(
                     plan=plan,
                     on_log=on_log,
                     on_phase_complete=on_phase_complete,
+                    run_id=state.run_id,
                 )
                 # Replace the in-progress entry with the final result
                 if state.executor_results and state.executor_results[-1].iteration == i:
@@ -233,6 +355,7 @@ async def run(
                     plan=plan,
                 )
                 state.review_results.append(review)
+                state.completed_iterations.append(i)
                 _save_state(state)
                 if on_step:
                     await on_step(state)
@@ -263,6 +386,8 @@ async def run(
             state.error = str(e)
             state.finished_at = datetime.utcnow()
             _save_state(state)
+            if on_log:
+                await on_log(f"[FAILED] Run crashed: {e}")
             raise
 
         state.finished_at = datetime.utcnow()
@@ -274,12 +399,61 @@ async def run(
             await asyncio.to_thread(workspace.teardown, state.run_id, working_dir, run_workspace)
             state.workspace = None
 
-        # --- Step 4: Browser validate (optional) ---
-        if app_url and state.status == RunStatus.PASSED:
-            browser_result = await browser_validator.run(state, app_url, RUNS_DIR)
-            state.browser_result = browser_result
-            state.video_path = browser_result.video_path if browser_result else None
+        # --- Detect UI changes ---
+        if run_workspace:
+            state.ui_changes_detected = _detect_ui_changes(state.executor_results, run_workspace)
             _save_state(state)
+            if on_step:
+                await on_step(state)
+
+        # --- Step 4: Browser validate (optional) ---
+        effective_url = app_url or (os.getenv("DEFAULT_APP_URL") if state.ui_changes_detected else None)
+        _server_proc: asyncio.subprocess.Process | None = None
+        _server_port: int | None = None
+        try:
+            if not effective_url and state.ui_changes_detected and run_workspace:
+                try:
+                    from talon.skills import workspace_starter
+
+                    (
+                        _server_proc,
+                        effective_url,
+                        _server_port,
+                    ) = await workspace_starter.start_workspace_server(
+                        run_workspace,
+                        extra_env=project_env_vars,
+                        start_command=start_command,
+                        env_content=env_content,
+                    )
+                except Exception as _ws_err:
+                    console.print(f"[yellow]workspace-starter: {_ws_err}[/yellow]")
+
+            if effective_url and state.status == RunStatus.PASSED:
+
+                async def _on_browser_progress(partial):
+                    state.browser_result = partial
+                    _save_state(state)
+                    if on_step:
+                        await on_step(state)
+
+                browser_result = await browser_validator.run(
+                    state,
+                    effective_url,
+                    RUNS_DIR,
+                    on_progress=_on_browser_progress,
+                    cookie_file=cookie_file,
+                    test_user=test_user,
+                    test_password=test_password,
+                )
+                if browser_result is not None:
+                    state.browser_result = browser_result
+                    state.video_path = browser_result.video_path
+                _save_state(state)
+        finally:
+            if _server_proc is not None and _server_port is not None:
+                from talon.skills import workspace_starter as _ws_mod
+
+                await _ws_mod.stop_workspace_server(_server_proc, _server_port)
         if on_step:
             await on_step(state)
 
@@ -310,3 +484,203 @@ async def run(
         return state
     finally:
         _run_accumulator.reset(_acc_token)
+
+
+async def resume(
+    run_id: str,
+    on_step: Callable[[RunState], Awaitable[None]] | None = None,
+    on_log: Callable[[str], Awaitable[None]] | None = None,
+) -> RunState:
+    """Resume a PAUSED or FAILED run from its last checkpoint.
+
+    Skips planning if a plan already exists and skips iterations that
+    have already completed (execute + review both finished).
+
+    Raises:
+        FileNotFoundError: run_id does not exist.
+        RuntimeError: run is already PASSED, or still shows RUNNING
+                      (which may mean another process is active).
+    """
+    state = _load_state(run_id)
+
+    if state.status == RunStatus.PASSED:
+        raise RuntimeError(f"Run {run_id} already passed — nothing to resume.")
+
+    _clear_pause_sentinel(run_id)
+    state.status = RunStatus.RUNNING
+    state.error = None
+    _save_state(state)
+    if on_step:
+        await on_step(state)
+
+    needs_planning, start_iteration, last_refinement = _derive_resume_point(state)
+
+    # Recover workspace if it no longer exists on disk.
+    run_workspace = state.workspace
+    if not run_workspace or not Path(run_workspace).exists():
+        console.print(
+            "[yellow]Workspace missing — recreating (prior code changes may be lost)[/yellow]"
+        )
+        if state.origin_dir is None and not state.origin_repo_url:
+            console.print(
+                "[yellow]Warning: origin_dir unknown (old run). Using a fresh workspace.[/yellow]"
+            )
+        run_workspace = await asyncio.to_thread(
+            workspace.setup,
+            state.run_id,
+            state.origin_dir,
+            repo_url=state.origin_repo_url,
+            repo_branch=state.origin_repo_branch,
+            direct=state.direct_workspace,
+            goal=state.goal,
+        )
+        state.workspace = run_workspace
+        _save_state(state)
+
+    refinement: RefinementResult | None = last_refinement
+
+    try:
+        if needs_planning:
+            plan = await planner.run(goal=state.goal, working_dir=run_workspace)
+            state.plan_result = plan
+            _save_state(state)
+            if on_step:
+                await on_step(state)
+        else:
+            plan = state.plan_result
+            console.print("\n[bold blue]planner[/bold blue] (skipping — checkpoint plan exists)")
+
+        _print_header(state.goal, state.run_id)
+
+        for i in range(start_iteration, MAX_ITERATIONS + 1):
+            if _is_pause_requested(run_id):
+                _clear_pause_sentinel(run_id)
+                state.status = RunStatus.PAUSED
+                _save_state(state)
+                if on_step:
+                    await on_step(state)
+                console.print(f"\n[yellow]Run {run_id} paused at iteration {i}.[/yellow]")
+                return state
+
+            state.iteration = i
+            _save_state(state)
+            if on_step:
+                await on_step(state)
+            console.print(Rule(f"Iteration {i}/{MAX_ITERATIONS} (resumed)", style="blue"))
+            if on_log:
+                await on_log(f"=== Iteration {i}/{MAX_ITERATIONS} (resumed) ===")
+
+            in_progress_exec: ExecutorResult | None = None
+
+            async def on_phase_complete(phase_result: PhaseResult) -> None:
+                nonlocal in_progress_exec
+                prior_phases = in_progress_exec.phases if in_progress_exec else []
+                all_phases = prior_phases + [phase_result]
+                partial_aggregated = "\n\n".join(
+                    f"## Phase {ph.phase_index + 1}: {ph.phase_name}\n{ph.aggregated_output}"
+                    for ph in all_phases
+                )
+                in_progress_exec = ExecutorResult(
+                    goal=state.goal,
+                    phases=all_phases,
+                    aggregated_output=partial_aggregated,
+                    iteration=i,
+                )
+                if state.executor_results and state.executor_results[-1].iteration == i:
+                    state.executor_results[-1] = in_progress_exec
+                else:
+                    state.executor_results.append(in_progress_exec)
+                _save_state(state)
+                if on_step:
+                    await on_step(state)
+
+            exec_result = await task_executor.run(
+                goal=state.goal,
+                working_dir=run_workspace,
+                iteration=i,
+                refinement=refinement,
+                plan=plan,
+                on_log=on_log,
+                on_phase_complete=on_phase_complete,
+                run_id=run_id,
+            )
+            if state.executor_results and state.executor_results[-1].iteration == i:
+                state.executor_results[-1] = exec_result
+            else:
+                state.executor_results.append(exec_result)
+            _save_state(state)
+            if on_step:
+                await on_step(state)
+
+            review = await self_reviewer.run(
+                goal=state.goal,
+                executor_result=exec_result,
+                working_dir=run_workspace,
+                plan=plan,
+            )
+            state.review_results.append(review)
+            state.completed_iterations.append(i)
+            _save_state(state)
+            if on_step:
+                await on_step(state)
+
+            if review.verdict == ReviewVerdict.PASS:
+                state.status = RunStatus.PASSED
+                state.final_output = exec_result.aggregated_output
+                break
+
+            if i == MAX_ITERATIONS:
+                state.status = RunStatus.MAX_ITERATIONS
+                state.final_output = exec_result.aggregated_output
+                break
+
+            refinement = await refiner.run(
+                goal=state.goal,
+                executor_result=exec_result,
+                feedback=review,
+            )
+            state.refinement_results.append(refinement)
+            _save_state(state)
+            if on_step:
+                await on_step(state)
+
+    except Exception as e:
+        state.status = RunStatus.FAILED
+        state.error = str(e)
+        state.finished_at = datetime.utcnow()
+        _save_state(state)
+        if on_log:
+            await on_log(f"[FAILED] Run crashed: {e}")
+        raise
+
+    state.finished_at = datetime.utcnow()
+
+    # --- Detect UI changes ---
+    if run_workspace:
+        state.ui_changes_detected = _detect_ui_changes(state.executor_results, run_workspace)
+        _save_state(state)
+        if on_step:
+            await on_step(state)
+
+    # --- Step 4: Browser validate (optional) ---
+    effective_url = os.getenv("DEFAULT_APP_URL") if state.ui_changes_detected else None
+    if effective_url and state.status == RunStatus.PASSED:
+
+        async def _on_resume_browser_progress(partial):
+            state.browser_result = partial
+            _save_state(state)
+            if on_step:
+                await on_step(state)
+
+        browser_result = await browser_validator.run(
+            state, effective_url, RUNS_DIR, on_progress=_on_resume_browser_progress
+        )
+        if browser_result is not None:
+            state.browser_result = browser_result
+            state.video_path = browser_result.video_path
+        _save_state(state)
+    if on_step:
+        await on_step(state)
+
+    _print_footer(state)
+    return state

@@ -53,13 +53,16 @@ TOOL_DEFINITIONS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "Directory path relative to working_dir"},
+                "path": {
+                    "type": "string",
+                    "description": "Directory path relative to working_dir. Defaults to '.'.",
+                },
                 "pattern": {
                     "type": "string",
                     "description": "Optional glob pattern, e.g. '**/*.py'",
                 },  # noqa: E501
             },
-            "required": ["path"],
+            "required": [],
         },
     },
     {
@@ -221,7 +224,7 @@ def dispatch_tool(tool_name: str, tool_input: dict, working_dir: str) -> str:
         elif tool_name == "write_file":
             result = write_file(tool_input["path"], tool_input["content"], working_dir)
         elif tool_name == "list_files":
-            result = list_files(tool_input["path"], working_dir, tool_input.get("pattern"))
+            result = list_files(tool_input.get("path", "."), working_dir, tool_input.get("pattern"))
         elif tool_name == "run_command":
             result = run_command(tool_input["command"], working_dir, tool_input.get("working_dir"))
         elif tool_name == "search_files":
@@ -231,6 +234,9 @@ def dispatch_tool(tool_name: str, tool_input: dict, working_dir: str) -> str:
                 working_dir,
                 tool_input.get("file_pattern"),
             )
+        elif tool_name in {"thought", "thinking"}:
+            # Extended thinking exposed as a tool call by some providers — acknowledge.
+            result = {"ok": True}
         else:
             result = {"error": f"Unknown tool: {tool_name}"}
     except KeyError as e:

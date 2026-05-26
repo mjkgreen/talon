@@ -4,9 +4,13 @@ CLI entry point for the autonomous agent system.
 Usage:
   talon run "Add user authentication to the Express API"
   talon run "..." --working-dir ./my-project --url http://localhost:3000
+  (defaults to the current directory when --working-dir is omitted)
   talon list
   talon review <run-id>
   talon cleanup <run-id>
+  talon pause <run-id>    pause a running loop between iterations
+  talon resume <run-id>   resume a paused or failed run from checkpoint
+  talon retry <run-id>    alias for resume
   talon serve [--port 8080]
 """
 
@@ -102,7 +106,7 @@ def cmd_list() -> None:
         last_review = data["review_results"][-1] if data["review_results"] else {}
         score = f"{last_review.get('score', 0):.2f}" if last_review else "—"
         status = data["status"]
-        color = "green" if status == "passed" else "red"
+        color = "green" if status == "passed" else ("yellow" if status == "paused" else "red")
         pr = data.get("pr_url") or "—"
         pr_display = f"[link={pr}]#{pr.split('/')[-1]}[/link]" if pr != "—" else "—"
         table.add_row(
@@ -151,6 +155,47 @@ def cmd_cleanup(run_id: str) -> None:
     console.print(f"[green]Cleaned up workspace for run {run_id}[/green]")
 
 
+def cmd_pause(run_id: str) -> None:
+    """Write a pause sentinel file; the running loop picks it up between iterations."""
+    from datetime import datetime
+
+    runs_dir = Path(os.getenv("RUNS_DIR", "./runs"))
+    state_file = runs_dir / run_id / "state.json"
+    if not state_file.exists():
+        console.print(f"[red]Run not found: {run_id}[/red]")
+        sys.exit(1)
+    data = json.loads(state_file.read_text())
+    if data["status"] != "running":
+        console.print(f"[yellow]Run {run_id} is not running (status: {data['status']})[/yellow]")
+        sys.exit(1)
+    sentinel = runs_dir / run_id / "pause.signal"
+    sentinel.write_text(datetime.utcnow().isoformat(), encoding="utf-8")
+    console.print(f"[green]Pause signal sent to {run_id}.[/green]")
+    console.print("[dim]The run will stop after the current iteration completes.[/dim]")
+
+
+def cmd_resume(run_id: str) -> None:
+    """Resume a PAUSED or FAILED run from its last completed checkpoint."""
+    from talon.loop import resume
+
+    _check_env()
+    try:
+        state = asyncio.run(resume(run_id=run_id))
+    except (FileNotFoundError, RuntimeError) as e:
+        console.print(f"[red]{e}[/red]")
+        sys.exit(1)
+    runs_dir = os.getenv("RUNS_DIR", "./runs")
+    console.print(f"\n[dim]Full run saved to: {Path(runs_dir) / state.run_id / 'state.json'}[/dim]")
+    if state.workspace:
+        console.print(f"[dim]Workspace at:        {state.workspace}[/dim]")
+    sys.exit(0 if state.status == "passed" else 1)
+
+
+def cmd_retry(run_id: str) -> None:
+    """Retry a FAILED run from the last safe checkpoint (alias for resume)."""
+    cmd_resume(run_id)
+
+
 def cmd_serve(port: int) -> None:
     """Start the webhook listener server."""
     try:
@@ -185,7 +230,7 @@ def main() -> None:
             console.print("[red]Usage: talon run <goal>[/red]")
             sys.exit(1)
         goal = args[1]
-        working_dir = None
+        working_dir = os.getcwd()
         app_url = None
         skip_board = False
         i = 2
@@ -218,6 +263,24 @@ def main() -> None:
             sys.exit(1)
         cmd_cleanup(args[1])
 
+    elif cmd == "pause":
+        if len(args) < 2:
+            console.print("[red]Usage: talon pause <run-id>[/red]")
+            sys.exit(1)
+        cmd_pause(args[1])
+
+    elif cmd == "resume":
+        if len(args) < 2:
+            console.print("[red]Usage: talon resume <run-id>[/red]")
+            sys.exit(1)
+        cmd_resume(args[1])
+
+    elif cmd == "retry":
+        if len(args) < 2:
+            console.print("[red]Usage: talon retry <run-id>[/red]")
+            sys.exit(1)
+        cmd_retry(args[1])
+
     elif cmd == "serve":
         port = 8080
         i = 1
@@ -231,7 +294,7 @@ def main() -> None:
 
     else:
         console.print(f"[red]Unknown command: {cmd}[/red]")
-        console.print("Commands: run, list, review, cleanup, serve")
+        console.print("Commands: run, list, review, cleanup, pause, resume, retry, serve")
         sys.exit(1)
 
 

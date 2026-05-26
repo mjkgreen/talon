@@ -35,6 +35,12 @@ class Project(BaseModel):
     selected_repo: Optional[str] = None
     selected_branch: Optional[str] = None
     local_path: Optional[str] = None
+    start_command: Optional[str] = None
+    project_env_vars: Optional[str] = None  # JSON string {"KEY": "value"}
+    env_content: Optional[str] = None  # raw .env text pasted by the user
+    cookie_file: Optional[str] = None
+    test_user: Optional[str] = None
+    test_password: Optional[str] = None
     created_at: str
     updated_at: str
 
@@ -45,6 +51,12 @@ class ProjectCreate(BaseModel):
     selected_repo: Optional[str] = None
     selected_branch: Optional[str] = None
     local_path: Optional[str] = None
+    start_command: Optional[str] = None
+    project_env_vars: Optional[str] = None
+    env_content: Optional[str] = None
+    cookie_file: Optional[str] = None
+    test_user: Optional[str] = None
+    test_password: Optional[str] = None
 
 
 class ProjectUpdate(BaseModel):
@@ -53,6 +65,12 @@ class ProjectUpdate(BaseModel):
     selected_repo: Optional[str] = None
     selected_branch: Optional[str] = None
     local_path: Optional[str] = None
+    start_command: Optional[str] = None
+    project_env_vars: Optional[str] = None
+    env_content: Optional[str] = None
+    cookie_file: Optional[str] = None
+    test_user: Optional[str] = None
+    test_password: Optional[str] = None
 
 
 class Issue(BaseModel):
@@ -105,6 +123,8 @@ class SettingsUpdate(BaseModel):
     max_iterations: Optional[str] = None
     agent_max_tokens: Optional[str] = None
     reviewer_max_tool_turns: Optional[str] = None
+    max_concurrent_runs: Optional[str] = None
+    browser_test_max_steps: Optional[str] = None
     # Local workspace behaviour
     edit_local_directly: Optional[str] = None  # "true" | "false"
     push_on_pass: Optional[str] = None  # "true" | "false"
@@ -173,6 +193,48 @@ async def init_db():
             await db.commit()
         except sqlite3.OperationalError:
             pass  # column already exists
+
+        # Migration: add start_command column to projects if missing
+        try:
+            await db.execute("ALTER TABLE projects ADD COLUMN start_command TEXT")
+            await db.commit()
+        except sqlite3.OperationalError:
+            pass
+
+        # Migration: add project_env_vars column to projects if missing
+        try:
+            await db.execute("ALTER TABLE projects ADD COLUMN project_env_vars TEXT")
+            await db.commit()
+        except sqlite3.OperationalError:
+            pass
+
+        # Migration: add env_content column to projects if missing
+        try:
+            await db.execute("ALTER TABLE projects ADD COLUMN env_content TEXT")
+            await db.commit()
+        except sqlite3.OperationalError:
+            pass
+
+        # Migration: add cookie_file column to projects if missing
+        try:
+            await db.execute("ALTER TABLE projects ADD COLUMN cookie_file TEXT")
+            await db.commit()
+        except sqlite3.OperationalError:
+            pass
+
+        # Migration: add test_user column to projects if missing
+        try:
+            await db.execute("ALTER TABLE projects ADD COLUMN test_user TEXT")
+            await db.commit()
+        except sqlite3.OperationalError:
+            pass
+
+        # Migration: add test_password column to projects if missing
+        try:
+            await db.execute("ALTER TABLE projects ADD COLUMN test_password TEXT")
+            await db.commit()
+        except sqlite3.OperationalError:
+            pass
 
         # Migration: seed default project from global settings when none exist
         async with db.execute("SELECT COUNT(*) FROM projects") as cursor:
@@ -257,9 +319,25 @@ async def create_project(p: ProjectCreate) -> Project:
         cursor = await db.execute(
             "INSERT INTO projects"
             " (name, workspace_mode, selected_repo, selected_branch,"
-            "  local_path, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (p.name, p.workspace_mode, p.selected_repo, p.selected_branch, p.local_path, now, now),
+            "  local_path, start_command, project_env_vars, env_content,"
+            "  cookie_file, test_user, test_password,"
+            "  created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                p.name,
+                p.workspace_mode,
+                p.selected_repo,
+                p.selected_branch,
+                p.local_path,
+                p.start_command,
+                p.project_env_vars,
+                p.env_content,
+                p.cookie_file,
+                p.test_user,
+                p.test_password,
+                now,
+                now,
+            ),
         )
         await db.commit()
         return await get_project(cursor.lastrowid)
@@ -311,6 +389,24 @@ async def update_project(project_id: int, updates: ProjectUpdate) -> Optional[Pr
         if updates.local_path is not None:
             fields.append("local_path = ?")
             values.append(updates.local_path or None)  # "" → NULL to allow clearing
+        if updates.start_command is not None:
+            fields.append("start_command = ?")
+            values.append(updates.start_command or None)
+        if updates.project_env_vars is not None:
+            fields.append("project_env_vars = ?")
+            values.append(updates.project_env_vars or None)
+        if updates.env_content is not None:
+            fields.append("env_content = ?")
+            values.append(updates.env_content or None)
+        if updates.cookie_file is not None:
+            fields.append("cookie_file = ?")
+            values.append(updates.cookie_file or None)
+        if updates.test_user is not None:
+            fields.append("test_user = ?")
+            values.append(updates.test_user or None)
+        if updates.test_password is not None:
+            fields.append("test_password = ?")
+            values.append(updates.test_password or None)
         if not fields:
             return await get_project(project_id)
         fields.append("updated_at = ?")

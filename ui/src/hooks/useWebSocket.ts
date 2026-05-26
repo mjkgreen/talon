@@ -9,6 +9,7 @@ interface WebSocketCallbacks {
   onProjectCreated: (project: Project) => void;
   onProjectUpdated: (project: Project) => void;
   onProjectDeleted: (projectId: number) => void;
+  onWorkspaceInvalid?: (data: { issue_id?: number; error?: string }) => void;
 }
 
 export function useWebSocket(
@@ -81,6 +82,8 @@ export function useWebSocket(
         cb.onProjectUpdated(data.project);
       } else if (data.type === "project_deleted") {
         cb.onProjectDeleted(data.project_id);
+      } else if (data.type === "workspace_invalid") {
+        cb.onWorkspaceInvalid?.(data);
       }
     };
 

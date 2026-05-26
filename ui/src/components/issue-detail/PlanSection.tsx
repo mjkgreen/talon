@@ -10,6 +10,13 @@ export function PlanSection({
   setEditingPlan,
   planDraft,
   setPlanDraft,
+  // onRegeneratePlan, onStartExecution, isActionPending are handled by parent
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  onRegeneratePlan: _onRegeneratePlan,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  onStartExecution: _onStartExecution,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  isActionPending: _isActionPending,
 }: {
   issue: Issue;
   planningIssues: Set<number>;
@@ -17,6 +24,9 @@ export function PlanSection({
   setEditingPlan: (v: boolean) => void;
   planDraft: PlanResult | null;
   setPlanDraft: React.Dispatch<React.SetStateAction<PlanResult | null>>;
+  onRegeneratePlan?: () => void;
+  onStartExecution?: () => void;
+  isActionPending?: boolean;
 }) {
   const [commentDraft, setCommentDraft] = useState("");
 

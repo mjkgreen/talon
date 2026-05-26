@@ -13,6 +13,7 @@ import { NewProjectModal } from "./components/NewProjectModal";
 import { NoLlmGuardModal } from "./components/NoLlmGuardModal";
 import { SetupWizard } from "./components/SetupWizard";
 import { SettingsModal } from "./components/SettingsModal";
+import type { EnvVarRow } from "./components/SettingsModal";
 import { IssueDetailModal } from "./components/IssueDetailModal";
 
 export default function App() {
@@ -55,6 +56,9 @@ export default function App() {
   const [editingPlan, setEditingPlan] = useState(false);
   const [planDraft, setPlanDraft] = useState<PlanResult | null>(null);
 
+  // --- Workspace error (invalid / stale path detected server-side) ---
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+
   // --- GitHub OAuth ---
   const [githubAuthStatus, setGithubAuthStatus] = useState<"idle" | "waiting" | "error">("idle");
   const [githubAuthError, setGithubAuthError] = useState("");
@@ -65,9 +69,19 @@ export default function App() {
 
   // --- Settings modal ---
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<"ai" | "model" | "workspace" | "limits">("ai");
+  const [settingsTab, setSettingsTab] = useState<"ai" | "model" | "workspace" | "environment" | "limits">("ai");
   const [savingSettings, setSavingSettings] = useState(false);
   const [advancedModelOpen, setAdvancedModelOpen] = useState(false);
+  const [maxConcurrentRuns, setMaxConcurrentRuns] = useState("3");
+  const [browserTestMaxSteps, setBrowserTestMaxSteps] = useState("20");
+
+  // --- Per-project environment settings ---
+  const [startCommand, setStartCommand] = useState("");
+  const [envVarRows, setEnvVarRows] = useState<EnvVarRow[]>([]);
+  const [envContent, setEnvContent] = useState("");
+  const [cookieFile, setCookieFile] = useState("");
+  const [testUser, setTestUser] = useState("");
+  const [testPassword, setTestPassword] = useState("");
 
   // --- Project management ---
   const [newProjectModalOpen, setNewProjectModalOpen] = useState(false);
@@ -110,6 +124,15 @@ export default function App() {
         setProjects((prev) => prev.map((p) => (p.id === project.id ? project : p))),
       onProjectDeleted: (projectId) =>
         setProjects((prev) => prev.filter((p) => p.id !== projectId)),
+      onWorkspaceInvalid: (data) => {
+        if (data.issue_id) {
+          setIssues((prev) =>
+            prev.map((i) => (i.id === data.issue_id ? { ...i, status: "Backlog" } : i))
+          );
+        }
+        setWorkspaceError(data.error ?? "Workspace is invalid or no longer exists.");
+        setWizardStep(2);
+      },
     },
   );
 
@@ -151,6 +174,56 @@ export default function App() {
     }
   }, [renamingProjectId]);
 
+  // Re-sync project workspace state whenever the window regains focus so stale
+  // paths (e.g. configured in another tab or updated externally) are detected.
+  useEffect(() => {
+    const _parseEnvVarRows = (raw: string | undefined): EnvVarRow[] => {
+      if (!raw) return [];
+      try {
+        const obj = JSON.parse(raw) as Record<string, string>;
+        return Object.entries(obj).map(([key, value]) => ({ key, value }));
+      } catch {
+        return [];
+      }
+    };
+
+    const handleFocus = async () => {
+      const res = await fetch(apiUrl("/api/projects"));
+      if (!res.ok) return;
+      const list = await res.json();
+      setProjects(list);
+      const active = list.find((p: { id: number }) => p.id === activeProjectIdRef.current);
+      if (active) {
+        setLocalPath(active.local_path || "");
+        setSelectedRepo(active.selected_repo || "");
+        setSelectedBranch(active.selected_branch || "");
+        setWorkspaceMode(active.workspace_mode as "github" | "local" | "none" | "");
+        setStartCommand(active.start_command || "");
+        setEnvVarRows(_parseEnvVarRows(active.project_env_vars));
+        setEnvContent(active.env_content || "");
+        setCookieFile(active.cookie_file || "");
+        setTestUser(active.test_user || "");
+        setTestPassword(active.test_password || "");
+      }
+    };
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sync settings that are stored in useAppData hook (maxConcurrentRuns, browserTestMaxSteps)
+  // These come back via fetchSettings in the hook but we mirror them locally for SettingsModal
+  useEffect(() => {
+    // Initial fetch to populate maxConcurrentRuns and browserTestMaxSteps
+    fetch(apiUrl("/api/settings"))
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => {
+        if (!d) return;
+        setMaxConcurrentRuns(d.max_concurrent_runs || "3");
+        setBrowserTestMaxSteps(d.browser_test_max_steps || "20");
+      })
+      .catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ===================== actions =====================
 
   const selectMode = async (mode: "github" | "local" | "none") => {
@@ -170,11 +243,18 @@ export default function App() {
     if (mode === "none") {
       setWizardStep(0);
     } else {
-      setWizardStep(3);
-      if (mode === "github") {
+      // Re-seed path/repo from the active project so the wizard input starts
+      // with that project's current value, not a stale global setting.
+      const proj = projects.find((p) => p.id === activeProjectId);
+      if (mode === "local") {
+        setLocalPath(proj?.local_path || "");
+      } else if (mode === "github") {
+        setSelectedRepo(proj?.selected_repo || "");
+        setSelectedBranch(proj?.selected_branch || "");
         setGithubAuthStatus("idle");
         setGithubAuthError("");
       }
+      setWizardStep(3);
     }
   };
 
@@ -238,6 +318,7 @@ export default function App() {
       });
       data.fetchProjects();
     }
+    setWorkspaceError(null);
     setWizardStep(0);
   };
 
@@ -259,6 +340,7 @@ export default function App() {
       });
       data.fetchProjects();
     }
+    setWorkspaceError(null);
     setWizardStep(0);
   };
 
@@ -325,6 +407,21 @@ export default function App() {
     await fetch(apiUrl(`/api/issues/${id}`), { method: "DELETE" });
   };
 
+  const pauseIssue = async (id: number) => {
+    await fetch(apiUrl(`/api/issues/${id}/pause`), { method: "POST" });
+  };
+
+  const resumeIssue = async (id: number) => {
+    setIssues((prev) => prev.map((i) => (i.id === id ? { ...i, status: "In Progress" } : i)));
+    await fetch(apiUrl(`/api/issues/${id}/resume`), { method: "POST" });
+  };
+
+  const restartIssue = async (id: number) => {
+    if (!confirm("Are you sure you want to restart this task and run all iterations from scratch?")) return;
+    setIssues((prev) => prev.map((i) => (i.id === id ? { ...i, status: "In Progress" } : i)));
+    await fetch(apiUrl(`/api/issues/${id}/restart`), { method: "POST" });
+  };
+
   const onDragEnd = async (result: DropResult) => {
     if (!result.destination) return;
     const sourceStatus = result.source.droppableId;
@@ -333,6 +430,12 @@ export default function App() {
     if (sourceStatus === destStatus) return;
     if (destStatus === "In Progress" && !hasLlm) {
       setNoLlmGuardOpen(true);
+      return;
+    }
+    const project = projects.find((p) => p.id === activeProjectId);
+    const noWorkspace = !project?.workspace_mode || project.workspace_mode === "none";
+    if (destStatus === "In Progress" && noWorkspace) {
+      setWizardStep(2);
       return;
     }
     setIssues((prev) => prev.map((i) => (i.id === issueId ? { ...i, status: destStatus } : i)));
@@ -354,9 +457,44 @@ export default function App() {
         max_iterations: maxIterations,
         agent_max_tokens: maxTokens,
         reviewer_max_tool_turns: reviewerMaxToolTurns,
+        max_concurrent_runs: maxConcurrentRuns,
+        browser_test_max_steps: browserTestMaxSteps,
       }),
     });
     await fetchSettings();
+    setSavingSettings(false);
+  };
+
+  const saveEnvironment = async () => {
+    if (!activeProjectId) return;
+    setSavingSettings(true);
+    const _parseEnvVarRows = (raw: string | undefined): EnvVarRow[] => {
+      if (!raw) return [];
+      try {
+        const obj = JSON.parse(raw) as Record<string, string>;
+        return Object.entries(obj).map(([key, value]) => ({ key, value }));
+      } catch {
+        return [];
+      }
+    };
+    void _parseEnvVarRows; // suppress unused warning
+    const envObj: Record<string, string> = {};
+    envVarRows.forEach(({ key, value }) => {
+      if (key.trim()) envObj[key.trim()] = value;
+    });
+    await fetch(apiUrl(`/api/projects/${activeProjectId}`), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        start_command: startCommand || null,
+        project_env_vars: Object.keys(envObj).length ? JSON.stringify(envObj) : null,
+        env_content: envContent || null,
+        cookie_file: cookieFile || null,
+        test_user: testUser || null,
+        test_password: testPassword || null,
+      }),
+    });
+    await data.fetchProjects();
     setSavingSettings(false);
   };
 
@@ -385,7 +523,7 @@ export default function App() {
     const res = await fetch(apiUrl("/api/projects"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newProjectName.trim(), workspace_mode: "none" }),
+      body: JSON.stringify({ name: newProjectName.trim(), workspace_mode: "" }),
     });
     if (res.ok) {
       const project = await res.json();
@@ -484,9 +622,13 @@ export default function App() {
         <KanbanBoard
           issues={issues}
           planningIssues={planningIssues}
+          liveRunStates={liveRunStates}
           onDragEnd={onDragEnd}
           onDeleteIssue={deleteIssue}
           onSelectIssue={setSelectedIssue}
+          onPauseIssue={pauseIssue}
+          onResumeIssue={resumeIssue}
+          onRestartIssue={restartIssue}
         />
       </div>
 
@@ -556,6 +698,7 @@ export default function App() {
         onSaveLocalPath={saveLocalPathAndFinish}
         onSaveRepo={saveRepoAndFinish}
         onSaveWizardKeys={saveWizardKeysAndContinue}
+        workspaceError={workspaceError}
       />
 
       {settingsOpen && (
@@ -572,6 +715,10 @@ export default function App() {
           setMaxTokens={setMaxTokens}
           reviewerMaxToolTurns={reviewerMaxToolTurns}
           setReviewerMaxToolTurns={setReviewerMaxToolTurns}
+          maxConcurrentRuns={maxConcurrentRuns}
+          setMaxConcurrentRuns={setMaxConcurrentRuns}
+          browserTestMaxSteps={browserTestMaxSteps}
+          setBrowserTestMaxSteps={setBrowserTestMaxSteps}
           advancedModelOpen={advancedModelOpen}
           setAdvancedModelOpen={setAdvancedModelOpen}
           savingSettings={savingSettings}
@@ -580,7 +727,20 @@ export default function App() {
           activeProject={activeProject}
           editLocalDirectly={editLocalDirectly}
           pushOnPass={pushOnPass}
+          startCommand={startCommand}
+          setStartCommand={setStartCommand}
+          envVarRows={envVarRows}
+          setEnvVarRows={setEnvVarRows}
+          envContent={envContent}
+          setEnvContent={setEnvContent}
+          cookieFile={cookieFile}
+          setCookieFile={setCookieFile}
+          testUser={testUser}
+          setTestUser={setTestUser}
+          testPassword={testPassword}
+          setTestPassword={setTestPassword}
           onSave={saveSettings}
+          onSaveEnvironment={saveEnvironment}
           onClose={() => setSettingsOpen(false)}
           onConfigureWorkspace={() => { setSettingsOpen(false); setWizardStep(2); }}
           onToggleEditLocal={toggleEditLocalDirectly}
@@ -592,6 +752,7 @@ export default function App() {
         <IssueDetailModal
           key={selectedIssue.id}
           issue={selectedIssue}
+          projects={projects}
           liveRunStates={liveRunStates}
           runState={runState}
           runErrors={runErrors}

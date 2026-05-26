@@ -1,12 +1,22 @@
 from __future__ import annotations
 
 import json
+import os
+from datetime import datetime
+from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
 from talon import db
-from talon.background import _has_llm_configured, _run_loop, _run_plan_refiner_bg, _run_planner_bg
+from talon.background import (
+    _has_llm_configured,
+    _resume_loop,
+    _run_loop,
+    _run_plan_refiner_bg,
+    _run_planner_bg,
+    _run_verification_bg,
+)
 from talon.routers.websocket import broadcast_issue_update
 
 router = APIRouter()
@@ -109,6 +119,92 @@ async def update_issue(issue_id: int, updates: db.IssueUpdate, background_tasks:
         )
 
     return updated
+
+
+@router.post("/api/issues/{issue_id}/plan/regenerate")
+async def regenerate_issue_plan(issue_id: int, background_tasks: BackgroundTasks):
+    issue = await db.get_issue(issue_id)
+    if not issue:
+        raise HTTPException(status_code=404, detail="Issue not found")
+    if not _has_llm_configured():
+        raise HTTPException(status_code=400, detail="No LLM configured")
+    goal = f"{issue.title}\n\n{issue.description}".strip()
+    # Clear comments and regenerate plan from scratch
+    await db.update_issue(issue_id, db.IssueUpdate(plan_comments="[]"))
+    background_tasks.add_task(_run_planner_bg, issue_id, goal)
+    return {"ok": True}
+
+
+@router.post("/api/issues/{issue_id}/pause")
+async def pause_issue_run(issue_id: int):
+    from talon.routers.websocket import manager
+
+    issue = await db.get_issue(issue_id)
+    if not issue or not issue.run_id:
+        raise HTTPException(status_code=404, detail="Run not found for issue")
+
+    runs_dir = Path(os.getenv("RUNS_DIR", "./runs"))
+    state_file = runs_dir / issue.run_id / "state.json"
+    if not state_file.exists():
+        raise HTTPException(status_code=404, detail=f"Run not found: {issue.run_id}")
+
+    sentinel = runs_dir / issue.run_id / "pause.signal"
+    sentinel.write_text(datetime.utcnow().isoformat(), encoding="utf-8")
+
+    await manager.broadcast(
+        {
+            "type": "run_log",
+            "issue_id": issue_id,
+            "message": "--> Pause requested. The agent will pause gracefully after the current iteration completes.",
+        }
+    )
+
+    return {"status": "paused_signal_sent"}
+
+
+@router.post("/api/issues/{issue_id}/resume")
+async def resume_issue_run(issue_id: int, background_tasks: BackgroundTasks):
+    issue = await db.get_issue(issue_id)
+    if not issue or not issue.run_id:
+        raise HTTPException(status_code=404, detail="Run not found for issue")
+
+    background_tasks.add_task(_resume_loop, issue_id, issue.run_id)
+    return {"status": "resuming"}
+
+
+@router.post("/api/issues/{issue_id}/restart")
+async def restart_issue_run(issue_id: int, background_tasks: BackgroundTasks):
+    issue = await db.get_issue(issue_id)
+    if not issue:
+        raise HTTPException(status_code=404, detail="Issue not found")
+
+    await db.update_issue(issue_id, db.IssueUpdate(status="Backlog", clear_run_id=True))
+    updated = await db.get_issue(issue_id)
+    await broadcast_issue_update(issue_id)
+
+    background_tasks.add_task(
+        _run_loop,
+        f"{updated.title}\n\n{updated.description}",
+        "ui",
+        updated.id,
+        None,
+        updated.project_id,
+    )
+    return {"status": "restarting"}
+
+
+@router.post("/api/issues/{issue_id}/verify")
+async def verify_issue_run(issue_id: int, background_tasks: BackgroundTasks):
+    issue = await db.get_issue(issue_id)
+    if not issue or not issue.run_id:
+        raise HTTPException(status_code=404, detail="Run not found for issue")
+    if issue.status not in ("Done", "Failed"):
+        raise HTTPException(
+            status_code=400, detail="Cannot run verification until execution is complete."
+        )
+
+    background_tasks.add_task(_run_verification_bg, issue_id, issue.run_id)
+    return {"status": "verification_started"}
 
 
 @router.delete("/api/issues/{issue_id}")

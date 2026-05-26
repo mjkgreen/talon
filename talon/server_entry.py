@@ -21,6 +21,9 @@ import sys
 # when Electron spawns the process with a pipe. Reconstruct from fd 1/2 so
 # the PORT announcement actually reaches Electron.
 if sys.platform == "win32":
+    # Only reconstruct stdout/stderr when they are None (PyInstaller console=False
+    # windowed mode). Replacing a valid, already-open stream (e.g. pytest's capture
+    # proxy) corrupts the caller's file-descriptor state.
     if sys.stdout is None:
         try:
             # FileIO must be opened with mode='w'; the default 'r' creates a
@@ -33,10 +36,6 @@ if sys.platform == "win32":
             )
         except Exception:
             pass
-    elif hasattr(sys.stdout, "buffer"):
-        sys.stdout = io.TextIOWrapper(
-            sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True
-        )
     if sys.stderr is None:
         try:
             sys.stderr = io.TextIOWrapper(
@@ -47,10 +46,6 @@ if sys.platform == "win32":
             )
         except Exception:
             pass
-    elif hasattr(sys.stderr, "buffer"):
-        sys.stderr = io.TextIOWrapper(
-            sys.stderr.buffer, encoding="utf-8", errors="replace", line_buffering=True
-        )
 
 
 from dotenv import load_dotenv

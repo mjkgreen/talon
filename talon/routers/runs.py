@@ -54,3 +54,17 @@ async def get_run_gif(run_id: str):
             if gif_path and os.path.exists(gif_path):
                 return FileResponse(gif_path, media_type="image/gif")
     raise HTTPException(status_code=404, detail="GIF not found")
+
+
+@router.get("/api/runs/{run_id}/screenshots/{filename}")
+async def get_run_screenshot(run_id: str, filename: str):
+    """Serve individual screenshot PNGs from the run's video directory."""
+    from pathlib import Path as _Path
+    runs_dir = os.getenv("RUNS_DIR", "./runs")
+    run_dir = _Path(os.path.realpath(os.path.join(runs_dir, run_id)))
+    screenshot_path = _Path(os.path.realpath(os.path.join(str(run_dir), filename)))
+    if not screenshot_path.is_relative_to(run_dir):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if not screenshot_path.exists() or screenshot_path.suffix != ".png":
+        raise HTTPException(status_code=404, detail="Screenshot not found")
+    return FileResponse(str(screenshot_path), media_type="image/png")

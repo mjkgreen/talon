@@ -20,8 +20,10 @@ Optimizations:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import random
 from contextvars import ContextVar
 
 # Optimize LiteLLM import/startup performance
@@ -43,10 +45,12 @@ litellm.turn_off_message_logging = True
 _DEFAULT_MODEL = "anthropic/claude-sonnet-4-6"
 _DEFAULT_MAX_TOKENS = 8096
 
-# Rate limiter — shared across all provider instances.
-# Set AGENT_LLM_RATE_LIMIT=N to cap at N LLM calls/second (0 = disabled).
-_RATE_LIMIT = int(os.getenv("AGENT_LLM_RATE_LIMIT", "0"))
-_THROTTLER: Throttler | None = Throttler(rate_limit=_RATE_LIMIT, period=1) if _RATE_LIMIT > 0 else None
+# Global rate throttler — 300 RPM (requests per minute) by default.
+# Override with TALON_RPM_LIMIT env var. Set to 0 to disable.
+_RPM_LIMIT = int(os.getenv("TALON_RPM_LIMIT", "300"))
+_GLOBAL_THROTTLER: Throttler | None = (
+    Throttler(rate_limit=_RPM_LIMIT, period=60.0) if _RPM_LIMIT > 0 else None
+)
 
 # Per-run token/cost accumulator. Set to a dict at the start of each run loop
 # iteration and reset to None when the iteration completes. Each chat() call
@@ -140,41 +144,87 @@ class LiteLLMProvider:
         if response_format:
             kwargs["response_format"] = response_format
 
-        try:
-            if _THROTTLER:
-                async with _THROTTLER:
-                    raw = await litellm.acompletion(**kwargs, timeout=timeout)
-            else:
-                raw = await litellm.acompletion(**kwargs, timeout=timeout)
-        except Exception as e:
-            err_str = str(e).lower()
-            is_context_error = (
-                "context_window" in err_str
-                or "contextwindow" in err_str
-                or "context window" in err_str
-                or "token count exceeds" in err_str
-                or "maximum number of tokens" in err_str
-                or "context_window_exceeded" in err_str
-            )
-            if is_context_error and len(messages) > 6:
-                # Prune older tool result messages in-place to recover.
-                cutoff = len(messages) - 6
-                for i in range(1, cutoff):
-                    if messages[i].get("role") == "tool":
-                        messages[i] = {
-                            "role": "tool",
-                            "tool_call_id": messages[i].get("tool_call_id"),
-                            "content": "[Tool result truncated to save context window space]",
-                        }
-                full_messages = [system_msg, *messages]
-                kwargs["messages"] = full_messages
-                if _THROTTLER:
-                    async with _THROTTLER:
+        max_rate_limit_retries = 5
+        base_delay = 2.0
+        timeout_retried = False
+        context_pruned = False
+        last_error = None
+
+        for attempt in range(max_rate_limit_retries + 1):
+            try:
+                if _GLOBAL_THROTTLER:
+                    async with _GLOBAL_THROTTLER:
                         raw = await litellm.acompletion(**kwargs, timeout=timeout)
                 else:
                     raw = await litellm.acompletion(**kwargs, timeout=timeout)
-            else:
+                break
+            except Exception as e:
+                last_error = e
+                err_str = str(e).lower()
+                is_timeout = (
+                    "timeout" in err_str
+                    or isinstance(e, asyncio.TimeoutError)
+                    or getattr(e, "status_code", None) == 408
+                )
+                is_rate_limit = (
+                    "rate limit" in err_str
+                    or "429" in err_str
+                    or getattr(e, "status_code", None) == 429
+                )
+
+                is_context_error = (
+                    "context_window" in err_str
+                    or "contextwindow" in err_str
+                    or "context window" in err_str
+                    or "token count exceeds" in err_str
+                    or "maximum number of tokens" in err_str
+                    or "context_window_exceeded" in err_str
+                )
+
+                if is_timeout and not timeout_retried and attempt < max_rate_limit_retries:
+                    print(f"[LiteLLM] Timeout occurred. Retrying in 5s... ({e})")
+                    await asyncio.sleep(5)
+                    timeout_retried = True
+                    continue
+
+                if is_rate_limit and attempt < max_rate_limit_retries:
+                    retry_after = getattr(e, "response", None)
+                    delay = base_delay * (2**attempt) + random.uniform(0, 1)
+                    if retry_after and hasattr(retry_after, "headers"):
+                        retry_val = retry_after.headers.get("Retry-After")
+                        if retry_val and retry_val.isdigit():
+                            delay = max(delay, int(retry_val))
+                    print(
+                        f"[LiteLLM] Rate limited. Retrying in {delay:.1f}s..."
+                        f" (Attempt {attempt + 1}/{max_rate_limit_retries})"
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+
+                if (
+                    is_context_error
+                    and len(messages) > 7
+                    and not context_pruned
+                    and attempt < max_rate_limit_retries
+                ):
+                    # Prune older tool result messages in-place to recover.
+                    cutoff = len(messages) - 6
+                    for i in range(1, cutoff):
+                        if messages[i].get("role") == "tool":
+                            messages[i] = {
+                                "role": "tool",
+                                "tool_call_id": messages[i].get("tool_call_id"),
+                                "content": "[Tool result truncated to save context window space]",
+                            }
+                    full_messages = [system_msg, *messages]
+                    kwargs["messages"] = full_messages
+                    context_pruned = True
+                    continue
+
                 raise e
+        else:
+            if last_error:
+                raise last_error
 
         msg = raw.choices[0].message
         usage_data = _extract_usage(raw)

@@ -37,7 +37,7 @@ def _get_github_token() -> str:
 def _gif_url(state: RunState) -> str | None:
     """Return a public URL for the browser-validation GIF, if available."""
     public_base = os.getenv("TALON_PUBLIC_URL", "").rstrip("/")
-    if public_base and state.browser_result and state.browser_result.gif_path:
+    if public_base and state.browser_result:
         return f"{public_base}/api/runs/{state.run_id}/gif"
     return None
 
@@ -68,12 +68,14 @@ def _build_body(state: RunState) -> str:
 
     if state.browser_result:
         br = state.browser_result
-        if br.verified_criteria:
+        verified = [a.description for a in br.assertions if a.passed]
+        failed = [a.description for a in br.assertions if not a.passed]
+        if verified:
             lines.append("\n**Verified:**")
-            lines.extend(f"- ✅ {c}" for c in br.verified_criteria)
-        if br.failed_criteria:
+            lines.extend(f"- ✅ {c}" for c in verified)
+        if failed:
             lines.append("\n**Failed:**")
-            lines.extend(f"- ❌ {c}" for c in br.failed_criteria)
+            lines.extend(f"- ❌ {c}" for c in failed)
         gif = _gif_url(state)
         if gif:
             lines.append(f"\n![Browser validation]({gif})")

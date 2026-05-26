@@ -11,6 +11,26 @@ export interface PlanResult {
   success_criteria: string[];
 }
 
+export interface BrowserAssertion {
+  description: string;
+  selector: string | null;
+  expected: string | null;
+  actual: string | null;
+  passed: boolean;
+}
+
+export interface BrowserTestResult {
+  passed: boolean;
+  score: number;
+  summary: string;
+  assertions: BrowserAssertion[];
+  planned_assertions?: string[];
+  screenshots: string[];
+  video_path: string | null;
+  steps: number;
+  error: string | null;
+}
+
 export interface Issue {
   id: number;
   title: string;
@@ -31,6 +51,12 @@ export interface Project {
   selected_repo?: string;
   selected_branch?: string;
   local_path?: string;
+  start_command?: string;
+  project_env_vars?: string;
+  env_content?: string;
+  cookie_file?: string;
+  test_user?: string;
+  test_password?: string;
   created_at: string;
   updated_at: string;
 }

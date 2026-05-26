@@ -17,7 +17,7 @@ from rich.console import Console
 
 from talon.providers import get_provider
 from talon.providers.base import ToolResult
-from talon.tools import TOOL_DEFINITIONS, dispatch_tool
+from talon.tools import TOOL_DEFINITIONS, dispatch_tool, list_files
 from talon.types import PlanPhase, PlanResult
 
 console = Console()
@@ -71,20 +71,72 @@ Output ONLY valid JSON. No prose, no markdown fences.
 _MAX_EXPLORE_TURNS = int(os.getenv("PLANNER_MAX_TURNS", "500"))
 
 
+def _extract_json_object(text: str) -> str:
+    """Return the first top-level JSON object found in *text*, or '' if none."""
+    start = text.find("{")
+    if start == -1:
+        return ""
+    depth = 0
+    in_string = False
+    escape_next = False
+    for i, ch in enumerate(text[start:], start):
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return ""
+
+
+def _workspace_snapshot(working_dir: str, max_files: int = 200) -> str:
+    """Return a compact file-tree string for the workspace root."""
+    try:
+        data = list_files(".", working_dir)
+        files = data.get("files", [])
+        lines = files[:max_files]
+        if len(files) > max_files:
+            lines.append(f"... [{len(files) - max_files} more files]")
+        return "\n".join(lines)
+    except Exception:
+        return "(could not list workspace files)"
+
+
 async def run(goal: str, working_dir: str | None = None) -> PlanResult:
     console.print("\n[bold blue]planner[/bold blue]")
     console.print(f"  Goal: {goal[:100]}")
+    console.print(f"  Working dir: {working_dir or '(none)'}")
 
-    workspace_note = (
-        f"Working directory: {working_dir}\nStart by listing files to orient yourself."
-        if working_dir
-        else "No working directory — plan from scratch based on the goal alone."
-    )
+    if working_dir:
+        snapshot = await asyncio.to_thread(_workspace_snapshot, working_dir)
+        workspace_note = (
+            f"Working directory: {working_dir}\n\n"
+            f"File tree (top-level):\n{snapshot}\n\n"
+            "Use read_file / list_files / search_files to explore further if needed."
+        )
+    else:
+        workspace_note = "No working directory — plan from scratch based on the goal alone."
+
     user_message = f"Goal: {goal}\n\n{workspace_note}"
 
-    provider = get_provider("orchestrator")
+    provider = get_provider("planner")
     messages: list[dict] = [{"role": "user", "content": user_message}]
     tools = _READ_ONLY_TOOLS if working_dir else []
+
+    # Deny-list: these tools are never safe for the planner regardless of what
+    # the model requests (some providers hallucinate tool calls not in the schema).
+    _BLOCKED_TOOLS = frozenset({"write_file", "run_command"})
 
     raw_plan: str = ""
     turns = 0
@@ -95,31 +147,48 @@ async def run(goal: str, working_dir: str | None = None) -> PlanResult:
             system=_PLANNER_SYSTEM,
             messages=messages,
             tools=tools,
-            max_tokens=4096,
+            max_tokens=8192,
         )
         provider.append_assistant(messages, response)
 
         if response.stop_reason == "end_turn":
-            raw_plan = (response.text or "").strip()
-            break
+            candidate = (response.text or "").strip()
+            # Model may prefix with reasoning text — extract the JSON object.
+            extracted = _extract_json_object(candidate)
+            if extracted:
+                raw_plan = extracted
+                break
+            # No JSON yet; nudge the model to emit only the JSON.
+            console.print("  [yellow]planner: no JSON in response, requesting JSON output[/yellow]")
+            _nudge = (
+                "Please output only the JSON plan now — "
+                "no prose, no markdown fences, just the raw JSON object."
+            )
+            messages.append({"role": "user", "content": _nudge})
 
-        tool_results: list[ToolResult] = []
-        for tc in response.tool_calls:
+        async def _call(tc) -> ToolResult:
+            if tc.name in _BLOCKED_TOOLS:
+                console.print(f"  [red]planner: blocked disallowed tool call: {tc.name}[/red]")
+                return ToolResult(
+                    id=tc.id,
+                    content=json.dumps(
+                        {
+                            "error": f"Tool '{tc.name}' is not available to the planner. Use only: read_file, list_files, search_files."
+                        }
+                    ),  # noqa: E501
+                )
             console.print(f"  [dim]planner tool:[/dim] {tc.name}({list(tc.input.values())[:2]})")
             result_str = await asyncio.to_thread(
                 dispatch_tool, tc.name, tc.input, working_dir or "."
             )
-            tool_results.append(ToolResult(id=tc.id, content=result_str))
+            return ToolResult(id=tc.id, content=result_str)
 
-        provider.append_tool_results(messages, tool_results)
+        tool_results = await asyncio.gather(*[_call(tc) for tc in response.tool_calls])
+
+        provider.append_tool_results(messages, list(tool_results))
 
     if not raw_plan:
         raise RuntimeError(f"Planner did not produce a plan after {turns} turns")
-
-    if raw_plan.startswith("```"):
-        raw_plan = raw_plan.split("```")[1]
-        if raw_plan.startswith("json"):
-            raw_plan = raw_plan[4:]
 
     try:
         data = json.loads(raw_plan)
