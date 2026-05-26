@@ -112,6 +112,15 @@ class PlanResult(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
+class BrowserValidationResult(BaseModel):
+    verified_criteria: list[str] = []
+    failed_criteria: list[str] = []
+    summary: str = ""
+    video_path: Optional[str] = None
+    gif_path: Optional[str] = None
+    screenshot_paths: list[str] = []
+
+
 class RunState(BaseModel):
     run_id: str = Field(default_factory=lambda: str(uuid.uuid4())[:12])
     goal: str
@@ -123,7 +132,8 @@ class RunState(BaseModel):
     refinement_results: list[RefinementResult] = []
     final_output: Optional[str] = None
     workspace: Optional[str] = None  # path to isolated run workspace
-    video_path: Optional[str] = None
+    video_path: Optional[str] = None  # kept for backwards compat; prefer browser_result
+    browser_result: Optional[BrowserValidationResult] = None
     pr_url: Optional[str] = None
     board_url: Optional[str] = None
     started_at: datetime = Field(default_factory=datetime.utcnow)
