@@ -155,7 +155,10 @@ async def pause_issue_run(issue_id: int):
         {
             "type": "run_log",
             "issue_id": issue_id,
-            "message": "--> Pause requested. The agent will pause gracefully after the current iteration completes.",
+            "message": (
+                "--> Pause requested. The agent will pause gracefully"
+                " after the current iteration completes."
+            ),
         }
     )
 

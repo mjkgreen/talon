@@ -18,6 +18,20 @@ from typing import Awaitable, Callable
 import litellm
 from rich.console import Console
 
+from talon.providers import get_provider
+from talon.providers.base import ToolResult
+from talon.tools import TOOL_DEFINITIONS, dispatch_tool
+from talon.types import (
+    ExecutorResult,
+    PhaseResult,
+    PhaseStatus,
+    PlanPhase,
+    PlanResult,
+    RefinementResult,
+    Subtask,
+    SubtaskResult,
+)
+
 
 def _is_pause_requested(run_id: str | None) -> bool:
     if not run_id:
@@ -36,20 +50,6 @@ def _get_subagent_sem():
         _subagent_sem = asyncio.Semaphore(int(os.getenv("TALON_SUBAGENT_CONCURRENCY", "4")))
     return _subagent_sem
 
-
-from talon.providers import get_provider
-from talon.providers.base import ToolResult
-from talon.tools import TOOL_DEFINITIONS, dispatch_tool
-from talon.types import (
-    ExecutorResult,
-    PhaseResult,
-    PhaseStatus,
-    PlanPhase,
-    PlanResult,
-    RefinementResult,
-    Subtask,
-    SubtaskResult,
-)
 
 console = Console()
 

@@ -86,9 +86,7 @@ def _build_task(
     )
 
 
-def _parse_result(
-    text: str | None, criteria: list[str]
-) -> tuple[list[str], list[str], str]:
+def _parse_result(text: str | None, criteria: list[str]) -> tuple[list[str], list[str], str]:
     """Parse verified/failed criteria lists from the agent's final output."""
     if not text:
         return [], list(criteria), "Browser agent returned no result"
@@ -133,7 +131,14 @@ async def _preflight_wait(app_url: str, cookie_file: str | None = None) -> None:
                     body = (await page.inner_text("body") or "").strip().lower()
                     if body and not any(
                         kw in body
-                        for kw in ["bundling", "compiling", "loading", "webpack", "metro", "please wait"]
+                        for kw in [
+                            "bundling",
+                            "compiling",
+                            "loading",
+                            "webpack",
+                            "metro",
+                            "please wait",
+                        ]
                     ):
                         break
                     await asyncio.sleep(1.0)
@@ -291,9 +296,7 @@ async def run(
         overall_passed = len(failed_list) == 0
 
     # Screenshot paths from history
-    screenshot_paths: list[str] = [
-        p for p in (history.screenshot_paths() or []) if p is not None
-    ]
+    screenshot_paths: list[str] = [p for p in (history.screenshot_paths() or []) if p is not None]
 
     # Locate and rename recorded video
     video_path: str | None = None
@@ -312,7 +315,7 @@ async def run(
 
     gif_final = gif_path if Path(gif_path).exists() else None
     if gif_final:
-        console.print(f"  [dim]browser-validator[/dim] GIF → proof.gif")
+        console.print("  [dim]browser-validator[/dim] GIF → proof.gif")
 
     console.print(
         f"  [{'green' if overall_passed else 'red'}]"

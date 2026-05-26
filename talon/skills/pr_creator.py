@@ -156,7 +156,8 @@ def _create_github_pr(branch: str, state: RunState, repo: str) -> str | None:
         tok_str = f"{total_tok / 1000:.1f}k" if total_tok >= 1000 else str(total_tok)
         cache_pct = (
             round(state.total_cache_read_tokens / state.total_input_tokens * 100)
-            if state.total_input_tokens > 0 else 0
+            if state.total_input_tokens > 0
+            else 0
         )
         body_lines.append(
             f"- **Cost:** ${state.total_cost_usd:.4f}  ({tok_str} tokens, {cache_pct}% cached)"

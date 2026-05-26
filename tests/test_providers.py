@@ -73,8 +73,13 @@ class TestMakeSystemMessage:
 class TestRunAccumulator:
     @pytest.mark.asyncio
     async def test_accumulates_usage_across_calls(self):
-        acc: dict = {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0,
-                     "cache_created_tokens": 0, "cost_usd": 0.0}
+        acc: dict = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_created_tokens": 0,
+            "cost_usd": 0.0,
+        }
         token = _run_accumulator.set(acc)
         try:
             provider = LiteLLMProvider("anthropic/claude-haiku-4-5-20251001")

@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime
 
 import httpx
 from rich.console import Console
@@ -56,11 +55,13 @@ def _build_body(state: RunState) -> str:
         total_tok = state.total_input_tokens + state.total_output_tokens
         cache_pct = (
             round(state.total_cache_read_tokens / state.total_input_tokens * 100)
-            if state.total_input_tokens > 0 else 0
+            if state.total_input_tokens > 0
+            else 0
         )
         tok_str = f"{total_tok / 1000:.1f}k" if total_tok >= 1000 else str(total_tok)
         lines.append(
-            f"**Tokens:** {tok_str}  |  **Cache hit:** {cache_pct}%  |  **Cost:** ${state.total_cost_usd:.4f}"
+            f"**Tokens:** {tok_str}  |  **Cache hit:** {cache_pct}%"
+            f"  |  **Cost:** ${state.total_cost_usd:.4f}"
         )
 
     if state.pr_url:
@@ -89,7 +90,9 @@ async def _post_to_linear(state: RunState) -> str | None:
     if not LINEAR_API_KEY or not LINEAR_TEAM_ID:
         return None
     try:
-        status_label = state.status.upper() if hasattr(state.status, "upper") else str(state.status).upper()
+        status_label = (
+            state.status.upper() if hasattr(state.status, "upper") else str(state.status).upper()
+        )
         title = f"[{status_label}] {state.goal[:60]}"
         body_escaped = _build_body(state).replace('"', '\\"').replace("\n", "\\n")
         mutation = (
@@ -153,7 +156,9 @@ async def _post_to_github_projects(state: RunState) -> str | None:
         project_id = project["id"]
         project_url = project["url"]
 
-        status_label = state.status.upper() if hasattr(state.status, "upper") else str(state.status).upper()
+        status_label = (
+            state.status.upper() if hasattr(state.status, "upper") else str(state.status).upper()
+        )
         title = f"[{status_label}] {state.goal[:60]}"
         await _graphql(
             """
@@ -214,4 +219,3 @@ async def run(state: RunState) -> str | None:
         )
 
     return board_url
-

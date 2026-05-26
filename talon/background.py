@@ -9,7 +9,6 @@ import asyncio
 import json
 import os
 import traceback
-from datetime import datetime
 from pathlib import Path
 
 from rich.console import Console
@@ -58,7 +57,7 @@ def _check_workspace(workspace_mode: str | None, local_path: str | None) -> str 
 def _reset_stalled_verifications() -> None:
     """Find all run states on disk and reset `verification_running` to False if stuck as True."""
     import json as _json
-    from pathlib import Path as _Path
+
     from rich.console import Console as _Console
 
     _console = _Console()
@@ -76,7 +75,8 @@ def _reset_stalled_verifications() -> None:
                             data = _json.load(f)
                         if isinstance(data, dict) and data.get("verification_running"):
                             _console.print(
-                                f"[yellow]Resetting stalled verification_running for run: {run_id}[/yellow]"
+                                f"[yellow]Resetting stalled verification_running"
+                                f" for run: {run_id}[/yellow]"
                             )
                             data["verification_running"] = False
                             with open(state_file, "w", encoding="utf-8") as f:
@@ -298,7 +298,9 @@ async def _resume_loop(issue_id: int, run_id: str) -> None:
     await broadcast_issue_update(issue_id)
 
     async with sem:
-        console.print(f"\n[bold green]-  Resumed[/bold green] [ui] issue {issue_id} (run: {run_id})")
+        console.print(
+            f"\n[bold green]-  Resumed[/bold green] [ui] issue {issue_id} (run: {run_id})"
+        )
         try:
             from talon.loop import resume
 
@@ -390,6 +392,7 @@ async def _run_verification_bg(issue_id: int, run_id: str) -> None:
         if project_env_vars_raw:
             try:
                 import json as _json
+
                 project_env_vars = _json.loads(project_env_vars_raw)
             except Exception:
                 pass
@@ -472,6 +475,7 @@ async def _run_verification_bg(issue_id: int, run_id: str) -> None:
                 )
                 state.verification_running = False
                 from talon.loop import _save_state as _ss_inner
+
                 _ss_inner(state)
                 await manager.broadcast(
                     {
@@ -580,10 +584,12 @@ async def _run_verification_bg(issue_id: int, run_id: str) -> None:
     finally:
         if _server_proc is not None and _server_port is not None:
             from talon.skills import workspace_starter as _ws_mod
+
             await _ws_mod.stop_workspace_server(_server_proc, _server_port)
         # If the task exited before clearing the flag (exception path), clear it now.
         if state is not None and state.verification_running:
             from talon.loop import _save_state as _ss
+
             state.verification_running = False
             _ss(state)
             await manager.broadcast(

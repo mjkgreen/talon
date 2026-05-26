@@ -19,6 +19,7 @@ def clear_file_cache() -> None:
     """Clear the in-process file read cache (called between runs or in tests)."""
     _file_cache.clear()
 
+
 # ---------------------------------------------------------------------------
 # Tool schemas (passed to Anthropic messages.create as `tools=`)
 # ---------------------------------------------------------------------------

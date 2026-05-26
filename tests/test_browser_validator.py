@@ -8,7 +8,6 @@ import pytest
 
 from talon.types import BrowserAssertion, BrowserTestResult, PlanResult, RunState
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -44,10 +43,7 @@ class TestParseResult:
     def test_json_with_failed_parsed(self):
         from talon.skills.browser_validator import _parse_result
 
-        text = (
-            'Some prose here.\n'
-            '{"verified": ["A"], "failed": ["B"], "summary": "One failed"}'
-        )
+        text = 'Some prose here.\n{"verified": ["A"], "failed": ["B"], "summary": "One failed"}'
         v, f, s = _parse_result(text, ["A", "B"])
         assert "A" in v
         assert "B" in f
@@ -109,9 +105,7 @@ class TestBrowserValidatorRun:
         from talon.skills import browser_validator
 
         state = RunState(goal="Page should load")
-        history = _make_history(
-            '{"verified": [], "failed": [], "summary": "Page loaded fine"}'
-        )
+        history = _make_history('{"verified": [], "failed": [], "summary": "Page loaded fine"}')
         mock_agent = MagicMock()
         mock_agent.run = AsyncMock(return_value=history)
 
@@ -120,8 +114,13 @@ class TestBrowserValidatorRun:
                 with patch("talon.skills.browser_validator.Agent", return_value=mock_agent):
                     with patch("talon.skills.browser_validator.BrowserProfile"):
                         with patch("talon.skills.browser_validator.ChatLiteLLM"):
-                            with patch("talon.skills.browser_validator.resolve_model", return_value="m"):
-                                with patch("talon.skills.browser_validator._preflight_wait", new_callable=AsyncMock):
+                            with patch(
+                                "talon.skills.browser_validator.resolve_model", return_value="m"
+                            ):
+                                with patch(
+                                    "talon.skills.browser_validator._preflight_wait",
+                                    new_callable=AsyncMock,
+                                ):
                                     result = await browser_validator.run(
                                         state, "http://localhost:8080", str(tmp_path)
                                     )
@@ -132,7 +131,9 @@ class TestBrowserValidatorRun:
     async def test_run_with_criteria_builds_assertions(self, tmp_path):
         from talon.skills import browser_validator
 
-        plan = PlanResult(approach="t", phases=[], success_criteria=["Login works", "Dashboard loads"])
+        plan = PlanResult(
+            approach="t", phases=[], success_criteria=["Login works", "Dashboard loads"]
+        )
         state = RunState(goal="Test login", plan_result=plan)
         history = _make_history(
             '{"verified": ["Login works", "Dashboard loads"], "failed": [], "summary": "All good"}'
@@ -145,8 +146,13 @@ class TestBrowserValidatorRun:
                 with patch("talon.skills.browser_validator.Agent", return_value=mock_agent):
                     with patch("talon.skills.browser_validator.BrowserProfile"):
                         with patch("talon.skills.browser_validator.ChatLiteLLM"):
-                            with patch("talon.skills.browser_validator.resolve_model", return_value="m"):
-                                with patch("talon.skills.browser_validator._preflight_wait", new_callable=AsyncMock):
+                            with patch(
+                                "talon.skills.browser_validator.resolve_model", return_value="m"
+                            ):
+                                with patch(
+                                    "talon.skills.browser_validator._preflight_wait",
+                                    new_callable=AsyncMock,
+                                ):
                                     result = await browser_validator.run(
                                         state, "http://localhost:8080", str(tmp_path)
                                     )
@@ -174,8 +180,13 @@ class TestBrowserValidatorRun:
                 with patch("talon.skills.browser_validator.Agent", return_value=mock_agent):
                     with patch("talon.skills.browser_validator.BrowserProfile"):
                         with patch("talon.skills.browser_validator.ChatLiteLLM"):
-                            with patch("talon.skills.browser_validator.resolve_model", return_value="m"):
-                                with patch("talon.skills.browser_validator._preflight_wait", new_callable=AsyncMock):
+                            with patch(
+                                "talon.skills.browser_validator.resolve_model", return_value="m"
+                            ):
+                                with patch(
+                                    "talon.skills.browser_validator._preflight_wait",
+                                    new_callable=AsyncMock,
+                                ):
                                     result = await browser_validator.run(
                                         state, "http://localhost:8080", str(tmp_path)
                                     )
@@ -197,8 +208,13 @@ class TestBrowserValidatorRun:
                 with patch("talon.skills.browser_validator.Agent", return_value=mock_agent):
                     with patch("talon.skills.browser_validator.BrowserProfile"):
                         with patch("talon.skills.browser_validator.ChatLiteLLM"):
-                            with patch("talon.skills.browser_validator.resolve_model", return_value="m"):
-                                with patch("talon.skills.browser_validator._preflight_wait", new_callable=AsyncMock):
+                            with patch(
+                                "talon.skills.browser_validator.resolve_model", return_value="m"
+                            ):
+                                with patch(
+                                    "talon.skills.browser_validator._preflight_wait",
+                                    new_callable=AsyncMock,
+                                ):
                                     result = await browser_validator.run(
                                         state, "http://localhost:8080", str(tmp_path)
                                     )
@@ -222,8 +238,13 @@ class TestBrowserValidatorRun:
                 with patch("talon.skills.browser_validator.Agent", return_value=mock_agent):
                     with patch("talon.skills.browser_validator.BrowserProfile"):
                         with patch("talon.skills.browser_validator.ChatLiteLLM"):
-                            with patch("talon.skills.browser_validator.resolve_model", return_value="m"):
-                                with patch("talon.skills.browser_validator._preflight_wait", new_callable=AsyncMock):
+                            with patch(
+                                "talon.skills.browser_validator.resolve_model", return_value="m"
+                            ):
+                                with patch(
+                                    "talon.skills.browser_validator._preflight_wait",
+                                    new_callable=AsyncMock,
+                                ):
                                     result = await browser_validator.run(
                                         state, "http://localhost:8080", str(tmp_path)
                                     )
@@ -251,8 +272,13 @@ class TestBrowserValidatorRun:
                 with patch("talon.skills.browser_validator.Agent", return_value=mock_agent):
                     with patch("talon.skills.browser_validator.BrowserProfile"):
                         with patch("talon.skills.browser_validator.ChatLiteLLM"):
-                            with patch("talon.skills.browser_validator.resolve_model", return_value="m"):
-                                with patch("talon.skills.browser_validator._preflight_wait", new_callable=AsyncMock):
+                            with patch(
+                                "talon.skills.browser_validator.resolve_model", return_value="m"
+                            ):
+                                with patch(
+                                    "talon.skills.browser_validator._preflight_wait",
+                                    new_callable=AsyncMock,
+                                ):
                                     await browser_validator.run(
                                         state,
                                         "http://localhost:8080",

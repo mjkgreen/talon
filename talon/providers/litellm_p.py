@@ -231,7 +231,12 @@ class LiteLLMProvider:
 
         acc = _run_accumulator.get()
         if acc is not None and usage_data:
-            for key in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_created_tokens"):
+            for key in (
+                "input_tokens",
+                "output_tokens",
+                "cache_read_tokens",
+                "cache_created_tokens",
+            ):
                 acc[key] = acc.get(key, 0) + (usage_data.get(key) or 0)
             acc["cost_usd"] = acc.get("cost_usd", 0.0) + (usage_data.get("cost_usd") or 0.0)
 

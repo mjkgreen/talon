@@ -17,10 +17,10 @@ from fastapi.staticfiles import StaticFiles
 from rich.console import Console
 
 from talon import db
+from talon.background import _reset_stalled_verifications
 from talon.routers import auth, github, issues, projects, runs, settings, webhooks, websocket
 from talon.routers.settings import apply_db_settings_to_env
 from talon.routers.websocket import broadcast_issue_update
-from talon.background import _reset_stalled_verifications
 
 console = Console()
 

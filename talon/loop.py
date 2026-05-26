@@ -407,7 +407,9 @@ async def run(
                 await on_step(state)
 
         # --- Step 4: Browser validate (optional) ---
-        effective_url = app_url or (os.getenv("DEFAULT_APP_URL") if state.ui_changes_detected else None)
+        effective_url = app_url or (
+            os.getenv("DEFAULT_APP_URL") if state.ui_changes_detected else None
+        )
         _server_proc: asyncio.subprocess.Process | None = None
         _server_port: int | None = None
         try:

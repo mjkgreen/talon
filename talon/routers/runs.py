@@ -60,6 +60,7 @@ async def get_run_gif(run_id: str):
 async def get_run_screenshot(run_id: str, filename: str):
     """Serve individual screenshot PNGs from the run's video directory."""
     from pathlib import Path as _Path
+
     runs_dir = os.getenv("RUNS_DIR", "./runs")
     run_dir = _Path(os.path.realpath(os.path.join(runs_dir, run_id)))
     screenshot_path = _Path(os.path.realpath(os.path.join(str(run_dir), filename)))
