@@ -3,7 +3,7 @@
 import pytest
 
 import talon.db as db
-from talon.server import _has_llm_configured
+from talon.routers.settings import _has_llm_configured
 
 
 @pytest.fixture(autouse=True)
