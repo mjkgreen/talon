@@ -54,7 +54,7 @@ async def apply_db_settings_to_env() -> None:
     settings = await db.get_all_settings()
     for db_key, env_key in _DB_TO_ENV.items():
         value = settings.get(db_key)
-        if value and not os.environ.get(env_key):
+        if value:
             os.environ[env_key] = value
 
 

@@ -202,6 +202,9 @@ async def run(
 
     max_steps = int(os.getenv("BROWSER_TEST_MAX_STEPS", str(MAX_STEPS)))
     max_failures = int(os.getenv("BROWSER_TEST_MAX_FAILURES", str(MAX_FAILURES)))
+    console.print(
+        f"  [dim]browser-validator[/dim] max_steps={max_steps}  max_failures={max_failures}"
+    )
     criteria = state.plan_result.success_criteria if state.plan_result else []
     planned_assertions = list(criteria)
 
@@ -251,7 +254,7 @@ async def run(
                     assertions=[],
                     planned_assertions=planned_assertions,
                     screenshots=[],
-                    video_path=str(video_dir / "proof.webm"),
+                    video_path=None,
                     steps=step_num,
                 )
             )
@@ -343,18 +346,26 @@ async def run(
         elif src.name:
             screenshot_paths.append(src.name)
 
-    # Locate and rename recorded video (Playwright may save in a subdir)
+    # Locate and rename recorded video.
+    # browser-use 0.12+ saves via its recording watchdog as a UUID-named .mp4;
+    # Playwright direct recording saves .webm. Search for both.
     video_path: str | None = None
-    webm_files = [f for f in video_dir.rglob("*.webm") if f.name != "proof.webm"]
-    if webm_files:
-        webm_files.sort(key=lambda f: f.stat().st_size, reverse=True)
-        target = video_dir / "proof.webm"
+    _proof_names = {"proof.webm", "proof.mp4"}
+    video_candidates = [
+        f
+        for f in video_dir.rglob("*")
+        if f.suffix in {".mp4", ".webm"} and f.name not in _proof_names
+    ]
+    if video_candidates:
+        video_candidates.sort(key=lambda f: f.stat().st_size, reverse=True)
+        src_video = video_candidates[0]
+        target = video_dir / f"proof{src_video.suffix}"
         try:
             if target.exists():
                 target.unlink()
-            webm_files[0].rename(target)
+            src_video.rename(target)
         except Exception:
-            target = webm_files[0]
+            target = src_video
         video_path = str(target)
         console.print(f"  [dim]browser-validator[/dim] video → {target.name}")
 
