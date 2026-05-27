@@ -166,12 +166,14 @@ def _create_github_pr(branch: str, state: RunState, repo: str) -> str | None:
     if state.browser_result:
         br = state.browser_result
         body_lines += ["", "## Browser validation"]
-        if br.verified_criteria:
+        verified = [a.description for a in br.assertions if a.passed]
+        failed = [a.description for a in br.assertions if not a.passed]
+        if verified:
             body_lines.append("")
-            body_lines.extend(f"- ✅ {c}" for c in br.verified_criteria)
-        if br.failed_criteria:
+            body_lines.extend(f"- ✅ {c}" for c in verified)
+        if failed:
             body_lines.append("")
-            body_lines.extend(f"- ❌ {c}" for c in br.failed_criteria)
+            body_lines.extend(f"- ❌ {c}" for c in failed)
         if br.summary:
             body_lines += ["", br.summary]
         # Embed GIF inline if we have a public URL to serve it from

@@ -50,6 +50,16 @@ produce a phased execution plan for the given goal.
   Typical split: schema/config → models/services → API routes → tests → integration.
 - success_criteria: concrete and testable ("pytest exits 0", "GET /health returns 200").
 - approach: ≤3 sentences high-level strategy.
+- validation_steps: ordered list of concrete browser navigation instructions a QA agent
+  should follow to verify the goal. Write these while you still have the workspace open —
+  you can see the routes, auth flows, and UI structure. Each step is a single imperative
+  sentence the browser agent can execute literally. Include:
+    1. A login step if the app requires authentication (include the login URL and note
+       "use test credentials").
+    2. Navigation steps (exact URLs or named UI elements like tab labels/menu items).
+    3. Interaction steps (clicks, toggles, form submissions) that reach the feature.
+    4. Verification steps matching each success criterion ("Verify that…").
+  Aim for 4–8 steps. Omit steps the browser agent can discover itself.
 
 ## Output format
 Output ONLY valid JSON. No prose, no markdown fences.
@@ -64,7 +74,13 @@ Output ONLY valid JSON. No prose, no markdown fences.
       "dependencies": []
     }
   ],
-  "success_criteria": ["<verifiable criterion>", ...]
+  "success_criteria": ["<verifiable criterion>", ...],
+  "validation_steps": [
+    "Navigate to <app_url>/login and log in with test credentials",
+    "Click the '<tab name>' tab in the navigation bar",
+    "Perform the action that exercises the feature",
+    "Verify that <observable outcome matching a success criterion>"
+  ]
 }
 """
 
@@ -203,11 +219,12 @@ async def run(goal: str, working_dir: str | None = None) -> PlanResult:
         constraints=data.get("constraints", []),
         phases=[PlanPhase(**p) for p in data.get("phases", [])],
         success_criteria=data.get("success_criteria", []),
+        validation_steps=data.get("validation_steps", []),
     )
 
     console.print(f"  Approach: {plan.approach[:120]}")
     console.print(
         f"  Phases: {len(plan.phases)}  Criteria: {len(plan.success_criteria)}"
-        f"  Explore turns: {turns}"
+        f"  Steps: {len(plan.validation_steps)}  Explore turns: {turns}"
     )
     return plan

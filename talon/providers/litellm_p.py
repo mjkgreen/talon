@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import random
 from contextvars import ContextVar
@@ -41,6 +42,11 @@ from talon.providers.base import ProviderResponse, ToolCall, ToolResult
 litellm.drop_params = True  # silently drop unsupported params per-provider
 litellm.telemetry = False
 litellm.turn_off_message_logging = True
+litellm.set_verbose = False
+
+logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+logging.getLogger("LiteLLM Router").setLevel(logging.WARNING)
+logging.getLogger("LiteLLM Proxy").setLevel(logging.WARNING)
 
 _DEFAULT_MODEL = "anthropic/claude-sonnet-4-6"
 _DEFAULT_MAX_TOKENS = 8096

@@ -20,6 +20,7 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -52,6 +53,7 @@ console = Console()
 
 ENABLED = os.getenv("BROWSER_VALIDATOR_ENABLED", "false").lower() == "true"
 MAX_STEPS = int(os.getenv("BROWSER_TEST_MAX_STEPS", "20"))
+MAX_FAILURES = int(os.getenv("BROWSER_TEST_MAX_FAILURES", "10"))
 ACTION_TIMEOUT = int(os.getenv("BROWSER_ACTION_TIMEOUT", "10000"))
 
 
@@ -61,6 +63,7 @@ def _build_task(
     criteria: list[str],
     test_user: str | None,
     test_password: str | None,
+    validation_steps: list[str] | None = None,
 ) -> str:
     criteria_text = (
         "\n".join(f"- {c}" for c in criteria)
@@ -74,13 +77,26 @@ def _build_task(
             f"  Username/Email: {test_user or '(not set)'}\n"
             f"  Password: {test_password or '(not set)'}"
         )
+    steps_section = ""
+    if validation_steps:
+        numbered = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(validation_steps))
+        steps_section = (
+            f"\n\nNavigation steps (follow in order — generated from the app's "
+            f"routes and UI structure):\n{numbered}"
+        )
+    nav_instruction = (
+        "Follow the navigation steps above in order, then verify each success criterion."
+        if validation_steps
+        else "Navigate the app, interact as a real user would, and verify each criterion."
+    )
     return (
         f"You are a QA engineer validating a web application.\n\n"
         f"App URL: {app_url}\n"
         f"Goal implemented: {goal}\n\n"
         f"Success criteria to verify:\n{criteria_text}"
+        f"{steps_section}"
         f"{creds}\n\n"
-        f"Navigate the app, interact as a real user would, and verify each criterion. "
+        f"{nav_instruction} "
         f"For each criterion state whether it PASSED (✓) or FAILED (✗) and why.\n\n"
         f"When done, output ONLY this JSON on the final line "
         f"(no markdown fences, no trailing text):\n"
@@ -185,6 +201,7 @@ async def run(
     console.print(f"\n[bold green]browser-validator[/bold green] {app_url}")
 
     max_steps = int(os.getenv("BROWSER_TEST_MAX_STEPS", str(MAX_STEPS)))
+    max_failures = int(os.getenv("BROWSER_TEST_MAX_FAILURES", str(MAX_FAILURES)))
     criteria = state.plan_result.success_criteria if state.plan_result else []
     planned_assertions = list(criteria)
 
@@ -211,7 +228,15 @@ async def run(
     console.print("  [dim]browser-validator[/dim] pre-flight compilation check…")
     await _preflight_wait(app_url, cookie_file=cookie_file)
 
-    task = _build_task(state.goal, app_url, criteria, test_user, test_password)
+    reviewer_steps = (
+        state.review_results[-1].navigation_steps
+        if state.review_results and state.review_results[-1].navigation_steps
+        else []
+    )
+    validation_steps = reviewer_steps or (
+        state.plan_result.validation_steps if state.plan_result else []
+    )
+    task = _build_task(state.goal, app_url, criteria, test_user, test_password, validation_steps)
 
     steps = [0]
 
@@ -247,7 +272,7 @@ async def run(
 
     profile = BrowserProfile(
         headless=True,
-        record_video_dir=video_dir,
+        record_video_dir=str(video_dir),
         record_video_size={"width": 1280, "height": 720},
         storage_state=storage_state,
     )
@@ -256,7 +281,7 @@ async def run(
         task=task,
         llm=llm,
         browser_profile=profile,
-        max_failures=3,
+        max_failures=max_failures,
         generate_gif=gif_path,
         register_new_step_callback=_on_step,
     )
@@ -299,12 +324,28 @@ async def run(
         score = len(verified) / total if total > 0 else 1.0
         overall_passed = len(failed_list) == 0
 
-    # Screenshot paths from history
-    screenshot_paths: list[str] = [p for p in (history.screenshot_paths() or []) if p is not None]
+    # Copy screenshots into the run directory and store just the basename.
+    # The server route /api/runs/{run_id}/screenshots/{filename} serves from runs/{run_id}/,
+    # so files must live there — not in whatever temp dir browser-use chose.
+    screenshot_paths: list[str] = []
+    for raw in history.screenshot_paths() or []:
+        if not raw:
+            continue
+        src = Path(raw)
+        if src.exists():
+            dest = video_dir / src.name
+            try:
+                if src != dest:
+                    shutil.copy2(src, dest)
+            except Exception:
+                dest = src
+            screenshot_paths.append(dest.name)
+        elif src.name:
+            screenshot_paths.append(src.name)
 
-    # Locate and rename recorded video
+    # Locate and rename recorded video (Playwright may save in a subdir)
     video_path: str | None = None
-    webm_files = [f for f in video_dir.glob("*.webm") if f.name != "proof.webm"]
+    webm_files = [f for f in video_dir.rglob("*.webm") if f.name != "proof.webm"]
     if webm_files:
         webm_files.sort(key=lambda f: f.stat().st_size, reverse=True)
         target = video_dir / "proof.webm"

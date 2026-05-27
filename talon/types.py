@@ -79,6 +79,7 @@ class ReviewFeedback(BaseModel):
     criteria: list[ReviewCriterion]
     blocking_issues: list[str]
     suggestions: list[str]
+    navigation_steps: list[str] = []
     iteration: int
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
@@ -110,6 +111,7 @@ class PlanResult(BaseModel):
     constraints: list[str] = []
     phases: list[PlanPhase] = []
     success_criteria: list[str] = []
+    validation_steps: list[str] = []
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 

@@ -36,6 +36,7 @@ class _VerdictPayload(BaseModel):
     criteria: list[ReviewCriterion] = []
     blocking_issues: list[str] = []
     suggestions: list[str] = []
+    navigation_steps: list[str] = []
 
 
 _REVIEWER_SYSTEM = """\
@@ -59,13 +60,24 @@ Output ONLY valid JSON matching this schema (no prose, no markdown fences):
     }
   ],
   "blocking_issues": ["<issue that MUST be fixed before passing>"],
-  "suggestions": ["<non-blocking improvement>"]
+  "suggestions": ["<non-blocking improvement>"],
+  "navigation_steps": [
+    "<ordered imperative sentence for browser QA agent to follow>",
+    "..."
+  ]
 }
 
 Verdict rules:
 - "pass"       → score >= 0.85 AND no blocking_issues
 - "needs_work" → score >= 0.5 AND at most 2 blocking_issues (refiner can fix these)
 - "fail"       → score < 0.5 OR more than 2 blocking_issues
+
+navigation_steps: after reading the implementation, write an ordered list of browser
+navigation instructions a QA agent can follow to verify the goal. You now know the exact
+routes, components, and UI elements that were built — use that knowledge to write precise
+steps. Include login (with URL), navigation to the feature (exact path or named UI
+element), interaction steps, and verification steps matching each criterion. Aim for 4–8
+steps.
 
 Be strict but fair. Verify claims by reading files, don't take the agent's word for it.
 """
@@ -281,6 +293,7 @@ async def run(
         criteria=payload.criteria,
         blocking_issues=payload.blocking_issues,
         suggestions=payload.suggestions,
+        navigation_steps=payload.navigation_steps,
         iteration=iteration,
     )
 

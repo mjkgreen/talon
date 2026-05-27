@@ -4,12 +4,13 @@ Ensure playwright Chromium browsers are available at runtime.
 Called once at server startup as a background task so browser validation
 works out of the box in the packaged exe — no manual `playwright install`.
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import subprocess
+import sys
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -27,21 +28,8 @@ def _chromium_installed() -> bool:
 
 def _install_chromium() -> None:
     try:
-        from playwright._impl._driver import compute_driver_executable
-
-        driver = compute_driver_executable()
-
-        # get_driver_env was added in playwright ~1.30; fall back to os.environ.
-        try:
-            from playwright._impl._driver import get_driver_env
-
-            env = get_driver_env()
-        except ImportError:
-            env = os.environ.copy()
-
         result = subprocess.run(
-            [str(driver), "install", "chromium"],
-            env=env,
+            [sys.executable, "-m", "playwright", "install", "chromium"],
             capture_output=True,
             text=True,
         )

@@ -26,6 +26,44 @@ def _make_history(
 
 
 # ---------------------------------------------------------------------------
+# Unit tests: _build_task
+# ---------------------------------------------------------------------------
+
+
+class TestBuildTask:
+    def test_no_steps_omits_steps_section(self):
+        from talon.skills.browser_validator import _build_task
+
+        task = _build_task("My goal", "http://localhost:3000", ["Login works"], None, None)
+        assert "Navigation steps" not in task
+        assert "Navigate the app, interact as a real user would" in task
+
+    def test_with_steps_includes_numbered_list(self):
+        from talon.skills.browser_validator import _build_task
+
+        steps = [
+            "Navigate to http://localhost:3000/login and log in with test credentials",
+            "Click the 'Maps' tab",
+            "Verify a polyline is visible on the map",
+        ]
+        task = _build_task(
+            "My goal", "http://localhost:3000", ["Map shows route"], None, None, steps
+        )
+        assert "Navigation steps" in task
+        assert "1. Navigate to http://localhost:3000/login" in task
+        assert "2. Click the 'Maps' tab" in task
+        assert "3. Verify a polyline" in task
+        assert "Follow the navigation steps above in order" in task
+
+    def test_steps_appear_before_credentials(self):
+        from talon.skills.browser_validator import _build_task
+
+        steps = ["Navigate to /login", "Log in with test credentials"]
+        task = _build_task("g", "http://localhost:3000", [], "user@test.com", "secret", steps)
+        assert task.index("Navigation steps") < task.index("Test credentials")
+
+
+# ---------------------------------------------------------------------------
 # Unit tests: _parse_result
 # ---------------------------------------------------------------------------
 
