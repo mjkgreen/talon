@@ -9,11 +9,12 @@ for the full priority/override logic.
 
 from __future__ import annotations
 
-from talon.config import resolve_model
+from talon.config import resolve_fallback_models, resolve_model
 from talon.providers.base import BaseProvider
 from talon.providers.litellm_p import LiteLLMProvider
 
 
 def get_provider(role: str = "subagent") -> BaseProvider:
     model = resolve_model(role)
-    return LiteLLMProvider(model=model)
+    fallbacks = resolve_fallback_models(role, model)
+    return LiteLLMProvider(model=model, fallback_models=fallbacks)

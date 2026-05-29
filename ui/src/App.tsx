@@ -35,6 +35,7 @@ export default function App() {
     reviewerMaxToolTurns, setReviewerMaxToolTurns,
     editLocalDirectly, setEditLocalDirectly,
     pushOnPass, setPushOnPass,
+    autoFallback, setAutoFallback,
     wizardStep, setWizardStep,
     wizardKeys, setWizardKeys,
     savingWizardKeys, setSavingWizardKeys,
@@ -516,6 +517,15 @@ export default function App() {
     });
   };
 
+  const toggleAutoFallback = async (value: boolean) => {
+    setAutoFallback(value);
+    await fetch(apiUrl("/api/settings"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ auto_fallback: value ? "true" : "false" }),
+    });
+  };
+
   const createProject = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newProjectName.trim()) return;
@@ -745,6 +755,8 @@ export default function App() {
           onConfigureWorkspace={() => { setSettingsOpen(false); setWizardStep(2); }}
           onToggleEditLocal={toggleEditLocalDirectly}
           onTogglePushOnPass={togglePushOnPass}
+          autoFallback={autoFallback}
+          onToggleAutoFallback={toggleAutoFallback}
         />
       )}
 

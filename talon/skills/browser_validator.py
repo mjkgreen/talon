@@ -57,6 +57,85 @@ MAX_FAILURES = int(os.getenv("BROWSER_TEST_MAX_FAILURES", "10"))
 ACTION_TIMEOUT = int(os.getenv("BROWSER_ACTION_TIMEOUT", "10000"))
 
 
+def _discover_routes(workspace: str) -> list[str]:
+    """Scan a Next.js workspace and return verified route paths from the filesystem."""
+    ws = Path(workspace)
+    routes: list[str] = []
+
+    def _app_path_to_route(rel: str) -> str:
+        rel = rel.replace("\\", "/")
+        # Strip leading 'app/' prefix (relative to the base dir we searched under)
+        if rel.startswith("app/"):
+            rel = rel[4:]
+        # Strip trailing page.* filename
+        for suffix in (
+            "/page.tsx",
+            "/page.ts",
+            "/page.jsx",
+            "/page.js",
+            "page.tsx",
+            "page.ts",
+            "page.jsx",
+            "page.js",
+        ):
+            if rel.endswith(suffix):
+                rel = rel[: -len(suffix)]
+                break
+        # Strip Next.js route groups like (auth)/ or (tabs)/
+        rel = re.sub(r"\([^/]+\)/", "", rel)
+        rel = rel.strip("/")
+        return "/" + rel if rel else "/"
+
+    def _pages_path_to_route(rel: str) -> str:
+        rel = rel.replace("\\", "/")
+        if rel.startswith("pages/"):
+            rel = rel[6:]
+        for ext in (".tsx", ".ts", ".jsx", ".js"):
+            if rel.endswith(ext):
+                rel = rel[: -len(ext)]
+                break
+        if rel == "index" or rel.endswith("/index"):
+            rel = rel[:-6].rstrip("/") if rel.endswith("/index") else ""
+        rel = rel.strip("/")
+        return "/" + rel if rel else "/"
+
+    # Support both root-level and src/ variants (e.g. src/app/, src/pages/)
+    for base in (ws, ws / "src"):
+        app_dir = base / "app"
+        if app_dir.is_dir():
+            for f in app_dir.rglob("*"):
+                if f.is_file() and f.stem == "page" and f.suffix in {".tsx", ".ts", ".jsx", ".js"}:
+                    try:
+                        rel = str(f.relative_to(base))
+                        routes.append(_app_path_to_route(rel))
+                    except Exception:
+                        pass
+
+        pages_dir = base / "pages"
+        if pages_dir.is_dir():
+            for f in pages_dir.rglob("*"):
+                if not f.is_file() or f.suffix not in {".tsx", ".ts", ".jsx", ".js"}:
+                    continue
+                if f.stem.startswith("_"):
+                    continue
+                try:
+                    rel = str(f.relative_to(base)).replace("\\", "/")
+                    if rel.startswith("pages/api/"):
+                        continue
+                    routes.append(_pages_path_to_route(rel))
+                except Exception:
+                    pass
+
+    seen: set[str] = set()
+    result: list[str] = []
+    for r in routes:
+        if r not in seen:
+            seen.add(r)
+            result.append(r)
+    result.sort()
+    return result
+
+
 def _build_task(
     goal: str,
     app_url: str,
@@ -64,6 +143,7 @@ def _build_task(
     test_user: str | None,
     test_password: str | None,
     validation_steps: list[str] | None = None,
+    known_routes: list[str] | None = None,
 ) -> str:
     criteria_text = (
         "\n".join(f"- {c}" for c in criteria)
@@ -76,6 +156,15 @@ def _build_task(
             f"\n\nTest credentials (use if prompted to log in):\n"
             f"  Username/Email: {test_user or '(not set)'}\n"
             f"  Password: {test_password or '(not set)'}"
+        )
+    routes_section = ""
+    if known_routes:
+        route_list = "\n".join(f"- {r}" for r in known_routes)
+        routes_section = (
+            f"\n\nVerified routes (confirmed from the codebase — use these exact paths):\n"
+            f"{route_list}\n"
+            f"If a navigation step references a path not in this list, "
+            f"navigate to the closest matching verified route instead."
         )
     steps_section = ""
     if validation_steps:
@@ -94,6 +183,7 @@ def _build_task(
         f"App URL: {app_url}\n"
         f"Goal implemented: {goal}\n\n"
         f"Success criteria to verify:\n{criteria_text}"
+        f"{routes_section}"
         f"{steps_section}"
         f"{creds}\n\n"
         f"{nav_instruction} "
@@ -231,15 +321,50 @@ async def run(
     console.print("  [dim]browser-validator[/dim] pre-flight compilation check…")
     await _preflight_wait(app_url, cookie_file=cookie_file)
 
+    # Fast programmatic route scan (Next.js only) used as a hint for nav_planner
+    known_routes: list[str] = []
+    if state.workspace:
+        try:
+            known_routes = _discover_routes(state.workspace)
+        except Exception:
+            pass
+
+    # Nav planner: workspace-verified navigation steps (highest priority)
+    nav_steps: list[str] = []
+    if state.workspace:
+        try:
+            from talon.skills import nav_planner as _nav_planner
+
+            nav_steps = await _nav_planner.run(
+                goal=state.goal,
+                workspace=state.workspace,
+                criteria=criteria,
+                app_url=app_url,
+                hint_routes=known_routes or None,
+            )
+        except Exception as e:
+            console.print(f"  [yellow]browser-validator[/yellow] nav-planner failed: {e}")
+
     reviewer_steps = (
         state.review_results[-1].navigation_steps
         if state.review_results and state.review_results[-1].navigation_steps
         else []
     )
-    validation_steps = reviewer_steps or (
-        state.plan_result.validation_steps if state.plan_result else []
+    # Priority: nav_planner (workspace-verified) > reviewer steps > plan steps
+    validation_steps = (
+        nav_steps
+        or reviewer_steps
+        or (state.plan_result.validation_steps if state.plan_result else [])
     )
-    task = _build_task(state.goal, app_url, criteria, test_user, test_password, validation_steps)
+    task = _build_task(
+        state.goal,
+        app_url,
+        criteria,
+        test_user,
+        test_password,
+        validation_steps,
+        known_routes or None,
+    )
 
     steps = [0]
 

@@ -38,12 +38,10 @@ ROLE_ENV: dict[str, str] = {
 ROLE_PRIORITY: dict[str, list[str]] = {
     # Orchestrator: decomposes the goal — needs strong reasoning & planning
     "orchestrator": [
-        "anthropic/claude-opus-4-7",
         "openai/o3",
-        "gemini/gemini-flash-latest",
         "anthropic/claude-sonnet-4-6",
-        "openai/gpt-4o",
         "gemini/gemini-flash-latest",
+        "openai/gpt-4o",
         "groq/llama3-70b-8192",
         "mistral/mistral-large-latest",
     ],
@@ -52,7 +50,6 @@ ROLE_PRIORITY: dict[str, list[str]] = {
         "anthropic/claude-sonnet-4-6",
         "openai/gpt-4o",
         "gemini/gemini-flash-latest",
-        "anthropic/claude-opus-4-7",
         "gemini/gemini-flash-latest",
         "groq/llama3-70b-8192",
         "mistral/mistral-large-latest",
@@ -61,8 +58,6 @@ ROLE_PRIORITY: dict[str, list[str]] = {
     "subagent": [
         "anthropic/claude-sonnet-4-6",
         "openai/gpt-4o",
-        "anthropic/claude-opus-4-7",
-        "gemini/gemini-flash-latest",
         "gemini/gemini-flash-latest",
         "mistral/mistral-large-latest",
         "groq/llama3-70b-8192",
@@ -71,10 +66,8 @@ ROLE_PRIORITY: dict[str, list[str]] = {
     ],
     # Reviewer: strict quality gate — needs thorough analysis, like orchestrator
     "reviewer": [
-        "anthropic/claude-opus-4-7",
-        "openai/o3",
-        "gemini/gemini-flash-latest",
         "anthropic/claude-sonnet-4-6",
+        "openai/o3",
         "openai/gpt-4o",
         "gemini/gemini-flash-latest",
         "groq/llama3-70b-8192",
@@ -85,8 +78,6 @@ ROLE_PRIORITY: dict[str, list[str]] = {
         "anthropic/claude-sonnet-4-6",
         "gemini/gemini-flash-latest",
         "openai/gpt-4o",
-        "anthropic/claude-haiku-4-5-20251001",
-        "gemini/gemini-1.5-flash",
         "openai/gpt-4o-mini",
         "groq/llama3-70b-8192",
         "mistral/mistral-large-latest",
@@ -100,6 +91,12 @@ def _provider_of(model: str) -> str:
 
 def _available_providers() -> set[str]:
     return {p for p, key in _PROVIDER_KEYS.items() if os.getenv(key)}
+
+
+def resolve_fallback_models(role: str, primary: str) -> list[str]:
+    """Return ordered fallback models for *role*, excluding *primary* and unavailable providers."""
+    available = _available_providers()
+    return [m for m in ROLE_PRIORITY.get(role, []) if m != primary and _provider_of(m) in available]
 
 
 def resolve_model(role: str) -> str:

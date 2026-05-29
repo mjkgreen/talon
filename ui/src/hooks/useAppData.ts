@@ -31,6 +31,7 @@ export function useAppData() {
   const [reviewerMaxToolTurns, setReviewerMaxToolTurns] = useState("50");
   const [editLocalDirectly, setEditLocalDirectly] = useState(false);
   const [pushOnPass, setPushOnPass] = useState(true);
+  const [autoFallback, setAutoFallback] = useState(true);
 
   const [wizardStep, setWizardStep] = useState(0);
   const [wizardKeys, setWizardKeys] = useState<Record<string, string>>({});
@@ -84,7 +85,9 @@ export function useAppData() {
 
       setKeyDrafts({
         anthropic_api_key: data.anthropic_api_key || "",
+        claude_code_api_key: data.claude_code_api_key || "",
         openai_api_key: data.openai_api_key || "",
+        codex_api_key: data.codex_api_key || "",
         gemini_api_key: data.gemini_api_key || "",
         groq_api_key: data.groq_api_key || "",
         mistral_api_key: data.mistral_api_key || "",
@@ -101,6 +104,7 @@ export function useAppData() {
       setReviewerMaxToolTurns(data.reviewer_max_tool_turns || "50");
       setEditLocalDirectly(data.edit_local_directly === "true");
       setPushOnPass(data.push_on_pass !== "false");
+      setAutoFallback(data.auto_fallback !== "false");
 
       const hasToken = !!data.github_token;
       const hasRepo = !!data.selected_repo;
@@ -198,6 +202,7 @@ export function useAppData() {
     reviewerMaxToolTurns, setReviewerMaxToolTurns,
     editLocalDirectly, setEditLocalDirectly,
     pushOnPass, setPushOnPass,
+    autoFallback, setAutoFallback,
     wizardStep, setWizardStep,
     wizardKeys, setWizardKeys,
     savingWizardKeys, setSavingWizardKeys,

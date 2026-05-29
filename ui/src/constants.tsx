@@ -2,7 +2,7 @@
 export const COLUMNS = ["Backlog", "In Progress", "Done", "Failed"];
 
 export const API_KEY_PROVIDERS = [
-  { field: "anthropic_api_key", label: "Anthropic", placeholder: "sk-ant-…" },
+  { field: "anthropic_api_key", label: "Anthropic", placeholder: "sk-ant-api03-…" },
   { field: "openai_api_key", label: "OpenAI", placeholder: "sk-…" },
   { field: "gemini_api_key", label: "Google Gemini", placeholder: "AIza…" },
   { field: "groq_api_key", label: "Groq", placeholder: "gsk_…" },

@@ -407,28 +407,32 @@ async def run(
                 await on_step(state)
 
         # --- Step 4: Browser validate (optional) ---
-        effective_url = app_url or (
-            os.getenv("DEFAULT_APP_URL") if state.ui_changes_detected else None
-        )
         _server_proc: asyncio.subprocess.Process | None = None
         _server_port: int | None = None
+        effective_url = app_url  # explicit --url always wins
         try:
-            if not effective_url and state.ui_changes_detected and run_workspace:
-                try:
-                    from talon.skills import workspace_starter
+            if state.ui_changes_detected and not app_url:
+                if run_workspace:
+                    # Always start from the workspace so the validator tests the modified code.
+                    # DEFAULT_APP_URL is only a fallback if workspace_starter fails.
+                    try:
+                        from talon.skills import workspace_starter
 
-                    (
-                        _server_proc,
-                        effective_url,
-                        _server_port,
-                    ) = await workspace_starter.start_workspace_server(
-                        run_workspace,
-                        extra_env=project_env_vars,
-                        start_command=start_command,
-                        env_content=env_content,
-                    )
-                except Exception as _ws_err:
-                    console.print(f"[yellow]workspace-starter: {_ws_err}[/yellow]")
+                        (
+                            _server_proc,
+                            effective_url,
+                            _server_port,
+                        ) = await workspace_starter.start_workspace_server(
+                            run_workspace,
+                            extra_env=project_env_vars,
+                            start_command=start_command,
+                            env_content=env_content,
+                        )
+                    except Exception as _ws_err:
+                        console.print(f"[yellow]workspace-starter: {_ws_err}[/yellow]")
+                        effective_url = os.getenv("DEFAULT_APP_URL")
+                else:
+                    effective_url = os.getenv("DEFAULT_APP_URL")
 
             if effective_url and state.status == RunStatus.PASSED:
 
@@ -665,22 +669,46 @@ async def resume(
             await on_step(state)
 
     # --- Step 4: Browser validate (optional) ---
-    effective_url = os.getenv("DEFAULT_APP_URL") if state.ui_changes_detected else None
-    if effective_url and state.status == RunStatus.PASSED:
+    _resume_server_proc: asyncio.subprocess.Process | None = None
+    _resume_server_port: int | None = None
+    effective_url: str | None = None
+    try:
+        if state.ui_changes_detected:
+            if run_workspace:
+                try:
+                    from talon.skills import workspace_starter
 
-        async def _on_resume_browser_progress(partial):
-            state.browser_result = partial
+                    (
+                        _resume_server_proc,
+                        effective_url,
+                        _resume_server_port,
+                    ) = await workspace_starter.start_workspace_server(run_workspace)
+                except Exception as _ws_err:
+                    console.print(f"[yellow]workspace-starter: {_ws_err}[/yellow]")
+                    effective_url = os.getenv("DEFAULT_APP_URL")
+            else:
+                effective_url = os.getenv("DEFAULT_APP_URL")
+
+        if effective_url and state.status == RunStatus.PASSED:
+
+            async def _on_resume_browser_progress(partial):
+                state.browser_result = partial
+                _save_state(state)
+                if on_step:
+                    await on_step(state)
+
+            browser_result = await browser_validator.run(
+                state, effective_url, RUNS_DIR, on_progress=_on_resume_browser_progress
+            )
+            if browser_result is not None:
+                state.browser_result = browser_result
+                state.video_path = browser_result.video_path
             _save_state(state)
-            if on_step:
-                await on_step(state)
+    finally:
+        if _resume_server_proc is not None and _resume_server_port is not None:
+            from talon.skills import workspace_starter as _ws_mod
 
-        browser_result = await browser_validator.run(
-            state, effective_url, RUNS_DIR, on_progress=_on_resume_browser_progress
-        )
-        if browser_result is not None:
-            state.browser_result = browser_result
-            state.video_path = browser_result.video_path
-        _save_state(state)
+            await _ws_mod.stop_workspace_server(_resume_server_proc, _resume_server_port)
     if on_step:
         await on_step(state)
 

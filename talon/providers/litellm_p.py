@@ -119,8 +119,13 @@ def _extract_usage(raw) -> dict | None:
 
 
 class LiteLLMProvider:
-    def __init__(self, model: str | None = None) -> None:
+    def __init__(
+        self,
+        model: str | None = None,
+        fallback_models: list[str] | None = None,
+    ) -> None:
         self._model = model
+        self._fallback_models = fallback_models or []
 
     async def chat(
         self,
@@ -132,105 +137,123 @@ class LiteLLMProvider:
     ) -> ProviderResponse:
         # Read env at call time so live changes from the Settings UI take effect
         # without restarting the server.
-        model = self._model or os.getenv("AGENT_MODEL", _DEFAULT_MODEL)
+        primary = self._model or os.getenv("AGENT_MODEL", _DEFAULT_MODEL)
         if max_tokens is None:
             max_tokens = int(os.getenv("AGENT_MAX_TOKENS", str(_DEFAULT_MAX_TOKENS)))
         timeout = int(os.getenv("AGENT_LLM_TIMEOUT_SECS", "120"))
 
-        is_anthropic = model.startswith("anthropic/")
-        system_msg = _make_system_message(system, cache=is_anthropic)
-        full_messages = [system_msg, *messages]
-
-        tools_converted = _to_litellm_tools(tools, cache_last=is_anthropic) if tools else []
-
-        kwargs: dict = dict(model=model, messages=full_messages, max_tokens=max_tokens)
-        if tools_converted:
-            kwargs["tools"] = tools_converted
-            kwargs["tool_choice"] = "auto"
-        if response_format:
-            kwargs["response_format"] = response_format
+        auto_fallback = os.getenv("AUTO_FALLBACK", "true").lower() == "true"
+        models_to_try = [primary, *self._fallback_models] if auto_fallback else [primary]
 
         max_rate_limit_retries = 5
         base_delay = 2.0
-        timeout_retried = False
-        context_pruned = False
-        last_error = None
+        raw = None
 
-        for attempt in range(max_rate_limit_retries + 1):
-            try:
-                if _GLOBAL_THROTTLER:
-                    async with _GLOBAL_THROTTLER:
+        for model_idx, model in enumerate(models_to_try):
+            is_anthropic = model.startswith("anthropic/") or model.startswith("claude-code/")
+            system_msg = _make_system_message(system, cache=is_anthropic)
+            full_messages = [system_msg, *messages]
+            tools_converted = _to_litellm_tools(tools, cache_last=is_anthropic) if tools else []
+
+            kwargs: dict = dict(model=model, messages=full_messages, max_tokens=max_tokens)
+            if tools_converted:
+                kwargs["tools"] = tools_converted
+                kwargs["tool_choice"] = "auto"
+            if response_format:
+                kwargs["response_format"] = response_format
+
+            timeout_retried = False
+            context_pruned = False
+            last_error: Exception | None = None
+            rate_limit_exhausted = False
+
+            for attempt in range(max_rate_limit_retries + 1):
+                try:
+                    if _GLOBAL_THROTTLER:
+                        async with _GLOBAL_THROTTLER:
+                            raw = await litellm.acompletion(**kwargs, timeout=timeout)
+                    else:
                         raw = await litellm.acompletion(**kwargs, timeout=timeout)
-                else:
-                    raw = await litellm.acompletion(**kwargs, timeout=timeout)
-                break
-            except Exception as e:
-                last_error = e
-                err_str = str(e).lower()
-                is_timeout = (
-                    "timeout" in err_str
-                    or isinstance(e, asyncio.TimeoutError)
-                    or getattr(e, "status_code", None) == 408
-                )
-                is_rate_limit = (
-                    "rate limit" in err_str
-                    or "429" in err_str
-                    or getattr(e, "status_code", None) == 429
-                )
-
-                is_context_error = (
-                    "context_window" in err_str
-                    or "contextwindow" in err_str
-                    or "context window" in err_str
-                    or "token count exceeds" in err_str
-                    or "maximum number of tokens" in err_str
-                    or "context_window_exceeded" in err_str
-                )
-
-                if is_timeout and not timeout_retried and attempt < max_rate_limit_retries:
-                    print(f"[LiteLLM] Timeout occurred. Retrying in 5s... ({e})")
-                    await asyncio.sleep(5)
-                    timeout_retried = True
-                    continue
-
-                if is_rate_limit and attempt < max_rate_limit_retries:
-                    retry_after = getattr(e, "response", None)
-                    delay = base_delay * (2**attempt) + random.uniform(0, 1)
-                    if retry_after and hasattr(retry_after, "headers"):
-                        retry_val = retry_after.headers.get("Retry-After")
-                        if retry_val and retry_val.isdigit():
-                            delay = max(delay, int(retry_val))
-                    print(
-                        f"[LiteLLM] Rate limited. Retrying in {delay:.1f}s..."
-                        f" (Attempt {attempt + 1}/{max_rate_limit_retries})"
+                    last_error = None
+                    break
+                except Exception as e:
+                    last_error = e
+                    err_str = str(e).lower()
+                    is_timeout = (
+                        "timeout" in err_str
+                        or isinstance(e, asyncio.TimeoutError)
+                        or getattr(e, "status_code", None) == 408
                     )
-                    await asyncio.sleep(delay)
-                    continue
+                    is_rate_limit = (
+                        "rate limit" in err_str
+                        or "429" in err_str
+                        or getattr(e, "status_code", None) == 429
+                    )
+                    is_context_error = (
+                        "context_window" in err_str
+                        or "contextwindow" in err_str
+                        or "context window" in err_str
+                        or "token count exceeds" in err_str
+                        or "maximum number of tokens" in err_str
+                        or "context_window_exceeded" in err_str
+                    )
 
-                if (
-                    is_context_error
-                    and len(messages) > 7
-                    and not context_pruned
-                    and attempt < max_rate_limit_retries
-                ):
-                    # Prune older tool result messages in-place to recover.
-                    cutoff = len(messages) - 6
-                    for i in range(1, cutoff):
-                        if messages[i].get("role") == "tool":
-                            messages[i] = {
-                                "role": "tool",
-                                "tool_call_id": messages[i].get("tool_call_id"),
-                                "content": "[Tool result truncated to save context window space]",
-                            }
-                    full_messages = [system_msg, *messages]
-                    kwargs["messages"] = full_messages
-                    context_pruned = True
-                    continue
+                    if is_timeout and not timeout_retried and attempt < max_rate_limit_retries:
+                        print(f"[LiteLLM] Timeout on {model}. Retrying in 5s... ({e})")
+                        await asyncio.sleep(5)
+                        timeout_retried = True
+                        continue
 
-                raise e
-        else:
-            if last_error:
-                raise last_error
+                    if is_rate_limit and attempt < max_rate_limit_retries:
+                        retry_after = getattr(e, "response", None)
+                        delay = base_delay * (2**attempt) + random.uniform(0, 1)
+                        if retry_after and hasattr(retry_after, "headers"):
+                            retry_val = retry_after.headers.get("Retry-After")
+                            if retry_val and retry_val.isdigit():
+                                delay = max(delay, int(retry_val))
+                        print(
+                            f"[LiteLLM] Rate limited on {model}. Retrying in {delay:.1f}s..."
+                            f" (Attempt {attempt + 1}/{max_rate_limit_retries})"
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+
+                    if is_rate_limit:
+                        rate_limit_exhausted = True
+
+                    if (
+                        is_context_error
+                        and len(messages) > 7
+                        and not context_pruned
+                        and attempt < max_rate_limit_retries
+                    ):
+                        cutoff = len(messages) - 6
+                        for i in range(1, cutoff):
+                            if messages[i].get("role") == "tool":
+                                messages[i] = {
+                                    "role": "tool",
+                                    "tool_call_id": messages[i].get("tool_call_id"),
+                                    "content": "[truncated]",
+                                }
+                        full_messages = [system_msg, *messages]
+                        kwargs["messages"] = full_messages
+                        context_pruned = True
+                        continue
+
+                    break
+
+            if last_error is None:
+                break  # success — exit model loop
+
+            has_next = model_idx < len(models_to_try) - 1
+            if rate_limit_exhausted and has_next:
+                next_model = models_to_try[model_idx + 1]
+                print(
+                    f"[LiteLLM] Rate limit exhausted on {model}. Auto-falling back to {next_model}."
+                )
+                continue
+
+            raise last_error
 
         msg = raw.choices[0].message
         usage_data = _extract_usage(raw)

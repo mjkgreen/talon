@@ -49,8 +49,10 @@ interface SettingsModalProps {
   onSaveEnvironment: () => void;
   onClose: () => void;
   onConfigureWorkspace: () => void;
+  autoFallback: boolean;
   onToggleEditLocal: (v: boolean) => void;
   onTogglePushOnPass: (v: boolean) => void;
+  onToggleAutoFallback: (v: boolean) => void;
 }
 
 const TAB_LABELS: Record<string, string> = {
@@ -58,7 +60,7 @@ const TAB_LABELS: Record<string, string> = {
   model: "Model",
   workspace: "Workspace",
   environment: "Environment",
-  limits: "Limits",
+  limits: "Configuration",
 };
 
 function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
@@ -116,12 +118,14 @@ export function SettingsModal({
   onSaveEnvironment,
   onClose,
   onConfigureWorkspace,
+  autoFallback,
   onToggleEditLocal,
   onTogglePushOnPass,
+  onToggleAutoFallback,
 }: SettingsModalProps) {
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
-      <div className="bg-neutral-900 border border-neutral-800 rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh]">
+      <div className="bg-neutral-900 border border-neutral-800 rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[90vh]">
         <div className="flex items-center justify-between p-6 border-b border-neutral-800">
           <h2 className="text-lg font-bold flex items-center gap-2">
             <SettingsIcon size={18} className="text-neutral-400" /> Settings
@@ -485,6 +489,15 @@ export function SettingsModal({
 
           {settingsTab === "limits" && (
             <div className="space-y-4">
+              <div className="flex items-center justify-between gap-4 pb-3 border-b border-neutral-800">
+                <div>
+                  <div className="text-sm font-medium text-neutral-300">Auto-fallback on usage limit</div>
+                  <div className="text-xs text-neutral-500 mt-0.5">
+                    If a provider hits its rate limit after all retries, automatically switch to the next available provider
+                  </div>
+                </div>
+                <Toggle on={autoFallback} onToggle={() => onToggleAutoFallback(!autoFallback)} />
+              </div>
               <div>
                 <label className="block text-sm font-medium text-neutral-300 mb-1">Max iterations</label>
                 <input

@@ -10,7 +10,9 @@ router = APIRouter()
 
 _DB_TO_ENV: dict[str, str] = {
     "anthropic_api_key": "ANTHROPIC_API_KEY",
+    "claude_code_api_key": "CLAUDE_CODE_API_KEY",
     "openai_api_key": "OPENAI_API_KEY",
+    "codex_api_key": "CODEX_API_KEY",
     "gemini_api_key": "GEMINI_API_KEY",
     "groq_api_key": "GROQ_API_KEY",
     "mistral_api_key": "MISTRAL_API_KEY",
@@ -24,11 +26,14 @@ _DB_TO_ENV: dict[str, str] = {
     "reviewer_max_tool_turns": "REVIEWER_MAX_TOOL_TURNS",
     "max_concurrent_runs": "MAX_CONCURRENT_RUNS",
     "browser_test_max_steps": "BROWSER_TEST_MAX_STEPS",
+    "auto_fallback": "AUTO_FALLBACK",
 }
 
 _API_KEY_SETTINGS = {
     "anthropic_api_key",
+    "claude_code_api_key",
     "openai_api_key",
+    "codex_api_key",
     "gemini_api_key",
     "groq_api_key",
     "mistral_api_key",
@@ -38,12 +43,24 @@ _API_KEY_SETTINGS = {
 def _has_llm_configured() -> bool:
     keys = [
         "ANTHROPIC_API_KEY",
+        "CLAUDE_CODE_API_KEY",
         "OPENAI_API_KEY",
+        "CODEX_API_KEY",
         "GEMINI_API_KEY",
         "GROQ_API_KEY",
         "MISTRAL_API_KEY",
     ]
     return any(os.getenv(k) for k in keys)
+
+
+def _apply_subscription_key_fallbacks() -> None:
+    """Map Codex subscription token to OPENAI_API_KEY if no standard key is set.
+
+    Claude Code OAuth tokens are intentionally NOT copied to ANTHROPIC_API_KEY —
+    they use a different endpoint and must be used via the claude-code/ model prefix.
+    """
+    if not os.getenv("OPENAI_API_KEY") and os.getenv("CODEX_API_KEY"):
+        os.environ["OPENAI_API_KEY"] = os.environ["CODEX_API_KEY"]
 
 
 async def apply_db_settings_to_env() -> None:
@@ -56,6 +73,7 @@ async def apply_db_settings_to_env() -> None:
         value = settings.get(db_key)
         if value:
             os.environ[env_key] = value
+    _apply_subscription_key_fallbacks()
 
 
 @router.get("/api/settings")
@@ -67,7 +85,9 @@ async def get_settings():
     settings["has_llm_configured"] = _has_llm_configured()
     for provider_env, provider_name in [
         ("ANTHROPIC_API_KEY", "anthropic"),
+        ("CLAUDE_CODE_API_KEY", "claude-code"),
         ("OPENAI_API_KEY", "openai"),
+        ("CODEX_API_KEY", "codex"),
         ("GEMINI_API_KEY", "google"),
         ("GROQ_API_KEY", "groq"),
         ("MISTRAL_API_KEY", "mistral"),
@@ -110,4 +130,5 @@ async def update_settings(updates: db.SettingsUpdate):
             await db.set_setting(db_key, val)
             os.environ[env_key] = val
 
+    _apply_subscription_key_fallbacks()
     return {"ok": True}

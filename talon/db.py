@@ -109,7 +109,9 @@ class SettingsUpdate(BaseModel):
     workspace_mode: Optional[str] = None  # "github" | "local" | "none"
     # AI provider API keys
     anthropic_api_key: Optional[str] = None
+    claude_code_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
+    codex_api_key: Optional[str] = None
     gemini_api_key: Optional[str] = None
     groq_api_key: Optional[str] = None
     mistral_api_key: Optional[str] = None
@@ -128,6 +130,7 @@ class SettingsUpdate(BaseModel):
     # Local workspace behaviour
     edit_local_directly: Optional[str] = None  # "true" | "false"
     push_on_pass: Optional[str] = None  # "true" | "false"
+    auto_fallback: Optional[str] = None  # "true" | "false"
 
 
 async def init_db():

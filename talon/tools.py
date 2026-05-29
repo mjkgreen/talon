@@ -113,7 +113,7 @@ def read_file(path: str, working_dir: str) -> dict:
     full = (Path(working_dir) / path).resolve()
     cache_key = str(full)
     if cache_key in _file_cache:
-        return {"content": _file_cache[cache_key], "path": cache_key}
+        return {"content": _file_cache[cache_key], "path": path}
     try:
         content = full.read_text()
         max_chars = 100000
@@ -124,7 +124,7 @@ def read_file(path: str, working_dir: str) -> dict:
                 + content[-max_chars // 2 :]
             )
         _file_cache[cache_key] = content
-        return {"content": content, "path": cache_key}
+        return {"content": content, "path": path}
     except FileNotFoundError:
         return {"error": f"File not found: {path}"}
     except Exception as e:
@@ -132,12 +132,24 @@ def read_file(path: str, working_dir: str) -> dict:
 
 
 def write_file(path: str, content: str, working_dir: str) -> dict:
-    full = (Path(working_dir) / path).resolve()
+    wd = Path(working_dir).resolve()
+    p = Path(path)
+    if p.is_absolute():
+        # Agent supplied an absolute path (often echoed back from read_file).
+        # Re-anchor it inside the workspace if it falls within working_dir;
+        # reject it outright if it points somewhere else.
+        try:
+            p = p.relative_to(wd)
+        except ValueError:
+            return {"error": f"Cannot write outside working directory: {path}"}
+    full = (wd / p).resolve()
+    if not full.is_relative_to(wd):
+        return {"error": f"Path traversal not allowed: {path}"}
     _file_cache.pop(str(full), None)  # invalidate stale cache entry
     try:
         full.parent.mkdir(parents=True, exist_ok=True)
         full.write_text(content)
-        return {"written": str(full), "bytes": len(content)}
+        return {"written": str(full.relative_to(wd)), "bytes": len(content)}
     except Exception as e:
         return {"error": str(e)}
 

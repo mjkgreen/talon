@@ -134,6 +134,33 @@ def detect_start_command(workspace_dir: str) -> str | None:
         except (json.JSONDecodeError, OSError):
             pass
 
+    # Frontend in a subdirectory (monorepo: ui/, frontend/, client/, web/)
+    for subdir_name in ("ui", "frontend", "client", "web"):
+        sub_pkg = d / subdir_name / "package.json"
+        if sub_pkg.exists():
+            try:
+                sub_data = json.loads(sub_pkg.read_text(encoding="utf-8"))
+                sub_scripts = sub_data.get("scripts", {})
+                sub_framework = _detect_js_framework(sub_data)
+                sub_cmd: str | None = None
+                if sub_framework == "expo":
+                    sub_cmd = "npm run web" if "web" in sub_scripts else "npx expo start --web"
+                elif sub_framework in ("next", "nuxt", "vite", "sveltekit", "svelte"):
+                    sub_cmd = "npm run dev" if "dev" in sub_scripts else None
+                elif sub_framework == "angular":
+                    sub_cmd = "npm run start" if "start" in sub_scripts else "npx ng serve"
+                elif sub_framework == "cra":
+                    sub_cmd = "npm start" if "start" in sub_scripts else "npx react-scripts start"
+                else:
+                    for name in ("dev", "start", "serve", "develop"):
+                        if name in sub_scripts:
+                            sub_cmd = f"npm run {name}"
+                            break
+                if sub_cmd:
+                    return f"cd {subdir_name} && {sub_cmd}"
+            except (json.JSONDecodeError, OSError):
+                pass
+
     # README / CONTRIBUTING hint
     readme_cmd = _scan_readme_for_command(d)
     if readme_cmd:
