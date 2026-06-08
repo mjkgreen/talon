@@ -74,9 +74,26 @@ function startPythonServer() {
 
     pythonProcess = proc;
 
+    // Normalise server log lines to printable ASCII.
+    // Python outputs UTF-8 but Windows OEM/cp1252 terminals garble every
+    // non-ASCII byte.  Strip ANSI codes then remove everything outside the
+    // printable-ASCII range so box-drawing, block, emoji, and Greek chars
+    // (e.g. Expo's λ) never reach the terminal as raw multi-byte sequences.
+    const stripAnsi = (str) => str
+      .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '')  // ANSI escape codes
+      .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, '');
+
+    // Prefix every individual line with [server] so multi-line chunks are
+    // readable and each line is clearly attributed.
+    const prefixLines = (text, stream, prefix) => {
+      text.split(/\r?\n/).forEach((line) => {
+        if (line) stream.write(`${prefix} ${stripAnsi(line)}\n`);
+      });
+    };
+
     // The server prints "PORT:<number>" as its first stdout line.
     proc.stdout.on('data', (data) => {
-      const text = data.toString();
+      const text = data.toString('utf8');
       const match = text.match(/PORT:(\d+)/);
       if (match && !serverPort) {
         serverPort = parseInt(match[1], 10);
@@ -85,17 +102,17 @@ function startPythonServer() {
       // Mirror server output to the Electron console in dev mode so progress
       // is visible without needing to run the server in a separate terminal.
       if (!app.isPackaged) {
-        process.stdout.write(`[server] ${text}`);
+        prefixLines(text, process.stdout, '[server]');
       }
     });
 
     proc.stderr.on('data', (data) => {
-      const text = data.toString();
+      const text = data.toString('utf8');
       // Accumulate stderr so it can be shown in the error dialog on failure.
       stderrBuffer += text;
       if (stderrBuffer.length > 4000) stderrBuffer = stderrBuffer.slice(-4000);
       if (!app.isPackaged) {
-        process.stderr.write(`[server] ${text}`);
+        prefixLines(text, process.stderr, '[server]');
       }
     });
 

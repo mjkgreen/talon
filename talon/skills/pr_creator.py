@@ -30,13 +30,25 @@ from talon.types import RunState
 
 console = Console()
 
-GITHUB_REPO = os.getenv("GITHUB_REPO", "")
-GITHUB_BASE_BRANCH = os.getenv("GITHUB_BASE_BRANCH", "main")
 TALON_PUBLIC_URL = os.getenv("TALON_PUBLIC_URL", "").rstrip("/")
 
 
 def _get_github_token() -> str:
     return sync_get_setting("github_token") or os.getenv("GITHUB_TOKEN", "")
+
+
+def _get_github_repo(workspace: str) -> str | None:
+    """Return 'owner/repo', preferring env → DB selected_repo → git remote."""
+    return (
+        os.getenv("GITHUB_REPO")
+        or sync_get_setting("selected_repo")
+        or _detect_github_repo(workspace)
+    )
+
+
+def _get_github_base_branch() -> str:
+    """Return the PR base branch, preferring env → DB → 'main'."""
+    return os.getenv("GITHUB_BASE_BRANCH") or sync_get_setting("github_base_branch") or "main"
 
 
 def _git(args: list[str], cwd: str) -> subprocess.CompletedProcess:
@@ -64,7 +76,9 @@ def _goal_to_slug(goal: str) -> str:
     return slug or "task"
 
 
-def _commit_and_push(workspace: str, run_id: str, goal: str) -> str | None:
+def _commit_and_push(
+    workspace: str, run_id: str, goal: str, direct_workspace: bool = False
+) -> str | None:
     """Stage uncommitted changes, commit, push. Returns branch name or None on failure.
 
     Handles two cases:
@@ -125,12 +139,33 @@ def _commit_and_push(workspace: str, run_id: str, goal: str) -> str | None:
             _git(["checkout", current_branch], workspace)
         return None
 
-    # Return to user's original branch after the push so their local state is
-    # unchanged (they can review and merge the PR from GitHub).
-    if not on_agent_branch and current_branch:
+    # Only restore the original branch for direct workspaces (user's real working tree).
+    # Isolated copy-mode workspaces must stay on the agent branch so the dev server
+    # can still serve the agent's committed code on verification retry.
+    if not on_agent_branch and current_branch and direct_workspace:
         _git(["checkout", current_branch], workspace)
 
     return agent_branch
+
+
+def _find_existing_pr(branch: str, repo: str, token: str) -> str | None:
+    """Return the html_url of an open PR for this branch, or None."""
+    owner = repo.split("/")[0]
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{repo}/pulls"
+        f"?head={owner}:{branch}&state=open&per_page=1",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            prs = json.loads(resp.read())
+            return prs[0].get("html_url") if prs else None
+    except Exception:
+        return None
 
 
 def _create_github_pr(branch: str, state: RunState, repo: str) -> str | None:
@@ -181,12 +216,15 @@ def _create_github_pr(branch: str, state: RunState, repo: str) -> str | None:
             gif_url = f"{TALON_PUBLIC_URL}/api/runs/{state.run_id}/gif"
             body_lines += ["", f"![Browser validation]({gif_url})"]
 
+    token = _get_github_token()
+    base_branch = _get_github_base_branch()
+
     payload = json.dumps(
         {
             "title": title,
             "body": "\n".join(body_lines),
             "head": branch,
-            "base": GITHUB_BASE_BRANCH,
+            "base": base_branch,
         }
     ).encode()
 
@@ -194,7 +232,7 @@ def _create_github_pr(branch: str, state: RunState, repo: str) -> str | None:
         f"https://api.github.com/repos/{repo}/pulls",
         data=payload,
         headers={
-            "Authorization": f"Bearer {_get_github_token()}",
+            "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
             "Content-Type": "application/json",
             "X-GitHub-Api-Version": "2022-11-28",
@@ -208,6 +246,11 @@ def _create_github_pr(branch: str, state: RunState, repo: str) -> str | None:
             return data.get("html_url")
     except urllib.error.HTTPError as e:
         err = e.read().decode()
+        if e.code == 422 and "pull request already exists" in err.lower():
+            existing = _find_existing_pr(branch, repo, token)
+            if existing:
+                console.print(f"  [dim]pr-creator: PR already exists: {existing}[/dim]")
+                return existing
         console.print(f"  [red]GitHub PR creation failed ({e.code}): {err[:200]}[/red]")
         return None
     except Exception as e:
@@ -236,16 +279,19 @@ async def run(state: RunState, working_dir: str | None) -> str | None:
         console.print("  [dim]pr-creator: workspace is not a git repo, skipping[/dim]")
         return None
 
-    repo = GITHUB_REPO or _detect_github_repo(state.workspace)
+    repo = _get_github_repo(state.workspace)
     if not repo:
         console.print(
-            "  [dim]pr-creator: GITHUB_REPO not set and no GitHub remote found, skipping[/dim]"
+            "  [dim]pr-creator: no repo configured"
+            " — set GITHUB_REPO, select one in Settings, or add a GitHub remote[/dim]"
         )
         return None
 
     console.print("\n[bold blue]pr-creator[/bold blue] committing and pushing workspace…")
 
-    branch = _commit_and_push(state.workspace, state.run_id, state.goal)
+    branch = _commit_and_push(
+        state.workspace, state.run_id, state.goal, direct_workspace=state.direct_workspace
+    )
     if not branch:
         console.print("  [yellow]pr-creator: could not push branch, skipping PR creation[/yellow]")
         return None

@@ -326,7 +326,12 @@ async def _run_loop(
             )
 
             if issue_id:
-                final_status = "Done" if state.status == "passed" else "Failed"
+                if state.status == "passed":
+                    final_status = "Done"
+                elif state.status == "paused":
+                    final_status = "Paused"
+                else:
+                    final_status = "Failed"
                 await db.update_issue(
                     issue_id, db.IssueUpdate(status=final_status, run_id=state.run_id)
                 )

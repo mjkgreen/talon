@@ -38,15 +38,19 @@ _ws_d,   _ws_b,   _ws_h   = collect_all("websockets")    # websockets C extensio
 # into the user's data directory (ms-playwright) on first run.
 _pw_d,   _pw_b,   _pw_h   = collect_all("playwright")
 _bu_d,   _bu_b,   _bu_h   = collect_all("browser_use")
+# browser-use[video] deps: imageio_ffmpeg bundles the ffmpeg binary used for MP4 recording
+_imageio_d,        _imageio_b,        _imageio_h        = collect_all("imageio")
+_imageio_ffmpeg_d, _imageio_ffmpeg_b, _imageio_ffmpeg_h = collect_all("imageio_ffmpeg")
+_numpy_d,          _numpy_b,          _numpy_h          = collect_all("numpy")
 CERTIFI_DATAS = collect_data_files("certifi")  # CA bundle for HTTPS calls
 
 # tiktoken >=0.13 registers encodings (cl100k_base etc.) via importlib.metadata
 # entry_points — the .dist-info directory must be in the bundle for lookups to work.
 TIKTOKEN_METADATA = copy_metadata("tiktoken")
 
-EXTRA_DATAS    = _lit_d  + _oai_d  + _ant_d  + _tik_d  + _tikx_d + _ws_d  + _pw_d  + _bu_d  + CERTIFI_DATAS + TIKTOKEN_METADATA
-EXTRA_BINARIES = _lit_b  + _oai_b  + _ant_b  + _tik_b  + _tikx_b + _ws_b  + _pw_b  + _bu_b
-EXTRA_HIDDEN   = _lit_h  + _oai_h  + _ant_h  + _tik_h  + _tikx_h + _ws_h  + _pw_h  + _bu_h
+EXTRA_DATAS    = _lit_d  + _oai_d  + _ant_d  + _tik_d  + _tikx_d + _ws_d  + _pw_d  + _bu_d  + _imageio_d + _imageio_ffmpeg_d + _numpy_d + CERTIFI_DATAS + TIKTOKEN_METADATA
+EXTRA_BINARIES = _lit_b  + _oai_b  + _ant_b  + _tik_b  + _tikx_b + _ws_b  + _pw_b  + _bu_b  + _imageio_b + _imageio_ffmpeg_b + _numpy_b
+EXTRA_HIDDEN   = _lit_h  + _oai_h  + _ant_h  + _tik_h  + _tikx_h + _ws_h  + _pw_h  + _bu_h  + _imageio_h + _imageio_ffmpeg_h + _numpy_h
 
 # ---------------------------------------------------------------------------
 # Hidden imports

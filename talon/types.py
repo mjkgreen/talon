@@ -163,3 +163,7 @@ class RunState(BaseModel):
     started_at: datetime = Field(default_factory=datetime.utcnow)
     finished_at: Optional[datetime] = None
     error: Optional[str] = None
+    direct_workspace: bool = False
+    origin_dir: Optional[str] = None
+    origin_repo_url: Optional[str] = None
+    origin_repo_branch: Optional[str] = None

@@ -12,6 +12,7 @@ interface IssueDetailModalProps {
   liveRunStates: Record<number, RunState>;
   runState: RunState | null;
   runErrors: Record<number, string>;
+  clearRunError: (issueId: number) => void;
   runLogs: Record<number, string[]>;
   loadingRunState: boolean;
   planningIssues: Set<number>;
@@ -31,6 +32,7 @@ export function IssueDetailModal({
   liveRunStates,
   runState,
   runErrors,
+  clearRunError,
   runLogs,
   loadingRunState,
   planningIssues,
@@ -322,10 +324,20 @@ export function IssueDetailModal({
               {(runError || activeRunState?.error) &&
                 (() => {
                   const raw = runError || activeRunState?.error || "";
+                  if (raw === "Agent paused by user") return null;
                   const hint = detectLimitHint(raw);
                   return (
                     <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 text-sm text-red-400">
-                      <div className="font-medium mb-1">Agent error</div>
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="font-medium">Agent error</div>
+                        <button
+                          onClick={() => clearRunError(issue.id)}
+                          className="text-red-400/60 hover:text-red-400 transition-colors"
+                          aria-label="Dismiss"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
                       <pre className="text-xs font-mono whitespace-pre-wrap text-red-300/80">{raw}</pre>
                       {hint && (
                         <div className="mt-3 pt-3 border-t border-red-500/20 text-xs text-yellow-300/90 flex gap-2">

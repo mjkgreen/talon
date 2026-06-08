@@ -109,5 +109,12 @@ export function useWebSocket(
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return { liveRunStates, runErrors, runLogs, planningIssues };
+  const clearRunError = (issueId: number) =>
+    setRunErrors((prev) => {
+      const next = { ...prev };
+      delete next[issueId];
+      return next;
+    });
+
+  return { liveRunStates, runErrors, runLogs, planningIssues, clearRunError };
 }

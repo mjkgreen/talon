@@ -48,9 +48,17 @@ if sys.platform == "win32":
             pass
 
 
+import logging
+
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Silence noisy third-party loggers that emit emoji-heavy messages.
+# Their INFO/DEBUG output is not useful in the CLI and causes garbled
+# characters on Windows terminals that aren't set to UTF-8 (cp1252 default).
+for _noisy in ("browser_use", "bubus", "cdp_use"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 
 def _find_free_port() -> int:

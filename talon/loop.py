@@ -383,6 +383,13 @@ async def run(
                     await on_step(state)
 
         except Exception as e:
+            if str(e) == "Agent paused by user":
+                state.status = RunStatus.PAUSED
+                _save_state(state)
+                if on_step:
+                    await on_step(state)
+                console.print(f"\n[yellow]Run {state.run_id} paused.[/yellow]")
+                return state
             state.status = RunStatus.FAILED
             state.error = str(e)
             state.finished_at = datetime.utcnow()

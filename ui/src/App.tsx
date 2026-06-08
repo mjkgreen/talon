@@ -102,7 +102,7 @@ export default function App() {
     }
   };
 
-  const { liveRunStates, runErrors, runLogs, planningIssues } = useWebSocket(
+  const { liveRunStates, runErrors, runLogs, planningIssues, clearRunError } = useWebSocket(
     activeProjectIdRef,
     fetchIssues,
     {
@@ -780,6 +780,7 @@ export default function App() {
           liveRunStates={liveRunStates}
           runState={runState}
           runErrors={runErrors}
+          clearRunError={clearRunError}
           runLogs={runLogs}
           loadingRunState={loadingRunState}
           planningIssues={planningIssues}
