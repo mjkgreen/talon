@@ -158,6 +158,7 @@ class TestBrowserValidatorRun:
                                 with patch(
                                     "talon.skills.browser_validator._preflight_wait",
                                     new_callable=AsyncMock,
+                                    return_value=None,
                                 ):
                                     result = await browser_validator.run(
                                         state, "http://localhost:8080", str(tmp_path)
@@ -190,6 +191,7 @@ class TestBrowserValidatorRun:
                                 with patch(
                                     "talon.skills.browser_validator._preflight_wait",
                                     new_callable=AsyncMock,
+                                    return_value=None,
                                 ):
                                     result = await browser_validator.run(
                                         state, "http://localhost:8080", str(tmp_path)
@@ -224,6 +226,7 @@ class TestBrowserValidatorRun:
                                 with patch(
                                     "talon.skills.browser_validator._preflight_wait",
                                     new_callable=AsyncMock,
+                                    return_value=None,
                                 ):
                                     result = await browser_validator.run(
                                         state, "http://localhost:8080", str(tmp_path)
@@ -252,6 +255,7 @@ class TestBrowserValidatorRun:
                                 with patch(
                                     "talon.skills.browser_validator._preflight_wait",
                                     new_callable=AsyncMock,
+                                    return_value=None,
                                 ):
                                     result = await browser_validator.run(
                                         state, "http://localhost:8080", str(tmp_path)
@@ -282,6 +286,7 @@ class TestBrowserValidatorRun:
                                 with patch(
                                     "talon.skills.browser_validator._preflight_wait",
                                     new_callable=AsyncMock,
+                                    return_value=None,
                                 ):
                                     result = await browser_validator.run(
                                         state, "http://localhost:8080", str(tmp_path)
@@ -316,6 +321,7 @@ class TestBrowserValidatorRun:
                                 with patch(
                                     "talon.skills.browser_validator._preflight_wait",
                                     new_callable=AsyncMock,
+                                    return_value=None,
                                 ):
                                     await browser_validator.run(
                                         state,

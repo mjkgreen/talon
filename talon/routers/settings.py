@@ -116,6 +116,8 @@ async def update_settings(updates: db.SettingsUpdate):
         await db.set_setting("edit_local_directly", updates.edit_local_directly)
     if updates.push_on_pass is not None:
         await db.set_setting("push_on_pass", updates.push_on_pass)
+    if updates.video_must_pass is not None:
+        await db.set_setting("video_must_pass", updates.video_must_pass)
 
     for db_key, env_key in _DB_TO_ENV.items():
         val = getattr(updates, db_key, None)

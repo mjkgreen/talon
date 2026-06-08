@@ -35,6 +35,7 @@ export default function App() {
     reviewerMaxToolTurns, setReviewerMaxToolTurns,
     editLocalDirectly, setEditLocalDirectly,
     pushOnPass, setPushOnPass,
+    videoMustPass, setVideoMustPass,
     autoFallback, setAutoFallback,
     wizardStep, setWizardStep,
     wizardKeys, setWizardKeys,
@@ -517,6 +518,15 @@ export default function App() {
     });
   };
 
+  const toggleVideoMustPass = async (value: boolean) => {
+    setVideoMustPass(value);
+    await fetch(apiUrl("/api/settings"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ video_must_pass: value ? "true" : "false" }),
+    });
+  };
+
   const toggleAutoFallback = async (value: boolean) => {
     setAutoFallback(value);
     await fetch(apiUrl("/api/settings"), {
@@ -737,6 +747,7 @@ export default function App() {
           activeProject={activeProject}
           editLocalDirectly={editLocalDirectly}
           pushOnPass={pushOnPass}
+          videoMustPass={videoMustPass}
           startCommand={startCommand}
           setStartCommand={setStartCommand}
           envVarRows={envVarRows}
@@ -755,6 +766,7 @@ export default function App() {
           onConfigureWorkspace={() => { setSettingsOpen(false); setWizardStep(2); }}
           onToggleEditLocal={toggleEditLocalDirectly}
           onTogglePushOnPass={togglePushOnPass}
+          onToggleVideoMustPass={toggleVideoMustPass}
           autoFallback={autoFallback}
           onToggleAutoFallback={toggleAutoFallback}
         />

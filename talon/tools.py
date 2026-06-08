@@ -145,11 +145,27 @@ def write_file(path: str, content: str, working_dir: str) -> dict:
     full = (wd / p).resolve()
     if not full.is_relative_to(wd):
         return {"error": f"Path traversal not allowed: {path}"}
+
+    old_lines: list[str] = []
+    if full.exists():
+        try:
+            old_lines = full.read_text().splitlines()
+        except Exception:
+            pass
+
     _file_cache.pop(str(full), None)  # invalidate stale cache entry
     try:
         full.parent.mkdir(parents=True, exist_ok=True)
         full.write_text(content)
-        return {"written": str(full.relative_to(wd)), "bytes": len(content)}
+        new_lines = content.splitlines()
+        added = max(0, len(new_lines) - len(old_lines))
+        removed = max(0, len(old_lines) - len(new_lines))
+        return {
+            "written": str(full.relative_to(wd)),
+            "bytes": len(content),
+            "lines_added": added,
+            "lines_removed": removed,
+        }
     except Exception as e:
         return {"error": str(e)}
 

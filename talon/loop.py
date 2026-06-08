@@ -191,6 +191,7 @@ async def run(
     skip_board: bool = False,
     direct_workspace: bool = False,
     create_pr: bool = True,
+    video_must_pass: bool = False,
     plan: PlanResult | None = None,
     on_step: Callable[[RunState], Awaitable[None]] | None = None,
     on_log: Callable[[str], Awaitable[None]] | None = None,
@@ -430,7 +431,9 @@ async def run(
                         )
                     except Exception as _ws_err:
                         console.print(f"[yellow]workspace-starter: {_ws_err}[/yellow]")
-                        effective_url = os.getenv("DEFAULT_APP_URL")
+                        # Workspace exists but server failed to start — skip browser validation
+                        # rather than falling back to DEFAULT_APP_URL (which isn't the workspace).
+                        effective_url = None
                 else:
                     effective_url = os.getenv("DEFAULT_APP_URL")
 
@@ -471,7 +474,10 @@ async def run(
                 await on_step(state)
 
         # --- Step 5: Create PR ---
-        if state.status == RunStatus.PASSED and create_pr:
+        browser_blocked = (
+            video_must_pass and state.browser_result is not None and not state.browser_result.passed
+        )
+        if state.status == RunStatus.PASSED and create_pr and not browser_blocked:
             pr_url = await pr_creator.run(state, working_dir)
             state.pr_url = pr_url
             _save_state(state)
@@ -496,6 +502,13 @@ async def resume(
     run_id: str,
     on_step: Callable[[RunState], Awaitable[None]] | None = None,
     on_log: Callable[[str], Awaitable[None]] | None = None,
+    video_must_pass: bool = False,
+    start_command: str | None = None,
+    project_env_vars: dict[str, str] | None = None,
+    env_content: str | None = None,
+    cookie_file: str | None = None,
+    test_user: str | None = None,
+    test_password: str | None = None,
 ) -> RunState:
     """Resume a PAUSED or FAILED run from its last checkpoint.
 
@@ -682,10 +695,17 @@ async def resume(
                         _resume_server_proc,
                         effective_url,
                         _resume_server_port,
-                    ) = await workspace_starter.start_workspace_server(run_workspace)
+                    ) = await workspace_starter.start_workspace_server(
+                        run_workspace,
+                        extra_env=project_env_vars,
+                        start_command=start_command,
+                        env_content=env_content,
+                    )
                 except Exception as _ws_err:
                     console.print(f"[yellow]workspace-starter: {_ws_err}[/yellow]")
-                    effective_url = os.getenv("DEFAULT_APP_URL")
+                    # Workspace exists but server failed to start — skip browser validation
+                    # rather than falling back to DEFAULT_APP_URL (which isn't the workspace).
+                    effective_url = None
             else:
                 effective_url = os.getenv("DEFAULT_APP_URL")
 
@@ -698,7 +718,13 @@ async def resume(
                     await on_step(state)
 
             browser_result = await browser_validator.run(
-                state, effective_url, RUNS_DIR, on_progress=_on_resume_browser_progress
+                state,
+                effective_url,
+                RUNS_DIR,
+                on_progress=_on_resume_browser_progress,
+                cookie_file=cookie_file,
+                test_user=test_user,
+                test_password=test_password,
             )
             if browser_result is not None:
                 state.browser_result = browser_result

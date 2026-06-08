@@ -27,6 +27,7 @@ export interface BrowserTestResult {
   planned_assertions?: string[];
   screenshots: string[];
   video_path: string | null;
+  gif_path: string | null;
   steps: number;
   error: string | null;
 }
@@ -79,6 +80,7 @@ export interface SubtaskResultType {
   commands_run: string[];
   success: boolean;
   error?: string;
+  file_diffs?: Record<string, { added: number; removed: number }>;
 }
 
 export interface PhaseResult {

@@ -357,6 +357,28 @@ async def start_workspace_server(
         **(extra_env or {}),
     }
 
+    # Write env vars to a .env file so bundlers (Metro, Vite, Next.js) that
+    # read from disk rather than process.env pick them up at bundle time.
+    if file_env or extra_env:
+        ws_path_obj = Path(workspace_dir)
+        dot_env = ws_path_obj / ".env"
+        merged: dict[str, str] = {}
+        if dot_env.exists():
+            try:
+                merged = _parse_env_text(dot_env.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        merged.update(file_env)
+        merged.update(extra_env or {})
+        try:
+            dot_env.write_text(
+                "\n".join(f"{k}={v}" for k, v in merged.items()) + "\n",
+                encoding="utf-8",
+            )
+            console.print(f"  [dim]workspace-starter[/dim] wrote {len(merged)} vars → .env")
+        except Exception as _e:
+            console.print(f"  [yellow]workspace-starter[/yellow] could not write .env: {_e}")
+
     # Install npm dependencies if node_modules is missing (worktrees/copies exclude them).
     ws_path = Path(workspace_dir)
     if (ws_path / "package.json").exists() and not (ws_path / "node_modules").exists():
@@ -400,15 +422,67 @@ async def start_workspace_server(
     await asyncio.sleep(1.0)
     if proc.returncode is not None:
         try:
-            snippet = await asyncio.wait_for(proc.stdout.read(2048), timeout=1.0)  # type: ignore[union-attr]
+            snippet = await asyncio.wait_for(proc.stdout.read(4096), timeout=1.0)  # type: ignore[union-attr]
             detail = snippet.decode(errors="replace").strip()
         except Exception:
             detail = ""
-        await _release_port(port)
-        raise RuntimeError(
-            f"Dev server process exited immediately (code {proc.returncode})"
-            + (f":\n{detail[:300]}" if detail else "")
-        )
+
+        # Module resolution errors (e.g. undici/Node.js version mismatch) can be
+        # fixed by wiping node_modules and reinstalling with the current Node version.
+        if "MODULE_NOT_FOUND" in detail or "Cannot find module" in detail:
+            console.print(
+                "[yellow]workspace-starter[/yellow] module resolution error —"
+                " removing node_modules and reinstalling"
+            )
+            import shutil as _shutil
+
+            nm = ws_path / "node_modules"
+            if nm.exists():
+                _shutil.rmtree(nm, ignore_errors=True)
+            reinstall_cmd = "npm ci" if (ws_path / "package-lock.json").exists() else "npm install"
+            reinstall_proc = await asyncio.create_subprocess_shell(
+                reinstall_cmd,
+                cwd=workspace_dir,
+                env=env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(reinstall_proc.wait(), timeout=180.0)
+            except asyncio.TimeoutError:
+                reinstall_proc.kill()
+                await _release_port(port)
+                raise StartupTimeoutError(f"npm install timed out after 180s in {workspace_dir}")
+            if reinstall_proc.returncode != 0:
+                await _release_port(port)
+                raise RuntimeError(
+                    f"{reinstall_cmd} failed (exit {reinstall_proc.returncode}) in {workspace_dir}"
+                )
+            proc = await asyncio.create_subprocess_shell(
+                cmd,
+                cwd=workspace_dir,
+                env=env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            await asyncio.sleep(1.0)
+            if proc.returncode is not None:
+                try:
+                    snippet = await asyncio.wait_for(proc.stdout.read(2048), timeout=1.0)  # type: ignore[union-attr]
+                    detail = snippet.decode(errors="replace").strip()
+                except Exception:
+                    detail = ""
+                await _release_port(port)
+                raise RuntimeError(
+                    f"Dev server exited after npm reinstall (code {proc.returncode})"
+                    + (f":\n{detail[:300]}" if detail else "")
+                )
+        else:
+            await _release_port(port)
+            raise RuntimeError(
+                f"Dev server process exited immediately (code {proc.returncode})"
+                + (f":\n{detail[:300]}" if detail else "")
+            )
 
     try:
         url = await _resolve_url(proc, port, float(STARTUP_TIMEOUT))

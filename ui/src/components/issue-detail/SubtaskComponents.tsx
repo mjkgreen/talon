@@ -23,6 +23,7 @@ export function SubtaskItem({
   const [expanded, setExpanded] = useState(false);
   const hasOutput = !!stResult?.output;
   const filesModified: string[] = stResult?.files_modified ?? [];
+  const fileDiffs = stResult?.file_diffs ?? {};
 
   return (
     <div className="flex flex-col gap-1 text-xs">
@@ -41,9 +42,31 @@ export function SubtaskItem({
         <div className="flex-1 min-w-0">
           <div className={textColor}>{st.description}</div>
           {filesModified.length > 0 && (
-            <div className="mt-0.5 text-neutral-600 font-mono truncate">
-              {filesModified.slice(0, 3).join(", ")}
-              {filesModified.length > 3 && ` +${filesModified.length - 3} more`}
+            <div className="mt-1 flex flex-col gap-0.5">
+              {filesModified.slice(0, 3).map((f) => {
+                const diff = fileDiffs[f];
+                const basename = f.split("/").pop() ?? f;
+                return (
+                  <div key={f} className="flex items-center gap-1.5 font-mono">
+                    <span className="text-neutral-600 truncate max-w-[160px]" title={f}>
+                      {basename}
+                    </span>
+                    {diff && (
+                      <>
+                        {diff.added > 0 && (
+                          <span className="text-green-600">+{diff.added}</span>
+                        )}
+                        {diff.removed > 0 && (
+                          <span className="text-red-600">-{diff.removed}</span>
+                        )}
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+              {filesModified.length > 3 && (
+                <span className="text-neutral-700 font-mono">+{filesModified.length - 3} more</span>
+              )}
             </div>
           )}
         </div>

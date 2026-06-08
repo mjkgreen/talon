@@ -27,6 +27,7 @@ class SubtaskResult(BaseModel):
     commands_run: list[str] = []
     success: bool
     error: Optional[str] = None
+    file_diffs: dict[str, dict[str, int]] = Field(default_factory=dict)
 
 
 class PhaseStatus(str, Enum):

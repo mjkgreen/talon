@@ -180,6 +180,13 @@ def _build_task(
     )
     return (
         f"You are a QA engineer validating a web application.\n\n"
+        f"IMPORTANT CONSTRAINTS:\n"
+        f"- You are an OBSERVER ONLY. Use ONLY browser navigation and interaction tools.\n"
+        f"- Do NOT read files, list directories, or attempt to inspect source code.\n"
+        f"- Do NOT try to modify or fix anything. Your sole job is to observe what the "
+        f"running app shows in the browser and report PASS or FAIL for each criterion.\n"
+        f"- If a feature is locked or a criterion is not met in the UI, mark it FAILED "
+        f"immediately — do not investigate why or attempt remediation.\n\n"
         f"App URL: {app_url}\n"
         f"Goal implemented: {goal}\n\n"
         f"Success criteria to verify:\n{criteria_text}"
@@ -219,10 +226,23 @@ def _parse_result(text: str | None, criteria: list[str]) -> tuple[list[str], lis
     return [], [], text[:400]
 
 
-async def _preflight_wait(app_url: str, cookie_file: str | None = None) -> None:
-    """Open the app once without recording to let the dev server compile/bundle."""
+_FATAL_APP_PATTERNS = [
+    "missing supabase environment variables",
+    "copy .env.example to .env",
+    "missing environment variables",
+    "supabase environment variables",
+]
+
+
+async def _preflight_wait(app_url: str, cookie_file: str | None = None) -> str | None:
+    """
+    Open the app once without recording to let the dev server compile/bundle.
+    Returns None if the server is reachable and the app loaded without fatal errors.
+    Returns an error string if the server is unreachable or the app has a fatal
+    config error (e.g. missing environment variables) that the agent cannot fix.
+    """
     if not _PLAYWRIGHT_AVAILABLE:
-        return
+        return None  # can't verify, assume reachable
     try:
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(args=["--disable-gpu"])
@@ -252,13 +272,29 @@ async def _preflight_wait(app_url: str, cookie_file: str | None = None) -> None:
                     ):
                         break
                     await asyncio.sleep(1.0)
+                # Check for fatal config errors that the agent cannot fix by browsing
+                body_text = (await page.inner_text("body") or "").strip()
+                body_lower = body_text.lower()
+                for pattern in _FATAL_APP_PATTERNS:
+                    if pattern in body_lower:
+                        preview = body_text[:300].strip()
+                        return f"App startup error (missing environment variables): {preview}"
+                return None
             except Exception as e:
+                err = str(e)
+                if "ERR_CONNECTION_REFUSED" in err or "ERR_CONNECTION_RESET" in err:
+                    console.print(
+                        f"  [red]browser-validator[/red] server unreachable at {app_url}: {e}"
+                    )
+                    return f"ERR_CONNECTION_REFUSED: {app_url}"
                 console.print(f"  [yellow]browser-validator[/yellow] pre-flight warning: {e}")
+                return None  # other errors (JS errors, etc.) — app is up but broken, let agent try
             finally:
                 await ctx.close()
                 await browser.close()
     except Exception as e:
         console.print(f"  [yellow]browser-validator[/yellow] pre-flight error (continuing): {e}")
+        return None  # playwright itself failed, let agent attempt anyway
 
 
 async def run(
@@ -319,7 +355,20 @@ async def run(
 
     # Pre-flight: trigger dev-server compilation before recording starts
     console.print("  [dim]browser-validator[/dim] pre-flight compilation check…")
-    await _preflight_wait(app_url, cookie_file=cookie_file)
+    preflight_error = await _preflight_wait(app_url, cookie_file=cookie_file)
+    if preflight_error:
+        console.print(f"  [red]browser-validator[/red] pre-flight failed: {preflight_error}")
+        return BrowserTestResult(
+            passed=False,
+            score=0.0,
+            summary=preflight_error,
+            assertions=[],
+            planned_assertions=planned_assertions,
+            screenshots=[],
+            video_path=None,
+            steps=0,
+            error=preflight_error,
+        )
 
     # Fast programmatic route scan (Next.js only) used as a hint for nav_planner
     known_routes: list[str] = []

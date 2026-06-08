@@ -89,6 +89,42 @@ def _reset_stalled_verifications() -> None:
                         )
 
 
+async def _resolve_planner_working_dir(issue_id: int) -> str | None:
+    """Return a local directory the planner can explore, or None if unconfigured."""
+    issue = await db.get_issue(issue_id)
+    project_id = issue.project_id if issue else None
+    if not project_id:
+        return None
+
+    project = await db.get_project(project_id)
+    if not project:
+        return None
+
+    workspace_mode = project.workspace_mode
+    if workspace_mode == "github" and project.selected_repo:
+        github_token = await db.get_setting("github_token")
+        if not github_token:
+            return None
+        repo_url = f"https://x-access-token:{github_token}@github.com/{project.selected_repo}.git"
+        from talon import workspace
+
+        try:
+            return await asyncio.to_thread(
+                workspace.ensure_planner_clone,
+                project_id,
+                repo_url,
+                project.selected_branch,
+            )
+        except Exception as e:
+            console.print(f"  [yellow]planner: could not clone repo for planning: {e}[/yellow]")
+            return None
+
+    if workspace_mode == "local" and project.local_path:
+        return project.local_path
+
+    return None
+
+
 async def _run_planner_bg(issue_id: int, goal: str) -> None:
     from talon.routers.websocket import manager
 
@@ -97,7 +133,8 @@ async def _run_planner_bg(issue_id: int, goal: str) -> None:
     try:
         from talon.skills.planner import run as planner_run
 
-        plan = await planner_run(goal=goal)
+        working_dir = await _resolve_planner_working_dir(issue_id)
+        plan = await planner_run(goal=goal, working_dir=working_dir)
         plan_json = plan.model_dump_json()
         await db.update_issue(issue_id, db.IssueUpdate(plan_json=plan_json))
         issue = await db.get_issue(issue_id)
@@ -208,6 +245,7 @@ async def _run_loop(
                     )
 
             github_token = await db.get_setting("github_token")
+            project = None
             if project_id:
                 project = await db.get_project(project_id)
                 workspace_mode = (
@@ -238,6 +276,23 @@ async def _run_loop(
             )
             push_on_pass_setting = await db.get_setting("push_on_pass")
             create_pr = push_on_pass_setting != "false"
+            video_must_pass = await db.get_setting("video_must_pass") == "true"
+
+            # Load project-level credentials and env vars for the run
+            run_env_content = project.env_content if project else None
+            run_env_vars_raw = project.project_env_vars if project else None
+            run_env_vars: dict[str, str] | None = None
+            if run_env_vars_raw:
+                try:
+                    import json as _json
+
+                    run_env_vars = _json.loads(run_env_vars_raw)
+                except Exception:
+                    pass
+            run_start_command = project.start_command if project else None
+            run_cookie_file = project.cookie_file if project else None
+            run_test_user = project.test_user if project else None
+            run_test_password = project.test_password if project else None
 
             precomputed_plan = None
             if issue_id:
@@ -258,9 +313,16 @@ async def _run_loop(
                 skip_board=False,
                 direct_workspace=edit_local_directly,
                 create_pr=create_pr,
+                video_must_pass=video_must_pass,
                 plan=precomputed_plan,
                 on_step=on_step,
                 on_log=on_log,
+                env_content=run_env_content,
+                project_env_vars=run_env_vars,
+                start_command=run_start_command,
+                cookie_file=run_cookie_file,
+                test_user=run_test_user,
+                test_password=run_test_password,
             )
 
             if issue_id:
@@ -304,6 +366,22 @@ async def _resume_loop(issue_id: int, run_id: str) -> None:
         try:
             from talon.loop import resume
 
+            # Load project settings so the resumed run has env vars and credentials
+            issue = await db.get_issue(issue_id)
+            resume_project = (
+                await db.get_project(issue.project_id) if issue and issue.project_id else None
+            )
+            resume_env_content = resume_project.env_content if resume_project else None
+            resume_env_vars_raw = resume_project.project_env_vars if resume_project else None
+            resume_env_vars: dict[str, str] | None = None
+            if resume_env_vars_raw:
+                try:
+                    import json as _json
+
+                    resume_env_vars = _json.loads(resume_env_vars_raw)
+                except Exception:
+                    pass
+
             async def on_step(state):
                 await manager.broadcast(
                     {
@@ -326,6 +404,12 @@ async def _resume_loop(issue_id: int, run_id: str) -> None:
                 run_id=run_id,
                 on_step=on_step,
                 on_log=on_log,
+                env_content=resume_env_content,
+                project_env_vars=resume_env_vars,
+                start_command=resume_project.start_command if resume_project else None,
+                cookie_file=resume_project.cookie_file if resume_project else None,
+                test_user=resume_project.test_user if resume_project else None,
+                test_password=resume_project.test_password if resume_project else None,
             )
 
             if state.status == "passed":
@@ -547,6 +631,10 @@ async def _run_verification_bg(issue_id: int, run_id: str) -> None:
             )
 
         runs_dir = os.getenv("RUNS_DIR", "./runs")
+        # Ensure state.workspace is the resolved absolute path so browser_validator's
+        # route discovery and nav_planner read from the same location as the server.
+        if workspace_to_start:
+            state.workspace = workspace_to_start
         browser_result = await browser_validator.run(
             state,
             app_url,

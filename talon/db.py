@@ -130,6 +130,7 @@ class SettingsUpdate(BaseModel):
     # Local workspace behaviour
     edit_local_directly: Optional[str] = None  # "true" | "false"
     push_on_pass: Optional[str] = None  # "true" | "false"
+    video_must_pass: Optional[str] = None  # "true" | "false"
     auto_fallback: Optional[str] = None  # "true" | "false"
 
 

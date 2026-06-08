@@ -31,6 +31,7 @@ export function useAppData() {
   const [reviewerMaxToolTurns, setReviewerMaxToolTurns] = useState("50");
   const [editLocalDirectly, setEditLocalDirectly] = useState(false);
   const [pushOnPass, setPushOnPass] = useState(true);
+  const [videoMustPass, setVideoMustPass] = useState(false);
   const [autoFallback, setAutoFallback] = useState(true);
 
   const [wizardStep, setWizardStep] = useState(0);
@@ -104,6 +105,7 @@ export function useAppData() {
       setReviewerMaxToolTurns(data.reviewer_max_tool_turns || "50");
       setEditLocalDirectly(data.edit_local_directly === "true");
       setPushOnPass(data.push_on_pass !== "false");
+      setVideoMustPass(data.video_must_pass === "true");
       setAutoFallback(data.auto_fallback !== "false");
 
       const hasToken = !!data.github_token;
@@ -202,6 +204,7 @@ export function useAppData() {
     reviewerMaxToolTurns, setReviewerMaxToolTurns,
     editLocalDirectly, setEditLocalDirectly,
     pushOnPass, setPushOnPass,
+    videoMustPass, setVideoMustPass,
     autoFallback, setAutoFallback,
     wizardStep, setWizardStep,
     wizardKeys, setWizardKeys,

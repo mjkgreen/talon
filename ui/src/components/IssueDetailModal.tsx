@@ -721,6 +721,24 @@ export function IssueDetailModal({
                         </div>
                       )}
 
+                      {/* GIF walkthrough (shown when no video is available) */}
+                      {!activeRunState.video_path && activeRunState.browser_result?.gif_path && (
+                        <div className="bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden">
+                          <div className="bg-neutral-900 border-b border-neutral-800 p-4">
+                            <h3 className="text-sm font-medium text-neutral-300 flex items-center gap-2">
+                              <Play size={16} className="text-blue-400" /> Walkthrough
+                            </h3>
+                          </div>
+                          <div className="p-4 flex justify-center bg-black">
+                            <img
+                              className="max-w-full max-h-[400px] rounded border border-neutral-800"
+                              src={apiUrl(`/api/runs/${activeRunState.run_id}/gif`)}
+                              alt="Browser walkthrough"
+                            />
+                          </div>
+                        </div>
+                      )}
+
                       {/* Screenshots strip */}
                       {activeRunState.browser_result?.screenshots?.length > 0 && (
                         <div className="bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden">

@@ -33,6 +33,7 @@ interface SettingsModalProps {
   activeProject: Project | undefined;
   editLocalDirectly: boolean;
   pushOnPass: boolean;
+  videoMustPass: boolean;
   startCommand: string;
   setStartCommand: (v: string) => void;
   envVarRows: EnvVarRow[];
@@ -52,6 +53,7 @@ interface SettingsModalProps {
   autoFallback: boolean;
   onToggleEditLocal: (v: boolean) => void;
   onTogglePushOnPass: (v: boolean) => void;
+  onToggleVideoMustPass: (v: boolean) => void;
   onToggleAutoFallback: (v: boolean) => void;
 }
 
@@ -102,6 +104,7 @@ export function SettingsModal({
   activeProject,
   editLocalDirectly,
   pushOnPass,
+  videoMustPass,
   startCommand,
   setStartCommand,
   envVarRows,
@@ -121,6 +124,7 @@ export function SettingsModal({
   autoFallback,
   onToggleEditLocal,
   onTogglePushOnPass,
+  onToggleVideoMustPass,
   onToggleAutoFallback,
 }: SettingsModalProps) {
   return (
@@ -299,6 +303,15 @@ export function SettingsModal({
                     </div>
                   </div>
                   <Toggle on={pushOnPass} onToggle={() => onTogglePushOnPass(!pushOnPass)} />
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <div className="text-sm font-medium text-neutral-300">Video verification must pass to open PR</div>
+                    <div className="text-xs text-neutral-500 mt-0.5">
+                      Block PR creation if browser validation ran but did not pass
+                    </div>
+                  </div>
+                  <Toggle on={videoMustPass} onToggle={() => onToggleVideoMustPass(!videoMustPass)} />
                 </div>
               </div>
             </div>

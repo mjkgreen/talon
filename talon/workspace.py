@@ -69,7 +69,7 @@ def setup(
         console.print(f"  [dim]workspace -> {base} (direct — editing real files)[/dim]")
         return str(base)
 
-    run_ws = Path(WORKSPACE_BASE) / run_id
+    run_ws = (Path(WORKSPACE_BASE) / run_id).resolve()
 
     if repo_url:
         run_ws.parent.mkdir(parents=True, exist_ok=True)
@@ -148,7 +148,7 @@ def ensure_planner_clone(
     Tries to update an existing clone first; falls back to a fresh clone.
     Blocking — call via asyncio.to_thread.
     """
-    planner_dir = Path(WORKSPACE_BASE) / f"planner-{project_id}"
+    planner_dir = (Path(WORKSPACE_BASE) / f"planner-{project_id}").resolve()
 
     if planner_dir.exists():
         try:

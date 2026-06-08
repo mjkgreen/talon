@@ -92,6 +92,8 @@ Rules:
 - Run tests or validation commands when available.
 - When done, output a concise summary of what you did.
 - If blocked, explain why and what you attempted.
+- CRITICAL: Describing code changes without calling write_file is NOT completing the task.
+  You must use write_file to write the actual code. Explanations alone will fail the review.
 """
 
 
@@ -168,7 +170,9 @@ async def _run_subagent(
 
     files_modified: list[str] = []
     commands_run: list[str] = []
+    file_diffs: dict[str, dict[str, int]] = {}
     final_output = ""
+    _write_nudged = False
 
     for _turn in range(20):
         if _is_pause_requested(run_id):
@@ -182,6 +186,21 @@ async def _run_subagent(
         provider.append_assistant(messages, response)
 
         if response.stop_reason == "end_turn":
+            # If the agent stops without having written any files or run any commands,
+            # it likely explored but didn't execute. Nudge it once to actually write.
+            if not files_modified and not commands_run and not _write_nudged:
+                _write_nudged = True
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "You haven't written any files or run any commands yet. "
+                            "Please complete the task now by using write_file to write the code. "
+                            "Do not describe what you would do — actually implement it."
+                        ),
+                    }
+                )
+                continue
             final_output = response.text or ""
             break
 
@@ -189,7 +208,19 @@ async def _run_subagent(
         for tc in response.tool_calls:
             result_str = await asyncio.to_thread(dispatch_tool, tc.name, tc.input, working_dir)
             if tc.name == "write_file":
-                files_modified.append(tc.input.get("path", ""))
+                file_path = tc.input.get("path", "")
+                files_modified.append(file_path)
+                try:
+                    result_data = json.loads(result_str)
+                    added = result_data.get("lines_added", 0)
+                    removed = result_data.get("lines_removed", 0)
+                    prior = file_diffs.get(file_path, {"added": 0, "removed": 0})
+                    file_diffs[file_path] = {
+                        "added": prior["added"] + added,
+                        "removed": prior["removed"] + removed,
+                    }
+                except Exception:
+                    pass
             elif tc.name == "run_command":
                 commands_run.append(tc.input.get("command", ""))
             tool_results.append(ToolResult(id=tc.id, content=result_str))
@@ -217,6 +248,7 @@ async def _run_subagent(
         output=final_output or "(no output — no files written or commands run)",
         files_modified=files_modified,
         commands_run=commands_run,
+        file_diffs=file_diffs,
         success=bool(final_output) or did_work,
     )
 
