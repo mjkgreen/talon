@@ -176,7 +176,11 @@ class TestServerEntrySubprocess:
             assert 1024 <= port <= 65535
         finally:
             proc.terminate()
-            proc.wait(timeout=5)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
 
     def test_health_endpoint_responds_200(self, tmp_path):
         """
@@ -224,4 +228,8 @@ class TestServerEntrySubprocess:
             )
         finally:
             proc.terminate()
-            proc.wait(timeout=5)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
