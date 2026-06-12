@@ -125,7 +125,6 @@ class TestCreateGithubPr:
 
     def test_returns_pr_url(self, monkeypatch):
         monkeypatch.setattr("talon.skills.pr_creator._get_github_token", lambda: "tok")
-        monkeypatch.setattr("talon.skills.pr_creator.GITHUB_REPO", "owner/repo")
 
         state = _make_state()
         pr_url = "https://github.com/owner/repo/pull/42"
@@ -137,7 +136,6 @@ class TestCreateGithubPr:
 
     def test_includes_score_when_review_present(self, monkeypatch):
         monkeypatch.setattr("talon.skills.pr_creator._get_github_token", lambda: "tok")
-        monkeypatch.setattr("talon.skills.pr_creator.GITHUB_REPO", "owner/repo")
 
         state = _make_state()
         state.review_results.append(
@@ -167,7 +165,6 @@ class TestCreateGithubPr:
         import urllib.error
 
         monkeypatch.setattr("talon.skills.pr_creator._get_github_token", lambda: "tok")
-        monkeypatch.setattr("talon.skills.pr_creator.GITHUB_REPO", "owner/repo")
 
         with patch(
             "urllib.request.urlopen",
@@ -193,7 +190,6 @@ class TestPrCreatorRun:
     @pytest.mark.asyncio
     async def test_skips_when_no_workspace(self, monkeypatch):
         monkeypatch.setattr("talon.skills.pr_creator._get_github_token", lambda: "tok")
-        monkeypatch.setattr("talon.skills.pr_creator.GITHUB_REPO", "owner/repo")
         from talon.skills import pr_creator
 
         result = await pr_creator.run(_make_state(workspace=None), None)
@@ -202,7 +198,6 @@ class TestPrCreatorRun:
     @pytest.mark.asyncio
     async def test_skips_when_no_token(self, monkeypatch):
         monkeypatch.setattr("talon.skills.pr_creator._get_github_token", lambda: "")
-        monkeypatch.setattr("talon.skills.pr_creator.GITHUB_REPO", "owner/repo")
         from talon.skills import pr_creator
 
         result = await pr_creator.run(_make_state(workspace="/tmp"), None)
@@ -211,7 +206,6 @@ class TestPrCreatorRun:
     @pytest.mark.asyncio
     async def test_skips_non_git_workspace(self, tmp_path, monkeypatch):
         monkeypatch.setattr("talon.skills.pr_creator._get_github_token", lambda: "tok")
-        monkeypatch.setattr("talon.skills.pr_creator.GITHUB_REPO", "owner/repo")
         plain = tmp_path / "plain"
         plain.mkdir()
         from talon.skills import pr_creator
@@ -222,7 +216,7 @@ class TestPrCreatorRun:
     @pytest.mark.asyncio
     async def test_full_flow(self, tmp_path, monkeypatch):
         monkeypatch.setattr("talon.skills.pr_creator._get_github_token", lambda: "tok")
-        monkeypatch.setattr("talon.skills.pr_creator.GITHUB_REPO", "owner/repo")
+        monkeypatch.setenv("GITHUB_REPO", "owner/repo")
 
         state = _make_state()
         run_id = "full01"

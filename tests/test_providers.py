@@ -187,5 +187,5 @@ class TestLiteLLMProviderPruning:
             # Assert that the messages are pruned in-place.
             # Index 2 (tool_call_id="1") is truncated: 2 < cutoff (len - 6 = 4).
             # Index 4 (tool_call_id="2") is NOT truncated: 4 is not < 4.
-            assert "truncated to save context window space" in messages[2]["content"]
+            assert messages[2]["content"] == "[truncated]"
             assert messages[4]["content"] == "B" * 5000

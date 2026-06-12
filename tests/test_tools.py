@@ -67,7 +67,13 @@ class TestRunCommand:
     def test_working_dir_respected(self, wd):
         sub = Path(wd, "sub")
         sub.mkdir()
-        r = json.loads(dispatch_tool("run_command", {"command": "pwd", "working_dir": "sub"}, wd))
+        r = json.loads(
+            dispatch_tool(
+                "run_command",
+                {"command": 'python -c "import os; print(os.getcwd())"', "working_dir": "sub"},
+                wd,
+            )
+        )
         assert "sub" in r["stdout"]
 
 

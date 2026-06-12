@@ -152,8 +152,7 @@ def _find_existing_pr(branch: str, repo: str, token: str) -> str | None:
     """Return the html_url of an open PR for this branch, or None."""
     owner = repo.split("/")[0]
     req = urllib.request.Request(
-        f"https://api.github.com/repos/{repo}/pulls"
-        f"?head={owner}:{branch}&state=open&per_page=1",
+        f"https://api.github.com/repos/{repo}/pulls?head={owner}:{branch}&state=open&per_page=1",
         headers={
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",

@@ -226,16 +226,28 @@ def run_command(command: str, working_dir: str, sub_dir: str | None = None) -> d
 def search_files(
     pattern: str, path: str, working_dir: str, file_pattern: str | None = None
 ) -> dict:
-    base = str(Path(working_dir) / path)
-    cmd = ["grep", "-r", "--include", file_pattern or "*", "-n", pattern, base]
+    import re
+
+    base = Path(working_dir) / path
+    glob_pat = f"**/{file_pattern}" if file_pattern else "**/*"
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        lines = result.stdout.strip().splitlines()
-        count = len(lines)
+        compiled = re.compile(pattern)
+        matches: list[str] = []
+        for fp in sorted(base.glob(glob_pat)):
+            if not fp.is_file():
+                continue
+            try:
+                for lineno, line in enumerate(fp.read_text(errors="replace").splitlines(), 1):
+                    if compiled.search(line):
+                        rel = fp.relative_to(working_dir)
+                        matches.append(f"{rel}:{lineno}:{line}")
+            except Exception:
+                continue
+        count = len(matches)
         max_lines = 500
         if count > max_lines:
-            lines = lines[:max_lines] + [f"... [TRUNCATED {count - max_lines} MATCHES] ..."]
-        return {"matches": lines, "count": count}
+            matches = matches[:max_lines] + [f"... [TRUNCATED {count - max_lines} MATCHES] ..."]
+        return {"matches": matches, "count": count}
     except Exception as e:
         return {"error": str(e)}
 

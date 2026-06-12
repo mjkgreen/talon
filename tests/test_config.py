@@ -6,9 +6,9 @@ from talon.config import _resolution_source, model_config_summary, resolve_model
 class TestAutoSelection:
     def test_anthropic_only(self, monkeypatch):
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
-        assert resolve_model("orchestrator") == "anthropic/claude-opus-4-7"
+        assert resolve_model("orchestrator") == "anthropic/claude-sonnet-4-6"
         assert resolve_model("subagent") == "anthropic/claude-sonnet-4-6"
-        assert resolve_model("reviewer") == "anthropic/claude-opus-4-7"
+        assert resolve_model("reviewer") == "anthropic/claude-sonnet-4-6"
         assert resolve_model("refiner") == "anthropic/claude-sonnet-4-6"
 
     def test_gemini_only(self, monkeypatch):
@@ -30,7 +30,7 @@ class TestAutoSelection:
         # Both Anthropic and Gemini available — Anthropic wins for orchestrator
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
         monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-        assert resolve_model("orchestrator") == "anthropic/claude-opus-4-7"
+        assert resolve_model("orchestrator") == "anthropic/claude-sonnet-4-6"
 
 
 class TestGlobalOverride:
