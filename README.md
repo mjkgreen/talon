@@ -21,6 +21,10 @@ Windows `.exe` · macOS `.dmg` · Linux `.AppImage`
 |:---:|:---:|
 | ![Execution trace with iterations](ui/public/talon-screenshot3.png) | ![Model & workspace settings](ui/public/talon-screenshot4.png) |
 
+| Video verification | Environment config |
+|:---:|:---:|
+| ![Playwright video walkthrough](ui/public/talon-screenshot5.png) | ![Environment & credentials settings](ui/public/talon-screenshot6.png) |
+
 ---
 
 ## How it works
@@ -43,9 +47,6 @@ reviewer            Reads files, runs tests, checks every success criterion; pas
  ├─ pass ─────────► pr-creator         Commits changes, pushes branch, opens GitHub PR
  │                       │
  │                       ▼
- │                  browser-validator  Records a Playwright screenshot/video walkthrough
- │                       │
- │                       ▼
  │                  board-updater      Posts result to Linear / GitHub Projects
  │
  └─ fail ─────────► refiner           Synthesises blocking issues → action plan
@@ -55,17 +56,17 @@ reviewer            Reads files, runs tests, checks every success criterion; pas
 
 ### Agent roles
 
-| Role | What it does |
-|------|-------------|
-| **Planner** | Explores the workspace with read-only tools, then outputs a structured multi-phase plan |
-| **Task Executor** | Iterates phases sequentially; within each phase runs up to 7 sub-agents concurrently |
-| **Sub-agents** | Each acts as an independent developer with read/write/shell tool access in an isolated workspace |
-| **Workspace Cleaner** | LLM-assisted post-run cleanup: removes temp files, appends env files to `.gitignore` |
-| **Reviewer** | Inspects modified files, runs test suites, evaluates against every success criterion |
-| **Refiner** | Analyzes reviewer feedback and produces a revised action plan for the next iteration |
-| **PR Creator** | After a passing run: commits changes, pushes an agent branch, opens a GitHub PR |
-| **Browser Validator** | Playwright session: navigates the app, takes screenshots, records a `.webm` walkthrough |
-| **Board Updater** | Posts run summaries and video links to Linear or GitHub Projects |
+| Role | Model role | What it does |
+|------|-----------|-------------|
+| **Planner** | `PLANNER_MODEL` | Explores the workspace with read-only tools, then outputs a structured multi-phase plan |
+| **Task Executor** | `ORCHESTRATOR_MODEL` | Decomposes the plan into phases and coordinates parallel sub-agents within each phase |
+| **Sub-agents** | `SUBAGENT_MODEL` | Each acts as an independent developer with read/write/shell tool access in an isolated workspace |
+| **Workspace Cleaner** | `REFINER_MODEL` | LLM-assisted post-run cleanup: removes temp files, appends env files to `.gitignore` |
+| **Reviewer** | `REVIEWER_MODEL` | Inspects modified files, runs test suites, evaluates against every success criterion |
+| **Refiner** | `REFINER_MODEL` | Analyzes reviewer feedback and produces a revised action plan for the next iteration |
+| **PR Creator** | — | After a passing run: commits changes, pushes an agent branch, opens a GitHub PR |
+| **Browser Validator** | `REVIEWER_MODEL` | On-demand AI-driven browser agent (browser-use): navigates the app, records a `.webm` walkthrough, triggered from the Verification tab |
+| **Board Updater** | — | Posts run summaries to Linear or GitHub Projects |
 
 ---
 
@@ -191,9 +192,10 @@ AGENT_MODEL=gemini/gemini-flash-latest
 
 **Per-role override** (full control):
 ```bash
-ORCHESTRATOR_MODEL=anthropic/claude-opus-4-7    # reasoning-heavy
+PLANNER_MODEL=anthropic/claude-sonnet-4-6       # workspace exploration + plan
+ORCHESTRATOR_MODEL=openai/o3                    # goal decomposition, reasoning-heavy
 SUBAGENT_MODEL=anthropic/claude-sonnet-4-6      # code writing
-REVIEWER_MODEL=anthropic/claude-opus-4-7        # strict quality gate
+REVIEWER_MODEL=anthropic/claude-sonnet-4-6      # quality gate
 REFINER_MODEL=anthropic/claude-sonnet-4-6       # synthesis
 ```
 
@@ -201,10 +203,11 @@ Auto-selection priority per role (first available provider wins):
 
 | Role | Prefers |
 |:---|:---|
-| `orchestrator` | Opus → o3 → Gemini Pro → Sonnet |
-| `subagent` | Sonnet → GPT-4o → Gemini Pro → Flash |
-| `reviewer` | Opus → o3 → Gemini Pro → Sonnet |
-| `refiner` | Sonnet → Flash → GPT-4o → Haiku |
+| `planner` | Sonnet → GPT-4o → Flash |
+| `orchestrator` | o3 → Sonnet → Flash → GPT-4o |
+| `subagent` | Sonnet → GPT-4o → Flash → Haiku |
+| `reviewer` | Sonnet → o3 → GPT-4o → Flash |
+| `refiner` | Sonnet → Flash → GPT-4o |
 
 See `.env.example` for the full list of variables (run limits, workspace paths, webhook secrets, etc.).
 
@@ -239,6 +242,24 @@ POST /webhook/github
 ---
 
 ## Changelog
+
+### 0.7.0
+
+**Browser-use AI validator** — Replaced passive Playwright screenshotter with an AI-driven `browser-use` agent that follows goal-specific navigation steps, interacts with the app, and records a `.webm` walkthrough with annotated captions. Visible in the new **Verification** tab on every completed issue.
+
+**GIF export** — The recorded walkthrough can be downloaded as an animated GIF directly from the Verification tab.
+
+**Environment settings tab** — A new **Environment** tab in Settings lets you paste or upload a `.env` file that is injected into the dev-server subprocess during browser validation. Supports test account credentials (username/email + password) and an optional Netscape/JSON cookie file, so the browser agent can sign in automatically.
+
+**Token & cost tracking** — Each run now accumulates input/output token counts and estimated cost; totals are displayed live in the execution trace panel.
+
+**Pause / resume (stable)** — `talon pause` / `talon resume` and their API counterparts are now fully stable across the Electron desktop app.
+
+**Server refactor** — `server.py` split into a `talon/routers/` package; `App.tsx` and `IssueDetailModal.tsx` decomposed into focused submodules.
+
+**Test suite fixes** — Resolved 16 test failures across config, tools, and webhook tests; CI is green.
+
+---
 
 ### 0.6.0
 
